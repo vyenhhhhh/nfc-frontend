@@ -193,7 +193,7 @@ export function NeedsAttention({ interns, records, monitorPath, limit = 6 }) {
     const output = false;   // every intern renders the required hours of their program
     const name = u.name || "Intern";
     // time in with no time out on an earlier day
-    const open = recs.filter((r) => r.date < today && r.date >= weekAgo && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at)
+    const open = recs.filter((r) => r.date < today && r.date >= weekAgo && r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at)
       .sort((a, b) => b.date.localeCompare(a.date))[0];
     if (open) {
       const d = new Date(open.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
@@ -572,8 +572,11 @@ export const dbCss = `
 @media (max-width: 640px) {
   /* quick buttons: full width, equal size, with their names (icons alone were hard to understand) */
   .ix-page .ix-content .dbx .ix-ph-right { width: 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; margin: 4px 0 0; }
-  .ix-page .ix-content .dbx .ix-ph-right .dbx-act { height: 54px !important; padding: 0 6px !important; font-size: 11.5px !important; gap: 4px; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.15 !important; }
-  .ix-page .ix-content .dbx .ix-ph-right .dbx-act span { display: inline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* normal buttons (icon beside the name), the same height as the other buttons of the app */
+  .ix-page .ix-content .dbx .ix-ph-right { display: flex !important; gap: 6px !important; }
+  .ix-page .ix-content .dbx .ix-ph-right .dbx-act { flex: 1 1 auto; height: 40px !important; padding: 0 7px !important; font-size: clamp(11.5px, 3.3vw, 13px) !important; gap: 5px; flex-direction: row; justify-content: center; align-items: center; min-width: 0; line-height: 1.2 !important; border-radius: 10px; white-space: nowrap; }
+  .ix-page .ix-content .dbx .ix-ph-right .dbx-act > svg { flex: none; }
+  .ix-page .ix-content .dbx .ix-ph-right .dbx-act span { display: inline; overflow: visible; white-space: nowrap; }
   .ix-page .ix-content .dbx-status { display: none; }
   .ix-page .ix-content .dbx-sum > * { padding: 9px 12px; }
   .ix-page .ix-content .dbx-num b { font-size: 16px; }

@@ -123,7 +123,7 @@ export default function App() {
       if (!Array.isArray(d.taps)) return;
       setToday(d.taps);
       // recorded taps are in the server list now: keep only the offline / refused ones here
-      setLog((prev) => prev.filter((e) => e.action !== "CHECK_IN" && e.action !== "CHECK_OUT"));
+      setLog((prev) => prev.filter((e) => !["TIME_IN", "TIME_OUT", "CHECK_IN", "CHECK_OUT"].includes(e.action)));   // CHECK_*: taps saved before the rename
     } catch { /* offline: keep what is shown */ }
   };
   const loadTodayRef = useRef(loadToday);
@@ -390,10 +390,10 @@ export default function App() {
 
   tapRef.current = handleTap;
 
-  const isIn = status?.action === "CHECK_IN";
+  const isIn = status?.action === "TIME_IN";
   // today's numbers at this kiosk (server list + this session's taps not in it yet)
-  const ins = [...log, ...today].filter((l) => l.action === "CHECK_IN").length;
-  const outs = [...log, ...today].filter((l) => l.action === "CHECK_OUT").length;
+  const ins = [...log, ...today].filter((l) => l.action === "TIME_IN").length;
+  const outs = [...log, ...today].filter((l) => l.action === "TIME_OUT").length;
   const src = photoUrl(status?.photo);
   // the list on the right: this session's not-yet-listed taps first, then today's taps from the server
   const shown = [...log, ...today];
@@ -508,7 +508,6 @@ export default function App() {
                   <div className="kq-meta">
                     <span>{isIn ? "Time in" : "Time out"} <b>{status.time}</b></span>
                     {status.date && <span>{status.date}</span>}
-                    {status.uid && <span>Card ····{String(status.uid).slice(-4)}</span>}
                   </div>
                   {status.note && <div className="kq-note">{status.note}</div>}
                 </div>
@@ -525,7 +524,7 @@ export default function App() {
                   <div className="kq-k">Saved on this kiosk</div>
                   <h1>{status.name || "Tap saved"}</h1>
                   <p>The kiosk is offline right now. Your tap was saved with the time <b>{status.time}</b> and will be sent automatically when the internet is back. No need to tap again.</p>
-                  <div className="kq-meta"><span>Card ····{String(status.uid).slice(-4)}</span><span>{queued} waiting to send</span></div>
+                  <div className="kq-meta"><span>{queued} waiting to send</span></div>
                 </div>
                 <div className="kq-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
               </div>
@@ -602,10 +601,10 @@ export default function App() {
               <div key={(e.key || e.token) + i} className="kq-row">
                 <Avatar name={e.name} photo={e.photo} />
                 <div className="kq-row-t">
-                  <b>{e.name || "Card ····" + String(e.uid || "").slice(-4)}</b>
-                  <small title={e.reason || ""}>{e.action === "CHECK_IN" ? "Time in" : e.action === "CHECK_OUT" ? "Time out" : e.action === "OFFLINE" ? "Saved offline" : e.reason ? `Not recorded: ${e.reason}` : "Not recorded"}</small>
+                  <b>{e.name || (e.action === "OFFLINE" ? "Saved tap" : "Card tap")}</b>
+                  <small title={e.reason || ""}>{e.action === "TIME_IN" ? "Time in" : e.action === "TIME_OUT" ? "Time out" : e.action === "OFFLINE" ? "Saved offline" : e.reason ? `Not recorded: ${e.reason}` : "Not recorded"}</small>
                 </div>
-                <time className={e.action === "CHECK_IN" ? "in" : e.action === "CHECK_OUT" ? "out" : e.action === "OFFLINE" ? "wait" : "bad"} title={e.reason || undefined}>
+                <time className={e.action === "TIME_IN" ? "in" : e.action === "TIME_OUT" ? "out" : e.action === "OFFLINE" ? "wait" : "bad"} title={e.reason || undefined}>
                   {String(e.time || "").replace(/(\d{1,2}:\d\d):\d\d/, "$1")}
                 </time>
               </div>
@@ -1024,6 +1023,16 @@ html, body, #root { margin: 0; height: 100%; }
   .kq-side { position: relative; z-index: 1; min-height: 0; height: auto; }
   .kq-list { max-height: 320px; }
   .kq-result { position: relative; z-index: 6; }
+}
+
+/* tall portrait screens (a kiosk monitor turned upright, e.g. 1080 × 1920): the clock and reader take the top,
+   and "Today's taps" fills the rest of the screen instead of leaving an empty background below */
+@media (max-width: 1100px) and (orientation: portrait) and (min-height: 900px) {
+  .kq-wrap { grid-template-rows: max-content minmax(0, 1fr) !important; overflow-y: hidden; }
+  .kq-left { min-height: 52vh !important; }
+  .kq-stage { flex: 1 1 auto !important; }
+  .kq-side { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  .kq-side .kq-list, .kq-list { max-height: none !important; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 }
 
 /* ═══ FIX: same layout in every state (idle ↔ reading ↔ ...) ═══

@@ -288,7 +288,7 @@ function GroupPage({ group, tab, onPick, counts, children }) {
 function Home({ user, pending, pendingMovs, pendingOt = 0, pendingNfc = 0, pendingEv = 0, records, interns, loading, go }) {
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
-  const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+  const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at);
   // one entry per person, in case someone has more than one open check-in
   const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
   const checkedIn = inNow.length;
@@ -381,7 +381,7 @@ export function AssignSupervisors({ interns, supervisors, records = [], online =
 
   // live facts about an intern
   const recsOf = (id) => records.filter((r) => r.user_id === id);
-  const onDuty = (id) => records.some((r) => r.user_id === id && r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+  const onDuty = (id) => records.some((r) => r.user_id === id && r.date === today && r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at);
   const tappedToday = (id) => records.some((r) => r.user_id === id && r.date === today);
   // requests still waiting for this supervisor (online days + overtime)
   const waitingFor = (sid) => online.filter((o) => o.status === "pending" && String(o.supervisor_id) === String(sid)).length

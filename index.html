@@ -4,6 +4,23 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      /* phones only: show the page about 12% smaller (a little zoomed out), so more fits on the screen.
+         Tablets and computers keep the normal size. */
+      (function () {
+        var ZOOM = 0.88;
+        function fit() {
+          var side = Math.min(screen.width, screen.height);
+          if (side >= 600) return;                       // not a phone
+          var landscape = window.matchMedia && window.matchMedia("(orientation: landscape)").matches;
+          var w = landscape ? Math.max(screen.width, screen.height) : side;
+          var m = document.querySelector('meta[name="viewport"]');
+          if (m) m.setAttribute("content", "width=" + Math.round(w / ZOOM) + ", initial-scale=" + ZOOM);
+        }
+        fit();
+        window.addEventListener("orientationchange", function () { setTimeout(fit, 200); });
+      })();
+    </script>
     <title>CSU CCIS OJT</title>
   </head>
   <body>
@@ -11,4 +28,3 @@
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-

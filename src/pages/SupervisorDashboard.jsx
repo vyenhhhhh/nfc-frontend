@@ -166,7 +166,7 @@ export default function SupervisorDashboard() {
 function Home({ user, records, interns, loading, go, counts = {} }) {
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
-  const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+  const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at);
   // one entry per person, in case someone has more than one open check-in
   const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
   const checkedIn = inNow.length;

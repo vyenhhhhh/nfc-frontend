@@ -578,9 +578,9 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   const streak = streakOf([...new Set(records.map((r) => r.date))], today);
 
   // current session
-  const lastIn = lastTap?.action === "CHECK_IN";
+  const lastIn = lastTap?.action === "TIME_IN";
   const lastTime = lastTap
-    ? fmtTime(lastTap.action === "CHECK_OUT" && lastTap.checked_out_at ? lastTap.checked_out_at : lastTap.checked_in_at)
+    ? fmtTime(lastTap.action === "TIME_OUT" && lastTap.checked_out_at ? lastTap.checked_out_at : lastTap.checked_in_at)
     : "";
   let state = { tone: "", title: "No time in yet", text: "Tap your card on the kiosk when you arrive." };
   if (lastTap && lastIn && lastTap.date === today) {
@@ -760,30 +760,22 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
           <Panel className="dbx-today">
             <div className="dbx-state">
               <span className={`dbx-dot ${state.tone}`}><Icon name={state.tone === "warn" ? "warn" : "tap"} size={18} /></span>
-              <div><b>{state.title}</b><small>{state.text}</small></div>
-            </div>
-            {toFix.length > 0 && (
-              <div className="dbx-fix" role="alert">
-                {toFix.slice(0, 2).map((r) => {
-                  const lone = r.date === today;   // today's only tap is late in the afternoon
+              <div><b>{state.title}</b>
+                {/* days with a missing time-out take the place of the hint line, so the card keeps the same height
+                   (and the finish-line card beside it is not stretched) */}
+                {toFix.length > 0 ? (() => {
+                  const r = toFix[0], n = toFix.length, lone = r.date === today;
                   return (
-                    <div key={r.id} className="dbx-fix-row">
-                      <span className="dbx-fix-ic"><Icon name="warn" size={14} /></span>
-                      <span className="dbx-fix-tx">
-                        <b>{lone ? "Forgot to time in?" : `No time out · ${fixDay(r.date)}`}</b>
-                        <small>{lone
-                          ? `Your only tap today: ${fmtTime(r.checked_in_at).replace(/:\d\d(?= )/, "")}`
-                          : `Only one tap: ${fmtTime(r.checked_in_at).replace(/:\d\d(?= )/, "")}`}</small>
-                      </span>
-                      <button type="button" className="ix-b primary sm" onClick={() => go("/intern/records", { state: { fix: r.id } })}>Request fix</button>
-                    </div>
+                    <button type="button" className="dbx-fix-link" role="alert"
+                      onClick={() => (n === 1 || lone ? go("/intern/records", { state: { fix: r.id } }) : go("/intern/records"))}>
+                      <Icon name="warn" size={13} />
+                      <span>{lone ? "Forgot to time in? Request a fix" : n === 1 ? `No time out on ${fixDay(r.date)}: request a fix` : `${n} days with no time out: fix them`}</span>
+                      <i aria-hidden="true">›</i>
+                    </button>
                   );
-                })}
-                {toFix.length > 2 && (
-                  <button type="button" className="dbx-fix-more" onClick={() => go("/intern/records")}>+{toFix.length - 2} more day{toFix.length - 2 === 1 ? "" : "s"} to fix in My Attendance</button>
-                )}
+                })() : <small>{state.text}</small>}
               </div>
-            )}
+            </div>
             <div className="dbx-kv">
               <div><small>Time in</small><b>{todayInfo.in ? fmtTime(todayInfo.in).replace(/:\d\d(?= )/, "") : "—"}</b></div>
               <div><small>Time out</small><b>{todayInfo.out ? fmtTime(todayInfo.out).replace(/:\d\d(?= )/, "") : "—"}</b></div>
@@ -847,7 +839,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
             ) : finishDate ? (
               <><small>At your pace ({Math.round(avgDay * 10) / 10}h a day) you finish around</small>
                 <div className="dbx-eta-big"><em>{fmtD(finishDate, true)}</em></div>
-                <small>{daysLeft} working day{daysLeft === 1 ? "" : "s"} left · {left}h to go · weekends and holidays skipped</small></>
+                <small title="Weekends and holidays are skipped">{daysLeft} working day{daysLeft === 1 ? "" : "s"} left · {left}h to go</small></>
             ) : (
               <><small>Your finish date</small><div className="dbx-eta-big"><em>Not yet</em></div><small>Log your first day to see when you'll finish.</small></>
             )}
@@ -1150,8 +1142,14 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
     return <button type="button" className="at-fix-btn sm at-fix-in" title="Forgot to time in when you arrived?" onClick={() => openFix(recOf(t.firstId), "in")}>Fix time in</button>;
   };
   // group the days by month
+  // excused days (sick, school event) are listed with the other days, in date order, instead of a banner on top
+  const exPortion = excusedDays.portions || {};
+  const excusedRows = filter === "online" ? [] : Object.entries(excusedDays)
+    .filter(([d]) => !byDate[d] && (month === "all" || d.startsWith(month)))
+    .map(([d, name]) => [d, { excused: name, portion: exPortion[d] || "whole" }]);
+  const listDays = [...shownDays, ...excusedRows].sort((a, b) => b[0].localeCompare(a[0]));
   const groups = [];
-  shownDays.forEach(([d, t]) => {
+  listDays.forEach(([d, t]) => {
     const m = d.slice(0, 7);
     if (!groups.length || groups[groups.length - 1].m !== m) groups.push({ m, days: [] });
     groups[groups.length - 1].days.push([d, t]);
@@ -1162,17 +1160,6 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
       <PageHeader title="My Attendance" sub="Your attendance log and computed OJT hours, day by day." live />
       <Msg msg={pageMsg} />
 
-      {Object.keys(excusedDays).length > 0 && (
-        <div className="at-excused" role="note">
-          <Icon name="calendar" size={15} />
-          <div>
-            <b>Excused days</b>
-            <span>{Object.entries(excusedDays).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6)
-              .map(([d, n]) => `${new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ${n}`).join("   ")}</span>
-            <small>Excused, not absent. The event time gives no OJT hours.</small>
-          </div>
-        </div>
-      )}
 
       {fixFor && (
         <Modal wide title="Request a time correction" sub={`${new Date(fixFor.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · your HTE supervisor decides.`} onClose={() => setFixFor(null)}>
@@ -1280,11 +1267,11 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
 
       {/* the log: one compact row per day, grouped by month */}
       <div className="at-log2">
-        {loading ? <Spinner /> : shownDays.length === 0 ? (
+        {loading ? <Spinner /> : listDays.length === 0 ? (
           <Empty icon="list" title="No attendance records match this filter." />
         ) : groups.map((g, gi) => (
           <div key={g.m} className="at-grp">
-            <div className="at-grp-h"><span>{monthName(g.m)}</span><small>{g.days.length} day{g.days.length === 1 ? "" : "s"} · {Math.round(g.days.reduce((n, [, t]) => n + (hoursOf(t) || 0), 0) * 10) / 10}h</small>
+            <div className="at-grp-h"><span>{monthName(g.m)}</span><small>{g.days.filter(([, t]) => !t.excused).length} day{g.days.filter(([, t]) => !t.excused).length === 1 ? "" : "s"} · {Math.round(g.days.reduce((n, [, t]) => n + (hoursOf(t) || 0), 0) * 10) / 10}h</small>
               {gi === 0 && <em className="at-scale-note">Bars show when you were in, 7 AM – 7 PM</em>}</div>
             <ul className="at-rows">
               {g.days.map(([date, t]) => {
@@ -1292,11 +1279,23 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
                 const a2 = t.checkin ? pos(t.checkin) : null;
                 const b2 = t.checkout ? pos(t.checkout) : null;
                 const x = new Date(date + "T12:00:00Z");
+                if (t.excused) {
+                  return (
+                    <li key={date} className="at-exc-row">
+                      <span className="at-dd"><b>{x.getUTCDate()}</b><small>{weekday(date)}</small></span>
+                      <span className="at-exc-tag">Excused</span>
+                      <span className="at-io at-exc-why">{t.excused}{t.portion === "am" ? " · morning" : t.portion === "pm" ? " · afternoon" : ""}</span>
+                      <span className="at-line" aria-hidden="true" />
+                      <span className="at-h"><b>—</b><small className="at-exc-note">not absent · no OJT hours</small></span>
+                    </li>
+                  );
+                }
+                const exHere = excusedDays[date];   // a morning or afternoon excuse on a day that also has taps
                 return (
                   <li key={date}>
                     <span className="at-dd"><b>{x.getUTCDate()}</b><small>{weekday(date)}</small></span>
                     <Badge label={t.online ? "Online log" : "Kiosk"} type={t.online ? "online" : "onsite"} />
-                    <span className="at-io">{hm(t.checkin)} {inFix(t)} <i>→</i> {outCell(date, t)}</span>
+                    <span className="at-io">{hm(t.checkin)} {inFix(t)} <i>→</i> {outCell(date, t)}{exHere && <span className="at-exc-tag sm" title={exHere}>Excused {exPortion[date] === "am" ? "AM" : exPortion[date] === "pm" ? "PM" : ""}</span>}</span>
                     <span className="at-line" aria-hidden="true">
                       {a2 !== null && <i className={b2 === null ? "open" : ""} style={{ left: a2 + "%", width: Math.max(1.5, (b2 ?? a2 + 4) - a2) + "%" }} />}
                     </span>
@@ -1389,6 +1388,7 @@ function SubmitOnline({ user }) {
   const [evs, setEvs] = useState([]);
   const [evf, setEvf] = useState({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" });
   const [proof, setProof] = useState(null);
+  const [dayProof, setDayProof] = useState(null);   // proof of the off-site / online day
 
   const fetchSubs = async () => {
     try {
@@ -1457,19 +1457,24 @@ function SubmitOnline({ user }) {
       return;
     }
     if (offsite && !why) { setMsg({ type: "error", text: "Choose why you weren't at the office that day." }); setSub(false); return; }
+    if (!dayProof) { setMsg({ type: "error", text: "Attach a proof first (a photo or PDF)." }); setSub(false); return; }
     try {
       // the server puts the reason at the start of the description, so the supervisor and coordinator see it when they review
-      const res = await fetch(`${API}/intern/submit-online`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id, date: form.date, description: form.description.trim(), ...(offsite ? { reason: why } : {}) }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
+      const fd = new FormData();
+      fd.append("user_id", user.id);
+      fd.append("date", form.date);
+      fd.append("description", form.description.trim());
+      if (offsite) fd.append("reason", why);
+      fd.append("proof", dayProof);
+      const res = await fetch(`${API}/intern/submit-online`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
       setMsg({ type: "success", text: data.message });
       setForm({ date: "", description: "" });
       setWhy("");
+      setDayProof(null);
       fetchSubs();
-    } catch (err) { setMsg({ type: "error", text: err.message }); }
+    } catch (err) { setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message }); }
     finally { setSub(false); }
   };
 
@@ -1505,10 +1510,12 @@ function SubmitOnline({ user }) {
               )}
               <div className="ix-field so-fill">
                 <label htmlFor="ix-desc">Tasks completed{tasksOptional ? " (optional)" : ""}</label>
-                <textarea id="ix-desc" rows={6} value={form.description} required={!tasksOptional} maxLength={500}
+                <textarea id="ix-desc" rows={4} value={form.description} required={!tasksOptional} maxLength={500}
                   placeholder={tasksOptional ? "You may leave this blank if you worked at the office as usual." : "Describe in detail what you worked on that day..."}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
               </div>
+              <ProofField id="so-day-proof" file={dayProof} onFile={setDayProof} hint={false} />
+              <small className="fx-hint so-proof-hint">e.g. a photo of your work, your supervisor's message, or the office notice.</small>
               <small className="so-note">Your HTE supervisor confirms it first, then your OJT coordinator approves or rejects it. Approved days count as 8:00 AM – 5:00 PM.</small>
             </>) : (<>
               <div className="ix-field">
@@ -1584,7 +1591,7 @@ function SubmitOnline({ user }) {
                       <div className="so-more">
                         <div><span>{d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span><p>{x.description}{x.isEv && x.mandatory ? " (mandatory school event)" : ""}{x.isEv ? ` · excused ${PORTION_LBL[x.portion] || "whole day"}` : ""}</p></div>
                         {x.isEv && x.reason && <div><span>Note</span><p>{x.reason}</p></div>}
-                        {x.isEv && x.proof_path && <div><span>Proof</span><p><a className="ix-link" href={fileHref(x.proof_path)} onClick={(e) => openFile(x.proof_path, e)} target="_blank" rel="noopener noreferrer">{x.proof_name || "View file"}</a></p></div>}
+                        {x.proof_path && <div><span>Proof</span><p><a className="ix-link" href={fileHref(x.proof_path)} onClick={(e) => openFile(x.proof_path, e)} target="_blank" rel="noopener noreferrer">{x.proof_name || "View file"}</a></p></div>}
                         {x.remarks && <div><span>Remarks</span><p>“{x.remarks}”</p></div>}
                         {(x.status || "pending") === "pending" && (
                           <div className="so-act"><small>You can remove it while it's still waiting.</small><RemoveBtn onConfirm={() => removeSub(x.id, x.isEv)} /></div>
@@ -1711,7 +1718,8 @@ const SO_CSS = `
   .ix-page .ix-content .so-form .so-body > * { flex-shrink: 0; }
   .ix-page .ix-content .so-form .so-body > .so-send { position: sticky; bottom: 0; box-shadow: 0 -8px 10px -4px #fff; }
   .ix-page .ix-content .so-form .so-body > .so-fill { flex-shrink: 1; }
-  .ix-page .ix-content .so-form .so-body > .ix-field.so-fill { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  /* never smaller than its label + a 3-line box (it used to shrink to nothing and the proof field slid over it) */
+  .ix-page .ix-content .so-form .so-body > .ix-field.so-fill { flex: 1 1 0; min-height: 104px; display: flex; flex-direction: column; }
   .ix-page .ix-content .so-form .so-body .so-fill textarea { flex: 1 1 0; min-height: 70px !important; height: auto !important; resize: none; }
   /* excused absence has more fields: tighter spacing, and the note box takes whatever room is left, so it fits without scrolling */
   .ix-page.lay2 .ix-main:has(.so-cols) { padding-bottom: 18px !important; }
@@ -1719,6 +1727,15 @@ const SO_CSS = `
   .ix-page .ix-content .so-form.so-ev .so-body > .ix-field.so-note-fill { min-height: auto; }
   .ix-page .ix-content .so-form.so-ev .so-body .so-note-fill textarea { min-height: 64px !important; }
   .ix-page .ix-content .so-form.so-ev .so-note { line-height: 1.4; }
+}
+/* shorter windows: drop the extra notes (the line at the top of the page already says who approves it),
+   so the whole form fits above the button without scrolling */
+@media (min-width: 901px) and (max-height: 960px) {
+  .ix-page .ix-content .so-form:not(.so-ev) .so-note { display: none; }
+}
+@media (min-width: 901px) and (max-height: 800px) {
+  .ix-page .ix-content .so-form:not(.so-ev) .so-proof-hint { display: none; }
+  .ix-page .ix-content .so-form:not(.so-ev) .so-body { gap: 9px; padding: 12px 18px 14px; }
 }
 @media (max-width: 900px) {
   .ix-page .ix-content .so-cols { grid-template-columns: 1fr; }
@@ -4272,6 +4289,7 @@ export const internCss = `
 .fx-kind small { font-size: 12px; color: #6b7280; line-height: 1.4; }
 .fx-kind.on { border-color: #e8582a; background: #fff7f2; }
 .fx-hint { display: block; margin-top: 4px; font-size: 12px; color: #6b7280; }
+.ix-page .ix-content .so-proof-hint { margin-top: -6px; line-height: 1.45; flex-shrink: 0; }
 .fx-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 /* "Missed a whole day?" (the pill) on the right; the bars note sits under it */
 /* one even row: chips, month and the button all 34px tall; the bars note hangs under the button
@@ -4310,7 +4328,27 @@ export const internCss = `
 .ix-page .ix-content .dbx-fix-more { justify-self: start; border: 0; background: none; padding: 0; font: inherit;
   font-size: 12px; font-weight: 600; color: #c2410c; cursor: pointer; }
 .ix-page .ix-content .dbx-fix-more:hover { text-decoration: underline; }
+.ix-page .ix-content .dbx-fix-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 3px 9px 3px 7px !important;
+  min-height: 0 !important; height: auto !important; border: 1px solid #fdd5bf; border-radius: 99px; background: #fff4ed; color: #c2410c;
+  font: inherit; font-size: 12px; font-weight: 600; line-height: 1.35; cursor: pointer; text-align: left; max-width: 100%; }
+.ix-page .ix-content .dbx-fix-link:hover { background: #ffe8db; }
+.ix-page .ix-content .dbx-fix-link > svg { flex: none; }
+.ix-page .ix-content .dbx-fix-link > i { font-style: normal; font-size: 14px; }
+/* intern dashboard: Announcements shows 3 at a time; more scroll inside the card */
+.ix-page .ix-content .dbx-side .adm-duty .ann-list { max-height: 312px !important; flex: none !important; overflow-y: auto !important; }
+.ix-page .ix-content .dbx-side .adm-duty:has(.ann-list) { flex: none !important; }
 .at-ot.approved { color: #146c3a; }
+/* My Attendance: an excused day in the list */
+.ix-page .at-exc-tag { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 8px; background: #f3efff; color: #6d28d9; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ix-page .at-exc-tag.sm { height: 22px; padding: 0 8px; font-size: 11px; margin-left: 6px; }
+.ix-page .at-exc-why { color: #4c1d95; font-weight: 500; }
+.ix-page .at-exc-note { color: #7c6fa8 !important; }
+/* My Request (computers): the side column keeps its natural height now that the page scrolls */
+@media (min-width: 1101px) {
+  .ix-page .ix-content .rq-cols > .rq-side { overflow: visible !important; }
+  .ix-page .ix-content .rq-side > .rq-how-box { flex: none !important; overflow: visible !important; min-height: 0 !important; }
+  .ix-page .ix-content .rq-side > .rq-how-box .rq-how2 { flex: none !important; }
+}
 .at-ot.rejected { color: #b42318; }
 
 
@@ -4430,6 +4468,16 @@ export const internCss = `
   .ix-page .rq-side > .rq-how-box .rq-how2 li { flex: 0 0 auto; min-height: 0; }
   .ix-page .rq-side > .rq-how-box .rq-how2 li { padding: clamp(6px, 1.2vh, 12px); border-radius: 12px; background: #fafafb; border: 1px solid #f1f2f4; align-items: center; }
   .ix-page .rq-side > .rq-how-box .rq-legend { margin-top: auto; }
+}
+/* My Request on computers: the page scrolls like the other pages; the table shows up to 10 requests,
+   and the pager under it opens the next 10 (no scrollbar inside the table) */
+@media (min-width: 1101px) {
+  .ix-page.lay2 .ix-main:has(.rq-cols) { overflow-y: auto !important; display: block !important; }
+  .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content { display: block !important; }
+  .ix-page .ix-content > .rq-cols { align-items: start !important; }
+  .ix-page .rq-cols > .rq-table { overflow: hidden !important; display: block !important; }
+  .ix-page .rq-table .rq-tscroll { overflow: visible !important; max-height: none !important; }
+  .ix-page .rq-table thead th { position: static !important; }
 }
 /* short windows: keep the steps, drop the small lines and the color guide */
 @media (min-width: 1101px) and (max-height: 820px) { .ix-page .rq-how2 small { display: none; } }

@@ -8,7 +8,8 @@
 import { useEffect, useState } from "react";
 import { API, STORAGE } from "./config.js";
 
-const PRIVATE = /^(movs|evaluations|excuse-proofs|signatures|work_mode)\//;
+// keep in step with PrivateFiles::FOLDERS on the server
+const PRIVATE = /^(movs|evaluations|excuse-proofs|correction-proofs|online-proofs|signatures|work_mode)\//;
 const clean = (p) => String(p || "").replace(/^\/+/, "");
 
 export const isPrivateFile = (p) => PRIVATE.test(clean(p));

@@ -734,6 +734,22 @@ function ConfirmBox({ title, message, ok, cancel, danger, onDone }) {
     </Modal>
   );
 }
+/* Copies text. navigator.clipboard only works on https or localhost, so on the laptop's Wi-Fi address
+   (http://192.168.x.x) it falls back to the older copy command. Returns true when it worked. */
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* try the fallback */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
 export function confirmBox({ title = "Are you sure?", message = "", ok = "Yes", cancel = "Cancel", danger = false } = {}) {
   return new Promise((resolve) => {
     const host = document.createElement("div");
@@ -902,7 +918,7 @@ export function AccountSecurity({ user }) {
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
+    if (await copyText(code)) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
   };
 
   const titles = { show: "View recovery code", new: "Make a new recovery code", pw: "Change Password" };
@@ -1410,7 +1426,7 @@ const ipxDate = (v) => {
 };
 function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFiles = null, canViewFiles = false }) {
   const recs = records.filter((r) => r.user_id === u.id);
-  const isIn = recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+  const isIn = recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at);
   const days = [...new Set(recs.map((r) => r.date))].length;
   const total = calcHours(recs);
   const required = requiredHoursFor(u.program, u.prior_hours);
@@ -2007,7 +2023,12 @@ const UZ_CSS = `
 .uz-form > .uz-top { position: sticky; top: 0; z-index: 6; margin: 0 -2px; padding: 10px 2px 12px; background: var(--ix-surface, #fff); border-bottom: 1px solid #eef0f3; }
 /* name on one line: First · Middle · Last · Extension (the extension is short) */
 .uz-grid.uz-names { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, .55fr); margin-bottom: 14px; }
-@media (max-width: 1000px) { .uz-grid.uz-names { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.uz-grid.uz-names.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* view: the rows sit close together (they used to spread over the whole card) */
+.uz-view .uz-grid { align-content: start; gap: 12px 16px; }
+.uz-view .uz-sec { padding: 14px 0 16px; }
+.uz-view .uz-sec h3 { margin-bottom: 12px; }
+@media (max-width: 1000px) { .uz-grid.uz-names, .uz-grid.uz-names.three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .uz-top h2 { margin: 0 auto 0 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .uz-top .uz-back { flex: none; }
 .uz-act { display: flex; gap: 8px; margin-left: auto; }
@@ -2146,11 +2167,14 @@ export function UserDetails({ u, interns = [] }) {
         <div className="uz-card">
           <div className="uz-sec">
             <h3>Personal details</h3>
-            <div className="uz-grid">
+            {/* the name on one line, in the order it is written; the extension (Jr., III) only when there is one */}
+            <div className={u.name_extension ? "uz-grid uz-names" : "uz-grid uz-names three"}>
               {v("First name", u.first_name || parts[0])}
               {v("Middle name", u.middle_name)}
               {v("Last name", u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""))}
-              {v("Extension", u.name_extension)}
+              {u.name_extension && v("Extension", u.name_extension)}
+            </div>
+            <div className="uz-grid">
               {v("Birthday", ipxDate(u.date_of_birth))}
               {v("Contact number", u.contact_number)}
               {v("Email", u.email)}
@@ -2807,6 +2831,13 @@ export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [],
               <span>What they worked on</span>
               <p>{cur.description || "—"}</p>
             </div>
+            {/* the intern's proof of the day (older submissions have none) */}
+            <div className="oa-tasks oa-proof">
+              <span>Proof</span>
+              <p>{cur.proof_path
+                ? <a className="ix-link" href={fileHref(cur.proof_path)} onClick={(e) => openFile(cur.proof_path, e)} target="_blank" rel="noopener noreferrer">{cur.proof_name || "View file"}</a>
+                : "No proof attached"}</p>
+            </div>
             {steps(cur)}
             <OaHistory name={cur.intern_name}
               rows={[...waiting, ...reviewed].filter((o) => o.id !== cur.id && (o.user_id ? o.user_id === cur.user_id : o.intern_name === cur.intern_name))
@@ -2901,6 +2932,7 @@ export const OA_CSS = `
 .oa-detail > .oa-act, .oa-detail > .ot-act, .oa-detail > .oa-done:last-child { margin-top: auto; }
 .oa-tasks span { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; }
 .oa-tasks p { margin: 0; font-size: 14px; line-height: 1.55; color: #1e293b; white-space: pre-wrap; }
+.oa-tasks.oa-proof { min-height: 0; flex: none; }
 .oa-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; flex: none; }
 .oa-steps li { position: relative; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #94a3b8; line-height: 1.2; min-width: 0; }
 .oa-steps li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -3226,7 +3258,7 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
     const recs = records.filter((r) => r.user_id === u.id);
     // what needs the coordinator's attention for this intern
     const flags = [];
-    const open = recs.some((r) => r.date < today && r.date >= shiftDay(today, -7) && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+    const open = recs.some((r) => r.date < today && r.date >= shiftDay(today, -7) && r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at);
     if (open) flags.push({ k: "amber", t: "No time out" });
     if (recs.length) {
       const have = new Set(recs.map((r) => r.date));
@@ -3235,7 +3267,7 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
       if (n >= 3) flags.push({ k: "red", t: `Absent ${n >= 60 ? "60+" : n} days` });
     }
     const todaySessions = sessionsByDate(recs.filter((r) => r.date === today))[today] || [];
-    const isIn = recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+    const isIn = recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at);
     const tIn = todaySessions[0]?.in;
     const tOut = [...todaySessions].reverse().find((x) => x.out)?.out;
     const hrs = calcHours(recs);
@@ -5805,6 +5837,8 @@ const css = `
   .ix-strip { width: 65px; flex-shrink: 0; transition: width .3s cubic-bezier(.2,.8,.2,1); }
   .ix-strip.open { width: 236px; }
   .ix-backdrop { display: none; position: absolute; inset: 0; background: rgba(15,23,42,0.35); z-index: 18; animation: ix-fade .2s; }
+  /* the page header (z-index 30, for its dropdowns) must go under the dimmed backdrop while the phone menu is open */
+  .ix-page.menu-open .ix-ph { z-index: auto !important; }
   .ix-side { position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: linear-gradient(180deg, #ffffff 0%, #fff6f1 100%); box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px; transition: width .3s cubic-bezier(.2,.8,.2,1); }
   .ix-side::-webkit-scrollbar { display: none; }
   .ix-side.open { width: 236px; }

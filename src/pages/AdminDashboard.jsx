@@ -6,7 +6,7 @@ import Shell, {
   navWithTabs,
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker, Inbox,
   InternMonitor, AccountSecurity, UserDetails, UserForm, RolePickModal, outputRequired, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
-  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, confirmBox } from "../components/DashKit.jsx";
+  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, confirmBox, copyText } from "../components/DashKit.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
@@ -358,7 +358,7 @@ function Home({ user, records, interns, coordinators, loading }) {
   const go = useNavigate();
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
-  const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+  const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "TIME_IN" && !r.checked_out_at);
   // one entry per person, in case someone has more than one open check-in
   const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
   const checkedIn = inNow.length;
@@ -3006,7 +3006,7 @@ function KioskHistory({ kiosk }) {
             <li key={t.key}>
               <span className="ks-hist-av">{photo(t.photo) ? <img src={photo(t.photo)} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : null}<i>{String(t.name || "?").charAt(0)}</i></span>
               <span className="ks-hist-who"><b>{t.name}</b><small>{t.student_id || ""}{t.offline ? " · saved offline" : ""}</small></span>
-              <span className={t.action === "CHECK_IN" ? "ks-hist-act in" : "ks-hist-act out"}>{t.action === "CHECK_IN" ? "Time in" : "Time out"}</span>
+              <span className={t.action === "TIME_IN" ? "ks-hist-act in" : "ks-hist-act out"}>{t.action === "TIME_IN" ? "Time in" : "Time out"}</span>
               <time>{String(t.time || "").replace(/(\d{1,2}:\d\d):\d\d/, "$1")}</time>
             </li>
           ))}
@@ -3090,7 +3090,10 @@ function Kiosks({ interns = [], onAlerts }) {
   const toggle = (k) => call(`${API}/admin/kiosks/${k.id}`, "PATCH", { active: !k.active }, "on" + k.id);
   const remove = async (k) => (await confirmBox({ title: "Remove this kiosk?", message: `Remove "${k.name}"? Its key stops working.`, ok: "Yes, remove", danger: true })) && !!(await call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id));
   const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}${readerPick !== "auto" ? `&reader=${readerPick}` : ""}` : "";
-  const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select it by hand */ } };
+  const copy = async () => {
+    if (await copyText(link)) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
+    else setMsg({ type: "error", text: "Couldn't copy. Select the link and press Ctrl + C." });
+  };
   const seen = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Never");
   const added = (d) => (d ? new Date(String(d).replace(" ", "T")).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
   const norm = (v) => String(v || "").trim().toLowerCase();
@@ -3140,7 +3143,7 @@ function Kiosks({ interns = [], onAlerts }) {
     ),
     body: (<>
       <Msg msg={msg} />
-      <div className="rq2-kv">
+      <div className="rq2-kv ks-kv">
         <div><small>HTE</small><b title={cur.placement || ""}>{cur.placement || "CCIS · every intern"}</b></div>
         <div><small>Interns who can tap</small><b className={canTap(cur) ? "" : "ks-zero"}>{canTap(cur)}</b></div>
         <div><small>Last used</small><b>{seen(cur.last_seen_at)}</b></div>
@@ -3247,6 +3250,10 @@ const KIOSK_CSS = `
   .ix-page .ks-dot.on { background: #16a34a; box-shadow: 0 0 0 3px #dcfce7; }
   .ix-page .ks-ok { color: #15803d !important; } .ix-page .ks-off { color: #94a3b8 !important; }
   .ix-page .ks-addbtn2 { flex: none; margin: 6px 6px 0; justify-content: center; }
+  /* kiosk facts: the HTE name wraps onto two lines instead of being cut ("CCIS · every inte…") */
+  .ix-page .rq2-kv.ks-kv { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr); }
+  .ix-page .rq2-kv.ks-kv small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ix-page .rq2-kv.ks-kv b { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.3; }
   .ix-page .ks-setup { border: 1px solid #fbcfb5; background: #fff7f2; border-radius: 12px; padding: 12px 14px; flex: none; }
   .ix-page .ks-setup-h { display: flex; align-items: center; gap: 8px; color: #c2410c; }
   .ix-page .ks-setup-h b { flex: 1; color: #111827; font-size: 14px; }

@@ -162,6 +162,8 @@ export function OnlineQueue({ mine = [], withSup = [], done = [], onReview, role
               <Facts items={[["Counts as", "8 hours (8:00 AM – 5:00 PM)"], !sup && ["Supervisor", o.endorser_name || o.supervisor_name || "None assigned"], ["Sent", stamp(o.submitted_at || o.created_at)]]} />
               {reason && <div className="aq-note warn"><b>Why they weren't at the office</b><p>{reason}</p></div>}
               <div className="aq-note"><b>What they worked on</b><p>{tasks || "—"}</p></div>
+              {/* the intern's proof of the day (older submissions have none) */}
+              {o.proof_path ? <FileBox key={`p${o.id}`} path={o.proof_path} name={o.proof_name} /> : <div className="aq-note warn"><b>No proof attached</b></div>}
               {o.endorse_remarks && <div className="aq-note ok"><b>Supervisor's note</b><p>{o.endorse_remarks}</p></div>}
               <Steps list={steps(o)} />
               {others.length > 0 && (
