@@ -64,9 +64,40 @@ const handle401 = (res, url) => {
   }
 };
 
+/* Load timer (for testing, e.g. ST-03): after a page is opened or reloaded, the Console shows
+   "[load] /admin: all data loaded in 1.84 s (19 requests)". It counts from the moment the page started
+   loading until the last of its first data requests has answered. The repeating checks for new data
+   (/live, ping) are not counted, so the number does not grow while the page stays open. */
+const LOAD = { busy: 0, n: 0, last: 0, done: false, timer: null };
+const skipTimer = (url) => /\/live\b|\/ping\b/.test(url);
+const loadStart = (url) => {
+  if (LOAD.done || skipTimer(url)) return false;
+  LOAD.busy++; LOAD.n++; clearTimeout(LOAD.timer);
+  return true;
+};
+const loadEnd = () => {
+  LOAD.busy--; LOAD.last = performance.now();
+  if (LOAD.busy > 0) return;
+  clearTimeout(LOAD.timer);
+  // nothing new asked for 1 second: the page has everything it needs
+  LOAD.timer = setTimeout(() => {
+    if (LOAD.busy > 0 || LOAD.done) return;
+    LOAD.done = true;
+    const s = (LOAD.last / 1000).toFixed(2);
+    window.__pageLoad = Number(s);
+    console.log(`%c[load] ${window.location.pathname}: all data loaded in ${s} s (${LOAD.n} requests)`, "color:#16a34a;font-weight:bold");
+  }, 1000);
+};
+
 window.fetch = async (input, init = {}) => {
   const url = typeof input === "string" ? input : input?.url || "";
   if (!url.startsWith(API_BASE)) return realFetch(input, init);
+  const timed = loadStart(url);
+  try { return await apiFetch(url, input, init); }
+  finally { if (timed) loadEnd(); }
+};
+
+async function apiFetch(url, input, init) {
 
   const token = tokenOf();
   const headers = new Headers(init.headers || (typeof input !== "string" ? input.headers : undefined));
@@ -100,7 +131,7 @@ window.fetch = async (input, init = {}) => {
   // every caller gets its own copy of the answer
   const noBody = [204, 205, 304].includes(d.status);
   return new Response(noBody ? null : d.body, { status: d.status, statusText: d.statusText, headers: d.headers });
-};
+}
 
 function PrivateRoute({ children, roles }) {
   const user = JSON.parse(sessionStorage.getItem("user") || "null");

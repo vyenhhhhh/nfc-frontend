@@ -289,7 +289,9 @@ export default function LoginForm({ variant = "student" }) {
   // reads the server's answer even when it is not JSON (an error page), and gives a clear message
   const readLogin = async (res, fallback) => {
     const data = await res.json().catch(() => ({}));
-    if (res.status === 429) throw new Error("Too many login attempts. Please wait a minute and try again.");
+    // 429 is either this account's 15-minute lock (the server's own message says so) or the
+    // per-device limit on logins (Laravel's "Too Many Attempts.")
+    if (res.status === 429) throw new Error(/locked/i.test(data.message || "") ? data.message : "Too many login attempts. Please wait a minute and try again.");
     if (!res.ok) throw new Error(data.message || (res.status >= 500 ? "The server had a problem. Please try again in a moment." : fallback));
     return data;
   };

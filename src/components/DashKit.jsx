@@ -4618,7 +4618,7 @@ ${segIn(" > button:disabled")} { opacity: .5; cursor: not-allowed; }
 /* Computers: the last card (or tab content) of every page grows down to the bottom of the white panel,
    so no page ends with a short card and empty space under it. Taller pages still scroll as before. */
 const FILL_CSS = `
-@media (min-width: 1001px) and (min-height: 600px) {
+@media (min-width: 1200px) and (min-height: 600px) {
   .ix-page.lay2 .ix-main { display: flex !important; flex-direction: column !important; }
   .ix-page.lay2 .ix-main > .ix-content { flex: 1 0 auto; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main > .ix-content > :nth-last-child(1 of :not(style, script, .ix-modal-wrap)) { flex-grow: 1; }
@@ -5730,6 +5730,14 @@ const css = `
      so a short screen never gets a second, grey page scrollbar */
   html, body { overflow: hidden; }
   .ix-page { height: calc(100vh / var(--fit, 1)); display: flex; flex-direction: column; background: #f3f5f7; }
+  /* phones and tablets: the visible height (without the browser's address bar and toolbar), so the bottom
+     of every page, with its last card's border, can be scrolled into view */
+  @supports (height: 100dvh) { .ix-page { height: calc(100dvh / var(--fit, 1)); } }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  @media (max-width: 640px) {
+    .ix-page.lay2 .ix-main { padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)) !important; }
+    .ix-page.lay2 .ix-nav .ix-top-title h2 { font-size: clamp(17px, 5.2vw, 21px) !important; }
+  }
 
   /* ───── Navbar ───── */
   .ix-nav { height: 75px; flex-shrink: 0; background: var(--ix-surface, #fff); display: flex; align-items: center; gap: 10px; padding: 0 22px 0 15px; position: relative; z-index: 60; box-shadow: 0 4px 14px rgba(15,23,42,0.12); }

@@ -499,6 +499,12 @@ export const dbCss = `
 .ix-page .ix-content .dbx-fin-body { grid-template-columns: 108px minmax(0, 1fr); gap: 18px; padding: 10px 18px 18px; }
 /* the milestone labels (0% … 100% and the dates) are taller than 62px; give them room so the dates don't touch the card's edge */
 .ix-page .ix-content .dbx-fin .dbx-ms { height: 76px; }
+/* narrow screens (phones): the date under every second dot goes one line lower, so the dates don't run into each other */
+@media (max-width: 700px) {
+  .ix-page .ix-content .dbx-ms { margin-left: 16px; margin-right: 16px; }
+  .ix-page .ix-content .dbx-ms > div:nth-of-type(even) small { margin-top: 14px; }
+  .ix-page .ix-content .dbx-fin .dbx-ms { height: 92px; }
+}
 .ix-page .ix-content .dbx-ring { width: 108px; height: 108px; }
 .ix-page .ix-content .dbx-ring > div { width: 84px; height: 84px; }
 .ix-page .ix-content .dbx-ring b { font-size: 20px; }
@@ -580,4 +586,20 @@ export const dbCss = `
   .ix-page .ix-content .dbx-person > .dbx-line { grid-column: 2 / -1; grid-row: 2; }
   .ix-page .ix-content .dbx-person > .ix-avatar, .ix-page .ix-content .dbx-person > :first-child { grid-row: 1 / 3; }
 }
+
+/* phones: the ring above the finish date, and the milestone row gets the card's full width,
+   so the five dates have room and never run into each other */
+@media (max-width: 640px) {
+  .ix-page .ix-content .dbx-fin-body { grid-template-columns: 1fr !important; justify-items: center; text-align: center; gap: 12px !important; padding: 14px 16px 16px !important; }
+  .ix-page .ix-content .dbx-eta { width: 100%; }
+  .ix-page .ix-content .dbx-fin .dbx-ms { height: 70px !important; margin: 14px 4px 0 !important; }
+  .ix-page .ix-content .dbx-ms > div:nth-of-type(even) small { margin-top: 0 !important; }
+  .ix-page .ix-content .dbx-ms > div:first-of-type { transform: none; align-items: flex-start; }
+  .ix-page .ix-content .dbx-ms > div:last-of-type { transform: translateX(-100%); align-items: flex-end; }
+  .ix-page .ix-content .dbx-ms small { font-size: 10px; }
+  /* number tiles: the label may take two lines instead of being cut */
+  .ix-page .ix-content .dbx-num small { white-space: normal; line-height: 1.25; overflow-wrap: anywhere; }
+  .ix-page .ix-content .dbx-num em { line-height: 1.3; }
+}
+
 `;

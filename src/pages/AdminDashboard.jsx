@@ -10,7 +10,7 @@ import Shell, {
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
-import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, useExcused, excusedLabels, CertifyBar, DTR_PICK_CSS, useDtrCerts, verifierOf } from "./InternDashboard.jsx";
+import { internCss, cardUnify, CS48_CSS, Cs48Sheet, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, useExcused, excusedLabels, CertifyBar, DTR_PICK_CSS, useDtrCerts, verifierOf } from "./InternDashboard.jsx";
 import { CardRequests } from "../components/NfcCards.jsx";
 import CardAlerts from "../components/CardAlerts.jsx";
 import { currentFit } from "../fit.js";
@@ -1694,8 +1694,8 @@ export function DTR({ interns, records, canCertify = false }) {
               currentHours={view.totalHrs}
             />
             <div className="cs48-pair">
-              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
-              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
+              <Cs48Sheet html={view.formHtml} />
+              <Cs48Sheet html={view.formHtml} />
             </div>
           </>
         )}

@@ -2314,10 +2314,55 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   );
 }
 
+/* One DTR sheet on screen. On a narrow screen (a phone) the form is drawn at its paper width
+   and scaled down to fit, so it looks like the printed copy instead of squeezing the columns. */
+const CS48_PAPER = 460;   // px: the width the form is laid out at
+export function Cs48Sheet({ html }) {
+  const box = useRef(null);
+  const [scale, setScale] = useState(1);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return undefined;
+    const fit = () => {
+      const w = el.clientWidth;
+      setScale(w > 0 && w < CS48_PAPER ? w / CS48_PAPER : 1);
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    if (ro) ro.observe(el); else window.addEventListener("resize", fit);
+    return () => { if (ro) ro.disconnect(); else window.removeEventListener("resize", fit); };
+  }, []);
+  const inner = scale < 1
+    ? { width: CS48_PAPER, transform: `scale(${scale})`, transformOrigin: "top left" }
+    : null;
+  return (
+    <div className="cs48-card">
+      <div ref={box} className="cs48-fit">
+        <Cs48Scaled html={html} inner={inner} scale={scale} />
+      </div>
+    </div>
+  );
+}
+// keeps the outer box as tall as the scaled sheet (a transform does not change the layout height)
+function Cs48Scaled({ html, inner, scale }) {
+  const ref = useRef(null);
+  const [h, setH] = useState(null);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    setH(scale < 1 ? Math.ceil(ref.current.offsetHeight * scale) : null);
+  }, [html, scale]);
+  return (
+    <div style={h ? { height: h, overflow: "hidden" } : null}>
+      <div ref={ref} style={inner} dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+}
+
 /* ───────────────────────── My DTR (CS Form 48 layout) ───────────────────────── */
 // Same CSS is used for the on-screen preview and the printed copy.
 export const CS48_CSS = `
-.cs48 { font-family: 'Times New Roman', Times, serif; color: #000; font-size: 11px; line-height: 1.25; background: var(--ix-surface, #fff); min-width: 0; }
+.cs48 { font-family: 'Times New Roman', Times, serif; color: #000; font-size: 11px; line-height: 1.25; background: var(--ix-surface, #fff); min-width: 0;
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .cs48 .cs-top { font-size: 12px; }
 .cs48 h2 { margin: 4px 0 6px; text-align: center; font-size: 17px; font-weight: 700; letter-spacing: .3px; color: #000; }
 .cs48 .cs-name, .cs48 .cs-office { text-align: center; font-size: 12.5px; text-transform: uppercase; border-bottom: 1px solid #000; padding: 1px 0; margin: 0 6px; min-height: 16px; }
@@ -2355,6 +2400,10 @@ export const CS48_CSS = `
 @media (max-width: 1100px) {
   .cs48-pair { flex-direction: column; }
   .cs48-pair > .cs48-card { width: 100%; max-width: 560px; margin: 0 auto; }
+}
+@media (max-width: 600px) {
+  .cs48-pair { padding: 8px; gap: 10px; border-radius: 10px; }
+  .cs48-pair > .cs48-card { padding: 10px 8px; }
 }
 `;
 
@@ -2975,8 +3024,8 @@ function MyDtr({ user, records, loading, mode }) {
             />
             {loading ? <Spinner /> : (
               <div className="cs48-pair">
-                <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
-                <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
+                <Cs48Sheet html={view.formHtml} />
+                <Cs48Sheet html={view.formHtml} />
               </div>
             )}
           </>
@@ -3400,7 +3449,7 @@ const NC_CSS = `
 .ix-page .nc-send { align-self: flex-start; }
 .ix-page .nc-sec { margin-top: auto; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #6b7280; padding-top: 6px; }
 /* computers: the page is as tall as the window (set in the component); the card scales to its stage, the status box keeps its size, and the bottom row shares the rest evenly */
-@media (min-width: 1001px) and (min-height: 600px) {
+@media (min-width: 1200px) and (min-height: 600px) {
   .ix-page .ix-main:has(.nc-page) { overflow: hidden !important; }
   .ix-page .nc-page { grid-template-columns: clamp(260px, 26vw, 400px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .ix-page .nc-col { min-height: 0; }
@@ -3421,7 +3470,7 @@ const NC_CSS = `
   .ix-page .ix-card.nc-cardbox.nc-locked { overflow-y: auto; }
 }
 /* tall screens (full HD, full screen): a bigger card and steps, so the rows below don't stretch too far */
-@media (min-width: 1001px) and (min-height: 920px) {
+@media (min-width: 1200px) and (min-height: 920px) {
   .ix-page .nc-info h3 { font-size: 24px; } .ix-page .nc-info > p { font-size: 14.5px; }
   .ix-page .nc-steps { max-width: 720px; margin-top: 18px; }
   /* bigger text in the bottom row too, so it doesn't look small in the taller cards */
@@ -3431,7 +3480,7 @@ const NC_CSS = `
   .ix-page .ix-card.nc-act { padding: 22px 24px !important; gap: 14px; }
   .ix-page .nc-form { gap: 14px; }
 }
-@media (min-width: 1001px) and (max-height: 860px) { .ix-page .nc-info h3 { font-size: 19px; } }
+@media (min-width: 1200px) and (max-height: 860px) { .ix-page .nc-info h3 { font-size: 19px; } }
 
 @media (max-width: 1000px) {
   .ix-page .nc-page { grid-template-columns: 1fr; }
@@ -3610,7 +3659,7 @@ const PF_CSS = `
 .ix-page .pf-sec .sec-change { align-self: flex-start; }
 @media (max-width: 1100px) { .ix-page .pf-stats { gap: 18px; } }
 /* computers: the page fits the window; the four cards share the height left */
-@media (min-width: 901px) and (min-height: 600px) {
+@media (min-width: 1200px) and (min-height: 600px) {
   .ix-page.lay2 .ix-main:has(.pf-page) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
   .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content > * { flex: none; }
@@ -3627,10 +3676,10 @@ const PF_CSS = `
 /* wide screens: three facts per row, so the cards stay short */
 @media (min-width: 1200px) and (max-height: 1000px) { .ix-page .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 /* tall screens: roomier facts so the cards are filled */
-@media (min-width: 901px) and (min-height: 901px) { .ix-page .pf-body { gap: 18px 24px; } .ix-page .pf-kv b { font-size: 14px; } }
+@media (min-width: 1200px) and (min-height: 901px) { .ix-page .pf-body { gap: 18px 24px; } .ix-page .pf-kv b { font-size: 14px; } }
 /* full screen / tall windows: both rows share the extra height evenly and the facts spread out inside each card,
    so no card is left with a big blank at the bottom */
-@media (min-width: 901px) and (min-height: 600px) {
+@media (min-width: 1200px) and (min-height: 600px) {
   .ix-page.lay2 .ix-content .pf-page > .pf-grid:last-child { grid-template-rows: minmax(min-content, 1fr) minmax(min-content, 1fr) !important; }
   .ix-page .ix-card.pf-card { display: flex; flex-direction: column; }
   .ix-page .pf-card > header { flex: none; }
@@ -3639,7 +3688,7 @@ const PF_CSS = `
   .ix-page .pf-sec .sec-card > .sec-row2 { margin-top: auto !important; }
   .ix-page .pf-sec .sec-card > .sec-change { margin-bottom: auto !important; margin-top: clamp(6px, 1.6vh, 18px) !important; }
 }
-@media (min-width: 901px) and (min-height: 960px) {
+@media (min-width: 1200px) and (min-height: 960px) {
   .ix-page .pf-who h2 { font-size: 24px; }
   .ix-page .pf-sub { font-size: 13.5px; }
   .ix-page .pf-stats b { font-size: 22px; } .ix-page .pf-stats small { font-size: 12.5px; }
@@ -3649,7 +3698,7 @@ const PF_CSS = `
   .ix-page .pf-sec .sec-card > :not(.ipv-title) { margin-left: 22px !important; margin-right: 22px !important; }
   .ix-page .pf-sec .sec-hint { font-size: 12.5px; }
 }
-@media (min-width: 901px) and (max-height: 800px) {
+@media (min-width: 1200px) and (max-height: 800px) {
   .ix-page .pf-sec .sec-hint { display: none; }
   .ix-page .pf-kv small { margin-bottom: 0; font-size: 11px; } .ix-page .pf-kv b { font-size: 12.5px; }
   .ix-page .pf-head .ix-avatar, .ix-page .pf-head > :first-child { transform: scale(.85); }
@@ -4445,4 +4494,82 @@ export const internCss = `
 .rq-steps li.fail span { color: #dc2626; font-weight: 600; }
 .rq-status { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .rq-status small { font-size: 11.5px; color: #6b7280; font-style: italic; max-width: 220px; white-space: normal; }
+
+/* ═════════════ Phones and tablets: layouts made for the smaller screen (not the computer layout squeezed) ═════════════ */
+/* every list row of My Request is one card: what + status on top, date + steps below */
+@media (max-width: 760px) {
+  .ix-page .rq-table tbody tr { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "what st" "date steps"; align-items: center; gap: 8px 12px;
+    padding: 12px 14px 12px 15px !important; border-bottom: 1px solid #f1f2f4; position: relative; background: #fff !important; }
+  .ix-page .rq-table tbody tr td { background: transparent !important; box-shadow: none !important; padding: 0 !important; border: 0 !important; }
+  .ix-page .rq-table tbody tr::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: #e5e7eb; }
+  .ix-page .rq-table tbody tr.g-waiting::before { background: #f59e0b; } .ix-page .rq-table tbody tr.g-approved::before { background: #22c55e; } .ix-page .rq-table tbody tr.g-rejected::before { background: #ef4444; }
+  .ix-page .rq-table tbody tr > td:nth-child(1) { grid-area: what; grid-column: auto !important; min-width: 0; }
+  .ix-page .rq-table tbody tr > td:nth-child(2) { grid-area: date; font-size: 12px; padding-left: 40px !important; }
+  .ix-page .rq-table tbody tr > td:nth-child(3) { grid-area: steps; justify-self: end; }
+  .ix-page .rq-table tbody tr > td:nth-child(4) { grid-area: st; justify-self: end; align-self: start; }
+  .ix-page .rq-table .rq-what { min-width: 0 !important; max-width: none !important; }
+  .ix-page .rq-table .rq-what small { -webkit-line-clamp: 2; }
+  .ix-page .rq-bar .mon-sep, .ix-page .rq-filters .mon-sep { display: none; }
+}
+
+/* My online submissions: date tile, then the type + reason, then the status line; the status pill sits top right */
+@media (max-width: 640px) {
+  .ix-page .ix-content .so-hd { padding: 12px 14px; }
+  .ix-page .ix-content .so-row { grid-template-columns: 42px minmax(0, 1fr) !important; grid-template-areas: "dd tx" "dd pill"; gap: 6px 12px !important; align-items: start !important; }
+  .ix-page .ix-content .so-row > .so-dd { grid-area: dd; width: 42px; height: 42px; }
+  .ix-page .ix-content .so-row > .so-tx { grid-area: tx; gap: 4px; }
+  .ix-page .ix-content .so-row > .so-pill { grid-area: pill; justify-self: start; }
+  .ix-page .ix-content .so-tx > b { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; }
+  .ix-page .ix-content .so-tag { margin-bottom: 2px; }
+  .ix-page .ix-content .so-steps { align-items: center; }
+  .ix-page .ix-content .so-steps em { white-space: nowrap !important; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* My Attendance: the progress on top, the three numbers in one even row under it */
+@media (max-width: 760px) {
+  .ix-page .at-sum { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+  .ix-page .at-sum > .at-sum-prog { grid-column: 1 / -1; border-bottom: 1px solid #f1ece9; }
+  .ix-page .at-sum > .at-sum-num { border-left: 0 !important; padding: 10px 12px !important; display: flex; flex-direction: column; gap: 1px; }
+  .ix-page .at-sum > .at-sum-num + .at-sum-num { border-left: 1px solid #f1ece9 !important; }
+  .ix-page .at-sum-num small { font-size: 11px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ix-page .at-sum-num b { font-size: 18px !important; }
+  .ix-page .at-sum-num em { font-size: 10.5px !important; line-height: 1.3 !important; }
+  .ix-page .at-bar { flex-wrap: wrap; gap: 8px; }
+  .ix-page .at-bar .mon-sep { display: none; }
+}
+
+/* Submit MOV: the line under the title gets the full width; the forms button goes on its own line */
+@media (max-width: 640px) {
+  .ix-page .ix-content .ix-ph.has-tabs > .ix-ph-right { width: 100%; justify-content: flex-start; margin: 2px 0 0; }
+  .ix-page .ix-content .ix-ph.has-tabs > .ix-ph-title { width: 100%; max-width: none !important; flex: 1 1 100% !important; }
+  .ix-page .mv-chip { height: auto !important; min-height: 28px !important; padding: 5px 11px !important; text-align: left; line-height: 1.3; white-space: normal; }
+  .ix-page .mv-chip > svg { flex: none; }
+}
+
+/* My Profile on a phone: name, details one per line, then the three numbers in an even row */
+@media (max-width: 640px) {
+  .ix-page .ix-card.pf-head { flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 20px 18px 16px !important; }
+  .ix-page .pf-who { align-items: center; width: 100%; }
+  .ix-page .pf-sub { flex-direction: column; align-items: center; gap: 2px; }
+  .ix-page .pf-sub span + span::before { content: none !important; display: none !important; }
+  .ix-page .pf-tags { justify-content: center; }
+  .ix-page .pf-right { margin-left: 0; width: 100%; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid #f3ece8; }
+  .ix-page .pf-stats { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px !important; width: 100%; }
+  .ix-page .pf-stats div { text-align: center !important; }
+  .ix-page .pf-lock { align-self: center; }
+  .ix-page .pf-body { grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+}
+@media (max-width: 380px) { .ix-page .pf-body { grid-template-columns: 1fr; } }
+
+/* tablets (between a phone and a computer): cards keep their own height (no stretched rows), two columns where they fit */
+@media (min-width: 761px) and (max-width: 1199px) {
+  .ix-page .pf-grid { align-items: start; }
+  .ix-page .pf-body { align-content: start; }
+  .ix-page .nc-row { align-items: start; }
+  .ix-page .nc-tlist { display: block; }
+}
+@media (min-width: 1001px) and (max-width: 1199px) {
+  .ix-page .nc-page { grid-template-columns: 280px minmax(0, 1fr); align-items: start; }
+}
+
 `;
