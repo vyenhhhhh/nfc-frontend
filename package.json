@@ -1,3 +1,6 @@
+
+
+
 {
   "name": "nfc-frontend",
   "private": true,
@@ -26,3 +29,5 @@
     "vite": "^8.0.9"
   }
 }
+
+
