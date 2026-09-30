@@ -1,0 +1,748 @@
+// components/DashKit.jsx
+// Shared shell (navbar + sidebar) and UI pieces for the Admin and Supervisor dashboards.
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+import logo from "../assets/logo.png";
+
+const API = "http://localhost:8000/api";
+export const REQUIRED_HOURS = 486;
+
+/* ───────────────────────── helpers ───────────────────────── */
+export const todayManila = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+export const fmtTime = (v) => (v ? new Date(v).toLocaleTimeString("en-PH") : "—");
+export const esc = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+export function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+// Total hours from a list of attendance records (first check-in / check-out per date)
+export function calcHours(recs) {
+  let total = 0;
+  const byDate = {};
+  recs.forEach((r) => {
+    if (!byDate[r.date]) byDate[r.date] = {};
+    if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
+    if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
+  });
+  Object.values(byDate).forEach(({ in: i, out: o }) => {
+    if (i && o) total += (new Date(o) - new Date(i)) / 3600000;
+  });
+  return Math.round(total * 10) / 10;
+}
+
+/* ───────────────────────── icons ───────────────────────── */
+const PATHS = {
+  home: <path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10" />,
+  list: <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  upload: <><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></>,
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
+  users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" /></>,
+  settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>,
+  chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
+  inbox: <><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z" /></>,
+  logout: <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />,
+  calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>,
+  nfc: <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />,
+  globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>,
+  warn: <><path d="M12 3 2 20h20L12 3z" /><path d="M12 10v5M12 18h.01" /></>,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
+  file: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>,
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  expand: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
+  shrink: <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />,
+  tap: <><path d="M9 11V5a2 2 0 0 1 4 0v6" /><path d="M13 11.5a2 2 0 0 1 4 0V14a6 6 0 0 1-6 6H10a5 5 0 0 1-4.3-2.5L3 13a1.6 1.6 0 0 1 2.6-1.8L9 14" /></>,
+  search: <><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></>,
+  trash: <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14M10 11v6M14 11v6" />,
+  check: <path d="M5 12.5l4.5 4.5L19 7" />,
+  x: <path d="M6 6l12 12M18 6L6 18" />,
+  print: <><path d="M6 9V3h12v6" /><rect x="3" y="9" width="18" height="9" rx="2" /><path d="M7 14h10v7H7z" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
+  clip: <path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" />,
+};
+export const Icon = ({ name, size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {PATHS[name]}
+  </svg>
+);
+
+/* ───────────────────────── UI pieces ───────────────────────── */
+export function Spinner() {
+  return (
+    <div className="ix-spin-wrap" role="status" aria-label="Loading">
+      <div className="ix-spin" />
+    </div>
+  );
+}
+
+export function PageHeader({ title, sub, live, children }) {
+  return (
+    <div className="ix-ph">
+      <div>
+        <h1>{title}</h1>
+        {sub && <p>{sub}</p>}
+      </div>
+      <div className="ix-ph-right">
+        {live && <span className="ix-live"><i /> Live</span>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export function StatCard({ label, value, icon, tone = "orange", sub }) {
+  return (
+    <div className="ix-stat">
+      <div className={`ix-stat-icon ${tone}`}><Icon name={icon} size={20} /></div>
+      <div>
+        <div className="ix-stat-label">{label}</div>
+        <div className="ix-stat-value">{value}</div>
+        {sub && <div className="ix-stat-sub">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+export function Badge({ label, type }) {
+  return <span className={`ix-badge ${type}`}>{label}</span>;
+}
+
+export function Section({ icon, title, count, live, children }) {
+  return (
+    <section className="ix-section">
+      <header>
+        <span className="ix-section-icon"><Icon name={icon} size={16} /></span>
+        <h2>{title}</h2>
+        {live && <span className="ix-live sm"><i /> Live</span>}
+        {count !== undefined && <span className="ix-count">{count}</span>}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+export function Empty({ icon, title, sub }) {
+  return (
+    <div className="ix-empty">
+      <div className="ix-empty-icon"><Icon name={icon} size={26} /></div>
+      <div className="ix-empty-title">{title}</div>
+      {sub && <div className="ix-empty-sub">{sub}</div>}
+    </div>
+  );
+}
+
+export function Table({ headers, rows, empty = "Nothing here yet." }) {
+  if (!rows.length) return <Empty icon="list" title={empty} />;
+  return (
+    <div className="ix-table-wrap">
+      <table className="ix-table">
+        <thead>
+          <tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function Ring({ pct, size = 140, stroke = 12, track = "rgba(255,255,255,0.28)", color = "#fff", children }) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(pct || 0, 100));
+  return (
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} stroke={track} strokeWidth={stroke} fill="none" />
+        <circle
+          cx={size / 2} cy={size / 2} r={r} stroke={color} strokeWidth={stroke} fill="none"
+          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - clamped / 100)}
+          style={{ transition: "stroke-dashoffset .9s cubic-bezier(.2,.8,.2,1)" }}
+        />
+      </svg>
+      <div className="ix-ring-center">{children}</div>
+    </div>
+  );
+}
+
+export function Hero({ tag = "Overview", title, text, facts = [], ring }) {
+  return (
+    <div className="ix-hero">
+      <span className="ix-hero-blob b1" />
+      <span className="ix-hero-blob b2" />
+      <div className="ix-hero-text">
+        <span className="ix-hero-tag"><Icon name="nfc" size={14} /> {tag}</span>
+        <h1>{title}</h1>
+        {text && <p>{text}</p>}
+        {facts.length > 0 && (
+          <div className="ix-hero-facts">
+            {facts.map((f) => (
+              <div key={f.l}><strong>{f.v}</strong><span>{f.l}</span></div>
+            ))}
+          </div>
+        )}
+      </div>
+      {ring && (
+        <Ring pct={ring.pct} size={150} stroke={13}>
+          <strong>{ring.top}</strong>
+          <span>{ring.bottom}</span>
+        </Ring>
+      )}
+    </div>
+  );
+}
+
+export function Msg({ msg }) {
+  if (!msg) return null;
+  return <div className={`ix-msg ${msg.type}`} role="status">{msg.text}</div>;
+}
+
+export function Bar({ pct }) {
+  return (
+    <div className="ix-minibar">
+      <div className="ix-bar-fill" style={{ width: Math.max(0, Math.min(pct || 0, 100)) + "%" }} />
+    </div>
+  );
+}
+
+export function Avatar({ name, status, size = 44 }) {
+  return (
+    <div className="ix-av" style={{ width: size, height: size, fontSize: size * 0.4 }}>
+      {name?.charAt(0).toUpperCase() || "?"}
+      {status && <i className={`ix-dot ${status}`} />}
+    </div>
+  );
+}
+
+export function Modal({ title, sub, onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="ix-modal-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="ix-modal" role="dialog" aria-modal="true" aria-label={title}>
+        <header>
+          <div>
+            <h2>{title}</h2>
+            {sub && <p>{sub}</p>}
+          </div>
+          <button className="ix-modal-x" onClick={onClose} aria-label="Close"><Icon name="x" size={16} /></button>
+        </header>
+        <div className="ix-modal-body">{children}</div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* Shared "Monitor Interns" page (same for admin and supervisor) */
+export function InternMonitor({ interns, records, loading, onRefresh }) {
+  const today = todayManila();
+  const [saving, setSaving] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const updateSettings = async (id, field, value, current) => {
+    setSaving(id);
+    try {
+      await fetch(`${API}/users/${id}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          work_mode: field === "work_mode" ? value : current.work_mode || "onsite",
+          tracking_type: field === "tracking_type" ? value : current.tracking_type || "hours",
+        }),
+      });
+      onRefresh && onRefresh();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const rows = interns
+    .filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase()))
+    .map((u) => {
+      const recs = records.filter((r) => r.user_id === u.id);
+      return {
+        u,
+        isIn: recs.some((r) => r.date === today && r.action === "CHECK_IN" && !r.checked_out_at),
+        days: [...new Set(recs.map((r) => r.date))].length,
+        last: recs[0]?.date,
+      };
+    });
+  const present = rows.filter((x) => x.isIn).length;
+
+  return (
+    <>
+      <PageHeader title="Monitor Interns" sub="Real-time status of all interns." live />
+      <div className="ix-toolbar">
+        <div className="ix-search">
+          <Icon name="search" size={16} />
+          <input type="text" placeholder="Search intern..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <span className="ix-chip green"><i /> {present} present now</span>
+        <span className="ix-chip">{rows.length - present} not in</span>
+      </div>
+
+      {loading ? <Spinner /> : rows.length === 0 ? (
+        <div className="ix-card"><Empty icon="users" title="No interns found" /></div>
+      ) : (
+        <div className="ix-intern-grid">
+          {rows.map(({ u, isIn, days, last }) => (
+            <div key={u.id} className="ix-ic">
+              <div className="ix-ic-top">
+                <Avatar name={u.name} status={isIn ? "on" : "off"} />
+                <div className="ix-ic-id">
+                  <strong>{u.name}</strong>
+                  <span>{u.email}</span>
+                </div>
+                <Badge label={isIn ? "Present Now" : "Not In"} type={isIn ? "in" : "out"} />
+              </div>
+              <div className="ix-ic-stats">
+                <div><strong>{days}</strong><span>Days present</span></div>
+                <div><strong>{last || "—"}</strong><span>Last record</span></div>
+              </div>
+              <div className="ix-ic-foot">
+                <label className="ix-mini">
+                  <span>Work mode</span>
+                  <select
+                    className="ix-select"
+                    value={u.work_mode || "onsite"}
+                    disabled={saving === u.id}
+                    onChange={(e) => updateSettings(u.id, "work_mode", e.target.value, u)}
+                  >
+                    <option value="onsite">Onsite</option>
+                    <option value="offsite">Offsite (WFH)</option>
+                  </select>
+                </label>
+                <label className="ix-mini">
+                  <span>Tracking type</span>
+                  <select
+                    className="ix-select"
+                    value={u.tracking_type || "hours"}
+                    disabled={saving === u.id}
+                    onChange={(e) => updateSettings(u.id, "tracking_type", e.target.value, u)}
+                  >
+                    <option value="hours">Hours-based</option>
+                    <option value="output">Output-based</option>
+                  </select>
+                </label>
+                {saving === u.id && <em>Saving...</em>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ───────────────────────── Shell (navbar + sidebar) ───────────────────────── */
+const ROLE_LABEL = {
+  intern: "OJT Intern",
+  supervisor: "Supervisor",
+  admin: "Administrator",
+  ojt_coordinator: "OJT Coordinator",
+};
+
+export default function Shell({ navItems, user, children }) {
+  const navigate = useNavigate();
+  const { pathname: path } = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isFull, setIsFull] = useState(false);
+
+  // One login page for everyone (it has the Intern / Employee picker)
+  const loginPath = "/login";
+
+  useEffect(() => {
+    if (!user?.id) navigate(loginPath, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
+    const onFs = () => setIsFull(!!document.fullscreenElement);
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFs);
+    };
+  }, []);
+
+  useEffect(() => setMenuOpen(false), [path]);
+
+  const logout = () => {
+    sessionStorage.removeItem("user");
+    localStorage.removeItem("ojt_remember"); // stops "Remember me" from signing back in
+    navigate(loginPath, { replace: true });
+  };
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  };
+
+  return (
+    <div className="ix-page">
+      <header className="ix-nav">
+        <button className="ix-logo-btn" onClick={() => navigate(navItems[0].path)} aria-label="Home">
+          <img src={logo} alt="CSU CCIS" className="ix-nav-logo" />
+          <span className={menuOpen ? "ix-brand-name show" : "ix-brand-name"} aria-hidden={!menuOpen}>
+            CARAGA STATE<br />UNIVERSITY
+          </span>
+        </button>
+
+        <button
+          className="ix-icon-btn"
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((o) => !o)}
+        >
+          <Icon name="menu" size={18} />
+        </button>
+        <button className="ix-icon-btn ix-fs-btn" aria-label="Toggle fullscreen" onClick={toggleFullscreen}>
+          <Icon name={isFull ? "shrink" : "expand"} size={18} />
+        </button>
+
+        <div className="ix-nav-right">
+          <div className="ix-user">
+            <div className="ix-avatar">{user?.name?.charAt(0).toUpperCase() || "?"}</div>
+            <div className="ix-user-text">
+              <strong>{user?.name || "User"}</strong>
+              <span>{ROLE_LABEL[user?.role] || "Staff"}</span>
+            </div>
+          </div>
+          <button className="ix-logout" onClick={logout}>
+            <Icon name="logout" size={17} /> <span>Logout</span>
+          </button>
+        </div>
+      </header>
+
+      <div className="ix-body">
+        <div className={menuOpen ? "ix-strip open" : "ix-strip"} />
+        {menuOpen && <div className="ix-backdrop" onClick={() => setMenuOpen(false)} />}
+        <aside className={menuOpen ? "ix-side open" : "ix-side"} aria-label="Main navigation">
+          {navItems.map((it) => (
+            <button
+              key={it.path}
+              className={path === it.path ? "ix-side-item active" : "ix-side-item"}
+              onClick={() => navigate(it.path)}
+              title={it.label}
+              aria-current={path === it.path ? "page" : undefined}
+            >
+              <span className="ix-side-icon"><Icon name={it.icon} /></span>
+              <span className="ix-side-label">{it.label}</span>
+            </button>
+          ))}
+          <div className="ix-side-foot">CSU CCIS OJT</div>
+        </aside>
+
+        <main className="ix-main">
+          <div className="ix-content" key={path}>{children}</div>
+        </main>
+      </div>
+
+      <style>{css}</style>
+    </div>
+  );
+}
+
+/* ───────────────────────── styles ───────────────────────── */
+const css = `
+  .ix-page, .ix-page * { box-sizing: border-box; }
+  html, body, #root { height: 100%; width: 100%; margin: 0; }
+  .ix-page { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #0f172a; }
+  .ix-page h1, .ix-page h2, .ix-page p, .ix-page dl, .ix-page dd { margin: 0; }
+  .ix-page button, .ix-page input, .ix-page select, .ix-page textarea { font-family: inherit; }
+  .ix-page { height: 100vh; min-height: 620px; display: flex; flex-direction: column; background: #f3f5f7; }
+
+  /* ───── Navbar ───── */
+  .ix-nav { height: 75px; flex-shrink: 0; background: #fff; display: flex; align-items: center; gap: 10px; padding: 0 22px 0 15px; position: relative; z-index: 30; box-shadow: 0 4px 14px rgba(15,23,42,0.12); }
+  .ix-logo-btn { background: none; border: none; cursor: pointer; display: flex; align-items: center; text-align: left; margin-right: 14px; }
+  .ix-nav-logo { height: 42px; width: auto; flex-shrink: 0; }
+  .ix-brand-name { display: block; overflow: hidden; white-space: nowrap; max-width: 0; opacity: 0; margin-left: 0; font-size: 11.5px; font-weight: 800; line-height: 1.2; letter-spacing: .8px; color: #0b1220; transition: max-width .35s cubic-bezier(.2,.8,.2,1), opacity .25s, margin-left .35s; }
+  .ix-brand-name.show { max-width: 170px; opacity: 1; margin-left: 10px; }
+  .ix-icon-btn { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 8px; display: flex; color: #1e293b; transition: background .15s, color .15s; }
+  .ix-icon-btn:hover { background: #fdeee7; color: #e8582a; }
+  .ix-nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .ix-user { display: flex; align-items: center; gap: 10px; }
+  .ix-avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 6px 14px rgba(232,88,42,0.35); }
+  .ix-user-text { display: flex; flex-direction: column; line-height: 1.25; }
+  .ix-user-text strong { font-size: 13px; font-weight: 700; }
+  .ix-user-text span { font-size: 11px; color: #94a3b8; }
+  .ix-logout { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 10px; cursor: pointer; background: #fff; border: 1.5px solid #e2e8f0; color: #334155; font-size: 13px; font-weight: 600; transition: all .15s; }
+  .ix-logout:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
+  .ix-icon-btn:focus-visible, .ix-logout:focus-visible, .ix-logo-btn:focus-visible, .ix-side-item:focus-visible, .ix-b:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+
+  /* ───── Sidebar (white, pushes the page) ───── */
+  .ix-body { flex: 1; display: flex; min-height: 0; position: relative; }
+  .ix-strip { width: 65px; flex-shrink: 0; transition: width .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-strip.open { width: 236px; }
+  .ix-backdrop { display: none; position: absolute; inset: 0; background: rgba(15,23,42,0.35); z-index: 18; animation: ix-fade .2s; }
+  .ix-side { position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow: hidden; background: #fff; box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px; transition: width .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-side.open { width: 236px; }
+  .ix-side-item { position: relative; display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px; padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #334155; border-radius: 12px; white-space: nowrap; text-align: left; transition: background .15s, color .15s; }
+  .ix-side-item:hover { background: #fdeee7; color: #e8582a; }
+  .ix-side-item.active { background: #fdeee7; color: #e8582a; }
+  .ix-side-item.active::before { content: ""; position: absolute; left: -10px; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: #e8582a; }
+  .ix-side-icon { display: flex; flex-shrink: 0; }
+  .ix-side-label { font-size: 14px; font-weight: 600; opacity: 0; transform: translateX(-6px); transition: opacity .2s, transform .25s; }
+  .ix-side.open .ix-side-label { opacity: 1; transform: none; transition-delay: .1s; }
+  .ix-side-foot { margin-top: auto; padding: 18px 22px; font-size: 11px; letter-spacing: .5px; color: #94a3b8; white-space: nowrap; opacity: 0; transition: opacity .2s; }
+  .ix-side.open .ix-side-foot { opacity: 1; transition-delay: .15s; }
+
+  /* ───── Main ───── */
+  .ix-main { flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px 40px; }
+  .ix-content { max-width: 1180px; margin: 0 auto; animation: ix-rise .45s cubic-bezier(.2,.8,.2,1) backwards; }
+  .ix-ph { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
+  .ix-ph h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.4px; color: #0b1220; }
+  .ix-ph p { font-size: 13.5px; color: #64748b; margin-top: 3px; }
+  .ix-ph-right { display: flex; align-items: center; gap: 10px; }
+  .ix-live { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 99px; background: #ecfdf3; color: #15803d; font-size: 12px; font-weight: 600; }
+  .ix-live.sm { padding: 2px 9px; font-size: 11px; }
+  .ix-live i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: ix-blink 1.6s ease-in-out infinite; }
+
+  /* ───── Hero ───── */
+  .ix-hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; padding: 28px 32px; border-radius: 24px; margin-bottom: 20px; color: #fff; background: linear-gradient(135deg, #f2864f 0%, #e8582a 55%, #d94a1c 100%); box-shadow: 0 20px 44px rgba(232,88,42,0.30); }
+  .ix-hero-blob { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.10); pointer-events: none; }
+  .ix-hero-blob.b1 { width: 320px; height: 320px; right: -80px; top: -140px; }
+  .ix-hero-blob.b2 { width: 220px; height: 220px; left: 30%; bottom: -130px; background: rgba(255,255,255,0.07); }
+  .ix-hero-text { position: relative; max-width: 560px; }
+  .ix-hero-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: 99px; background: rgba(255,255,255,0.2); font-size: 11.5px; font-weight: 600; }
+  .ix-hero h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-top: 12px; }
+  .ix-hero p { font-size: 14px; line-height: 1.55; margin-top: 6px; color: rgba(255,255,255,0.92); }
+  .ix-hero-facts { display: flex; gap: 26px; margin-top: 18px; flex-wrap: wrap; }
+  .ix-hero-facts div { display: flex; flex-direction: column; }
+  .ix-hero-facts strong { font-size: 20px; font-weight: 800; }
+  .ix-hero-facts span { font-size: 11.5px; color: rgba(255,255,255,0.8); }
+  .ix-ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; }
+  .ix-ring-center strong { font-size: 26px; font-weight: 800; line-height: 1.1; }
+  .ix-ring-center span { font-size: 11px; opacity: .85; }
+  .ix-hero > div:last-child { position: relative; }
+  .ix-alert { display: flex; align-items: center; gap: 10px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 14px; padding: 12px 16px; font-size: 13px; margin-bottom: 20px; }
+  .ix-alert .ix-b { margin-left: auto; }
+
+  /* ───── Stats ───── */
+  .ix-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin-bottom: 20px; }
+  .ix-stat { display: flex; align-items: center; gap: 14px; background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); transition: transform .2s, box-shadow .2s; }
+  .ix-stat:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 14px 30px rgba(15,23,42,0.09); }
+  .ix-stat-icon { width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ix-stat-icon.orange { background: #fdeee7; color: #e8582a; }
+  .ix-stat-icon.blue { background: #e8f1fd; color: #2563eb; }
+  .ix-stat-icon.green { background: #e6f7ee; color: #16a34a; }
+  .ix-stat-icon.purple { background: #f0eafd; color: #7c3aed; }
+  .ix-stat-label { font-size: 11.5px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; }
+  .ix-stat-value { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2; }
+  .ix-stat-sub { font-size: 11px; color: #94a3b8; }
+
+  /* ───── Cards / sections ───── */
+  .ix-section, .ix-card { background: #fff; border-radius: 20px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); overflow: hidden; }
+  .ix-section { margin-bottom: 20px; }
+  .ix-section header { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid #f1f5f9; }
+  .ix-section header h2 { font-size: 14.5px; font-weight: 700; }
+  .ix-section-icon { width: 28px; height: 28px; border-radius: 9px; background: #fdeee7; color: #e8582a; display: flex; align-items: center; justify-content: center; }
+  .ix-count { margin-left: auto; padding: 2px 10px; border-radius: 99px; background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 600; }
+  .ix-section .ix-live.sm + .ix-count { margin-left: 0; }
+  .ix-section header .ix-live.sm { margin-left: 4px; }
+  .ix-card { padding: 22px; }
+  .ix-card.flush { padding: 0; }
+  .ix-card-label { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .6px; }
+
+  /* ───── Table ───── */
+  .ix-table-wrap { overflow-x: auto; }
+  .ix-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ix-table th { text-align: left; padding: 12px 20px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #94a3b8; background: #fafbfc; white-space: nowrap; }
+  .ix-table td { padding: 13px 20px; border-top: 1px solid #f1f5f9; color: #334155; white-space: nowrap; vertical-align: middle; }
+  .ix-table tbody tr { transition: background .12s; }
+  .ix-table tbody tr:hover { background: #fffaf7; }
+  .ix-mono { font-family: ui-monospace, monospace; font-size: 10.5px; color: #94a3b8; }
+  .ix-muted { color: #94a3b8; }
+  .ix-link { color: #e8582a; font-weight: 600; text-decoration: none; }
+  .ix-link:hover { text-decoration: underline; }
+
+  .ix-badge { display: inline-block; padding: 3px 11px; border-radius: 99px; font-size: 11.5px; font-weight: 700; letter-spacing: .3px; }
+  .ix-badge.in { background: #e6f7ee; color: #15803d; }
+  .ix-badge.out { background: #fdeee7; color: #d94a1c; }
+  .ix-badge.online { background: #f0eafd; color: #6d28d9; }
+  .ix-badge.onsite { background: #e8f1fd; color: #1d4ed8; }
+  .ix-badge.approved { background: #e6f7ee; color: #15803d; }
+  .ix-badge.rejected { background: #fef2f2; color: #dc2626; }
+  .ix-badge.pending { background: #fffbeb; color: #b45309; }
+  .ix-badge.r-intern { background: #e6f7ee; color: #15803d; }
+  .ix-badge.r-supervisor { background: #f0eafd; color: #6d28d9; }
+  .ix-badge.r-admin { background: #fff4e0; color: #b45309; }
+  .ix-badge.r-ojt_coordinator { background: #e8f1fd; color: #1d4ed8; }
+
+  .ix-empty { padding: 36px 20px; text-align: center; }
+  .ix-empty-icon { width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 50%; background: #fdeee7; color: #e8582a; display: flex; align-items: center; justify-content: center; }
+  .ix-empty-title { font-size: 14px; font-weight: 700; }
+  .ix-empty-sub { font-size: 12.5px; color: #94a3b8; margin-top: 3px; }
+  .ix-spin-wrap { display: flex; justify-content: center; padding: 36px; }
+  .ix-spin { width: 30px; height: 30px; border-radius: 50%; border: 3px solid #fde3d6; border-top-color: #e8582a; animation: ix-spin .8s linear infinite; }
+
+  /* ───── Buttons / inputs ───── */
+  .ix-b { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1.5px solid transparent; transition: all .15s; white-space: nowrap; }
+  .ix-b:disabled { opacity: .6; cursor: default; }
+  .ix-b.primary { color: #fff; background: linear-gradient(135deg, #f2733a, #e04a1a); box-shadow: 0 8px 18px rgba(232,88,42,0.3); }
+  .ix-b.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 24px rgba(232,88,42,0.4); }
+  .ix-b.ghost { background: #fff; border-color: #e2e8f0; color: #475569; }
+  .ix-b.ghost:hover:not(:disabled) { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
+  .ix-b.danger { background: #fff; border-color: #fca5a5; color: #dc2626; }
+  .ix-b.danger:hover:not(:disabled) { background: #fef2f2; }
+  .ix-b.ok { background: #16a34a; color: #fff; box-shadow: 0 8px 18px rgba(22,163,74,0.25); }
+  .ix-b.ok:hover:not(:disabled) { background: #15803d; }
+  .ix-b.sm { padding: 6px 12px; font-size: 12px; border-radius: 8px; }
+  .ix-toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .ix-search { display: flex; align-items: center; gap: 8px; padding: 0 14px; background: #fff; border: 1.5px solid #e2e8f0; border-radius: 12px; color: #94a3b8; transition: border-color .15s, box-shadow .15s; min-width: 240px; }
+  .ix-search:focus-within { border-color: #e8582a; box-shadow: 0 0 0 4px rgba(232,88,42,0.12); color: #e8582a; }
+  .ix-search input { border: none; outline: none; background: transparent; padding: 10px 0; font-size: 13.5px; color: #1e293b; flex: 1; min-width: 0; }
+  .ix-input, .ix-select, .ix-field input, .ix-field select, .ix-field textarea { padding: 10px 14px; border: 1.5px solid #e2e8f0; border-radius: 12px; font-size: 13.5px; color: #1e293b; background: #fff; transition: border-color .15s, box-shadow .15s; }
+  .ix-input:focus, .ix-select:focus, .ix-field input:focus, .ix-field select:focus, .ix-field textarea:focus { outline: none; border-color: #e8582a; box-shadow: 0 0 0 4px rgba(232,88,42,0.12); }
+  .ix-field input::placeholder { color: #b6c0cc; }
+  .ix-chip { display: inline-flex; align-items: center; gap: 7px; padding: 6px 13px; border-radius: 99px; background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 600; }
+  .ix-chip.green { background: #ecfdf3; color: #15803d; }
+  .ix-chip.green i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+  .ix-msg { padding: 10px 14px; border-radius: 10px; border: 1px solid; font-size: 13px; margin-bottom: 16px; }
+  .ix-msg.success { background: #f0fdf4; border-color: #86efac; color: #15803d; }
+  .ix-msg.error { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+  .ix-note { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.55; color: #9a3412; background: #fff5ef; border: 1px solid #fde1d5; padding: 12px 14px; border-radius: 12px; margin-top: 16px; }
+  .ix-note svg { flex-shrink: 0; margin-top: 1px; color: #e8582a; }
+
+  /* ───── Progress ───── */
+  .ix-minibar { flex: 1; min-width: 90px; height: 8px; border-radius: 99px; background: #f1f5f9; overflow: hidden; }
+  .ix-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #f2864f, #e8582a); transition: width .8s cubic-bezier(.2,.8,.2,1); }
+  .ix-prog { display: flex; align-items: center; gap: 10px; min-width: 160px; }
+  .ix-prog span { font-size: 11.5px; font-weight: 600; color: #64748b; width: 34px; text-align: right; }
+
+  /* ───── Avatars ───── */
+  .ix-av { position: relative; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; }
+  .ix-dot { position: absolute; right: -1px; bottom: -1px; width: 13px; height: 13px; border-radius: 50%; border: 2.5px solid #fff; background: #cbd5e1; }
+  .ix-dot.on { background: #22c55e; }
+
+  /* ───── Intern monitor cards ───── */
+  .ix-intern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .ix-ic { background: #fff; border-radius: 20px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); transition: transform .2s, box-shadow .2s; }
+  .ix-ic:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 14px 30px rgba(15,23,42,0.09); }
+  .ix-ic-top { display: flex; align-items: center; gap: 12px; }
+  .ix-ic-id { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .ix-ic-id strong { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ix-ic-id span { font-size: 12px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ix-ic-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0; }
+  .ix-ic-stats div { background: #fafbfc; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; }
+  .ix-ic-stats strong { font-size: 15px; font-weight: 800; }
+  .ix-ic-stats span { font-size: 11px; color: #94a3b8; }
+  .ix-ic-foot { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid #f1f5f9; }
+  .ix-ic-foot em { font-size: 12px; color: #94a3b8; font-style: normal; align-self: center; }
+  .ix-mini { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 130px; }
+  .ix-mini span { font-size: 10.5px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .4px; }
+  .ix-mini .ix-select { padding: 8px 10px; font-size: 12.5px; border-radius: 10px; }
+
+  /* ───── Modal ───── */
+  .ix-modal-wrap, .ix-modal-wrap * { box-sizing: border-box; }
+  .ix-modal-wrap { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #0f172a; }
+  .ix-modal-wrap h2, .ix-modal-wrap p { margin: 0; }
+  .ix-modal-wrap button, .ix-modal-wrap input, .ix-modal-wrap select, .ix-modal-wrap textarea { font-family: inherit; }
+  .ix-modal-wrap { position: fixed; inset: 0; z-index: 1000; background: rgba(15,23,42,0.5); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 16px; animation: ix-fade .2s; }
+  .ix-modal { background: #fff; border-radius: 22px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.3); border-top: 5px solid #e8582a; animation: ix-pop .25s ease-out; }
+  .ix-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 24px 14px; }
+  .ix-modal header h2 { font-size: 18px; font-weight: 800; }
+  .ix-modal header p { font-size: 12.5px; color: #94a3b8; margin-top: 2px; }
+  .ix-modal-x { width: 32px; height: 32px; border-radius: 50%; border: none; background: #f1f5f9; color: #475569; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ix-modal-x:hover { background: #fdeee7; color: #e8582a; }
+  .ix-modal-body { padding: 4px 24px 24px; }
+  .ix-form { display: flex; flex-direction: column; gap: 16px; }
+  .ix-field { display: flex; flex-direction: column; gap: 6px; }
+  .ix-field > label { font-size: 12px; font-weight: 700; color: #334155; }
+  .ix-row-gap { display: flex; gap: 10px; }
+  .ix-row-gap > input { flex: 1; min-width: 0; }
+  .ix-row-gap > .ix-field { flex: 1; }
+  .ix-field input.scanning { background: #fff5ef; border-color: #e8582a; color: #d94a1c; }
+  .ix-hint { font-size: 11.5px; color: #94a3b8; line-height: 1.5; }
+  .ix-hint.info { color: #9a3412; background: #fff5ef; border-radius: 8px; padding: 7px 10px; }
+  .ix-hint.good { color: #15803d; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ix-hint.good button { background: none; border: none; color: #94a3b8; cursor: pointer; text-decoration: underline; font-size: 11.5px; }
+  .ix-form-actions { display: flex; gap: 10px; margin-top: 4px; }
+  .ix-form-actions .ix-b { flex: 1; padding: 11px; font-size: 14px; }
+
+  /* ───── MOV / pending submission cards ───── */
+  .ix-list { display: flex; flex-direction: column; gap: 16px; }
+  .ix-sub { background: #fff; border-radius: 20px; padding: 20px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); }
+  .ix-sub-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .ix-sub-top .ix-ic-id { flex: 1; }
+  .ix-sub-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+  .ix-file { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 10px; background: #fff5ef; border: 1px solid #fde1d5; color: #d94a1c; font-size: 13px; font-weight: 600; text-decoration: none; max-width: 100%; }
+  .ix-file:hover { background: #fdeee7; }
+  .ix-desc-label { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .ix-desc { font-size: 14px; color: #334155; line-height: 1.6; background: #fafbfc; padding: 12px 14px; border-radius: 12px; }
+  .ix-review { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .ix-review .ix-input { flex: 1; min-width: 180px; }
+  .ix-remarks { font-size: 12.5px; color: #94a3b8; margin-top: 10px; }
+  .ix-allgood { padding: 48px 20px; text-align: center; }
+  .ix-allgood .ix-empty-icon { width: 64px; height: 64px; background: #e6f7ee; color: #16a34a; }
+
+  /* ───── Hours cards (supervisor) ───── */
+  .ix-hours-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .ix-hc { background: #fff; border-radius: 20px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); }
+  .ix-hc-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .ix-hc-top .ix-ic-id { flex: 1; }
+  .ix-hc-hours { text-align: right; }
+  .ix-hc-hours strong { display: block; font-size: 20px; font-weight: 800; color: #e8582a; line-height: 1.1; }
+  .ix-hc-hours span { font-size: 11px; color: #94a3b8; }
+  .ix-hc-foot { display: flex; justify-content: space-between; font-size: 11.5px; color: #94a3b8; margin-top: 8px; }
+
+  /* ───── DTR preview ───── */
+  .ix-doc { background: #fff; border-radius: 20px; padding: 32px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); }
+  .ix-doc-head { text-align: center; padding-bottom: 16px; margin-bottom: 18px; border-bottom: 2px solid #e8582a; }
+  .ix-doc-head h2 { font-size: 19px; font-weight: 800; letter-spacing: .5px; }
+  .ix-doc-head p { font-size: 13px; color: #64748b; margin-top: 2px; }
+  .ix-doc-head h3 { font-size: 14px; font-weight: 700; margin-top: 10px; color: #e8582a; }
+  .ix-doc-meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13.5px; margin-bottom: 16px; }
+  .ix-doc-meta span { color: #94a3b8; }
+  .ix-doc-total { text-align: right; margin-top: 18px; font-size: 15px; font-weight: 800; }
+  .ix-doc-sigs { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-top: 52px; }
+  .ix-doc-sig { width: 190px; border-top: 1px solid #1e293b; padding-top: 6px; text-align: center; font-size: 12px; color: #64748b; }
+  .ix-doc-empty { text-align: center; padding: 48px 20px; color: #94a3b8; font-size: 14px; }
+
+  /* ───── Motion ───── */
+  @keyframes ix-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes ix-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes ix-pop { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
+  @keyframes ix-spin { to { transform: rotate(360deg); } }
+  @keyframes ix-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) {
+    .ix-content, .ix-live i, .ix-spin, .ix-modal { animation: none !important; }
+    .ix-side, .ix-strip, .ix-side-label, .ix-brand-name { transition: none !important; }
+  }
+
+  /* ───── Responsive ───── */
+  @media (max-width: 900px) {
+    .ix-strip, .ix-strip.open { width: 0; }
+    .ix-side { width: 0; }
+    .ix-side.open { width: 236px; box-shadow: 10px 0 40px rgba(0,0,0,0.25); }
+    .ix-backdrop { display: block; }
+    .ix-fs-btn { display: none; }
+    .ix-main { padding: 20px 16px 32px; }
+  }
+  @media (max-width: 600px) {
+    .ix-user-text, .ix-logout span { display: none; }
+    .ix-logout { padding: 9px; }
+    .ix-hero { padding: 22px; }
+    .ix-hero h1 { font-size: 22px; }
+    .ix-brand-name { font-size: 9.5px; letter-spacing: .4px; }
+    .ix-brand-name.show { max-width: 110px; margin-left: 6px; }
+    .ix-intern-grid, .ix-hours-grid { grid-template-columns: 1fr; }
+    .ix-doc { padding: 20px; }
+  }
+`;

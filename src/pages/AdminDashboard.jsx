@@ -1,31 +1,34 @@
-//AdminDashboard.jsx
+// AdminDashboard.jsx
 import { useState, useEffect, useRef } from "react";
-import Layout, { Spinner, PageHeader, StatCard, Badge, Table, LiveBadge } from "../components/Layout.jsx";
+import { useLocation } from "react-router-dom";
+import Shell, {
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Hero, Icon,
+  InternMonitor, todayManila, fmtTime, calcHours, greeting, esc, REQUIRED_HOURS,
+} from "../components/DashKit.jsx";
 
 const API = "http://localhost:8000/api";
 const NAV = [
-  { path:"/admin",           label:"Home",               icon:"home" },
-  { path:"/admin/interns",   label:"Monitor Interns",    icon:"users" },
-  { path:"/admin/records",   label:"Attendance Records", icon:"list" },
-  { path:"/admin/hours",     label:"Hours Summary",      icon:"clock" },
-  { path:"/admin/accounts",  label:"Manage Accounts",    icon:"settings" },
-  { path:"/admin/dtr",       label:"Generate DTR",       icon:"file" },
-  { path:"/admin/reports",   label:"Consolidated Report",icon:"chart" },
-]; 
+  { path: "/admin",          label: "Home",                icon: "home" },
+  { path: "/admin/interns",  label: "Monitor Interns",     icon: "users" },
+  { path: "/admin/records",  label: "Attendance Records",  icon: "list" },
+  { path: "/admin/hours",    label: "Hours Summary",       icon: "clock" },
+  { path: "/admin/accounts", label: "Manage Accounts",     icon: "settings" },
+  { path: "/admin/dtr",      label: "Generate DTR",        icon: "file" },
+  { path: "/admin/reports",  label: "Consolidated Report", icon: "chart" },
+];
 
 export default function AdminDashboard() {
-  const user   = JSON.parse(sessionStorage.getItem("user") || "{}");
-  const path   = window.location.pathname;
+  const user = JSON.parse(sessionStorage.getItem("user") || "{}");
+  const { pathname: path } = useLocation();
   const [records, setRecords] = useState([]);
-  const [users,   setUsers]   = useState([]);
-  const [movs,    setMovs]    = useState([]);
+  const [users, setUsers] = useState([]);
+  const [movs, setMovs] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const isCoordinator = user.role === "ojt_coordinator";
-
-const navItems = isCoordinator
-  ? [...NAV, { path:"/admin/submissions", label:"MOV Submissions", icon:"inbox" }]
-  : NAV;
+  const navItems = isCoordinator
+    ? [...NAV, { path: "/admin/submissions", label: "MOV Submissions", icon: "inbox" }]
+    : NAV;
 
   useEffect(() => {
     fetchAll();
@@ -36,9 +39,9 @@ const navItems = isCoordinator
   const fetchAll = async () => {
     try {
       const [r, u, m] = await Promise.all([
-        fetch(`${API}/admin/all-attendance`).then(r => r.json()),
-        fetch(`${API}/admin/users`).then(r => r.json()),
-        fetch(`${API}/coordinator/movs`).then(r => r.json()),
+        fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
+        fetch(`${API}/admin/users`).then((r) => r.json()),
+        fetch(`${API}/coordinator/movs`).then((r) => r.json()),
       ]);
       if (Array.isArray(r)) setRecords([...r]);
       if (Array.isArray(u)) setUsers([...u]);
@@ -50,48 +53,104 @@ const navItems = isCoordinator
     }
   };
 
-  const interns     = users.filter(u => u.role === "intern");
-  const supervisors = users.filter(u => u.role === "supervisor");
+  const interns = users.filter((u) => u.role === "intern");
+  const supervisors = users.filter((u) => u.role === "supervisor");
 
   return (
-    <Layout navItems={navItems} role="admin">
-      {path === "/admin"          && <Home records={records} interns={interns} supervisors={supervisors} loading={loading} />}
-      {path === "/admin/interns"  && <Interns interns={interns} records={records} loading={loading} onRefresh={fetchAll} />}
-      {path === "/admin/records"  && <Records records={records} loading={loading} />}
-      {path === "/admin/hours"    && <Hours records={records} interns={interns} loading={loading} />}
+    <Shell navItems={navItems} user={user}>
+      {path === "/admin" && <Home user={user} records={records} interns={interns} supervisors={supervisors} loading={loading} />}
+      {path === "/admin/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} />}
+      {path === "/admin/records" && <Records records={records} loading={loading} />}
+      {path === "/admin/hours" && <Hours records={records} interns={interns} loading={loading} />}
       {path === "/admin/accounts" && <Accounts users={users} onRefresh={fetchAll} />}
-      {path === "/admin/dtr"      && <DTR interns={interns} records={records} />}
-      {path === "/admin/reports"  && <Reports interns={interns} records={records} />}
+      {path === "/admin/dtr" && <DTR interns={interns} records={records} />}
+      {path === "/admin/reports" && <Reports interns={interns} records={records} />}
       {path === "/admin/submissions" && <Submissions movs={movs} user={user} onRefresh={fetchAll} />}
-    </Layout>
+    </Shell>
   );
 }
-// ── Home ──────────────────────────────────────────────────
-function Home({ records, interns, supervisors, loading }) {
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
-  const todayRecs = records.filter(r => r.date === today);
-  const checkedIn = todayRecs.filter(r => r.action === "CHECK_IN" && !r.checked_out_at).length;
+
+/* ───────────────────────── Home ───────────────────────── */
+function Home({ user, records, interns, supervisors, loading }) {
+  const today = todayManila();
+  const todayRecs = records.filter((r) => r.date === today);
+  const checkedIn = todayRecs.filter((r) => r.action === "CHECK_IN" && !r.checked_out_at).length;
+  const pct = interns.length ? (checkedIn / interns.length) * 100 : 0;
+  const first = user.name?.split(" ")[0] || "there";
+
   return (
     <>
-      <PageHeader title="Admin Dashboard" sub="Full system overview" live />
-      <div style={row}>
-        <StatCard label="Total Interns"    value={interns.length}     color="#16541e" />
-        <StatCard label="Supervisors"      value={supervisors.length} color="#16541e" />
-        <StatCard label="Checked In Today" value={checkedIn}          color="#16541e" />
-        <StatCard label="Today's Records"  value={todayRecs.length}   color="#16541e" />
+      <Hero
+        tag="Admin overview"
+        title={`${greeting()}, ${first}!`}
+        text="Here's what's happening across the OJT program today."
+        facts={[
+          { v: checkedIn, l: "checked in now" },
+          { v: todayRecs.length, l: "records today" },
+          { v: interns.length, l: "interns" },
+        ]}
+        ring={{ pct, top: `${checkedIn}/${interns.length}`, bottom: "interns in" }}
+      />
+
+      <div className="ix-stats">
+        <StatCard label="Total Interns" value={interns.length} icon="users" tone="orange" />
+        <StatCard label="Supervisors" value={supervisors.length} icon="user" tone="blue" />
+        <StatCard label="Checked In Today" value={checkedIn} icon="tap" tone="green" />
+        <StatCard label="Today's Records" value={todayRecs.length} icon="list" tone="purple" />
       </div>
-      <div style={card}>
-        <div style={cardLabel}>Today's Live Attendance <LiveBadge /></div>
+
+      <Section icon="clock" title="Today's Live Attendance" count={todayRecs.length} live>
         {loading ? <Spinner /> : (
           <Table
-            headers={["Intern","Type","Action","Time"]}
-            rows={todayRecs.map(r => [
-              r.name,
+            headers={["Intern", "Type", "Action", "Time"]}
+            rows={todayRecs.map((r) => [
+              <strong>{r.name}</strong>,
               <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
               <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-              r.checked_in_at ? new Date(r.checked_in_at).toLocaleTimeString("en-PH") : "—",
+              fmtTime(r.checked_in_at),
             ])}
             empty="No activity today yet."
+          />
+        )}
+      </Section>
+    </>
+  );
+}
+
+/* ───────────────────────── Records ───────────────────────── */
+function Records({ records, loading }) {
+  const [dateFilter, setDateFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const filtered = records
+    .filter((r) => !dateFilter || r.date === dateFilter)
+    .filter((r) => r.name?.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <>
+      <PageHeader title="All Attendance Records" sub="Complete system-wide attendance log." live />
+      <div className="ix-toolbar">
+        <div className="ix-search">
+          <Icon name="search" size={16} />
+          <input type="text" placeholder="Search intern..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <input type="date" className="ix-input" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
+        {dateFilter && <button className="ix-b ghost" onClick={() => setDateFilter("")}>Clear date</button>}
+        <span className="ix-chip">{filtered.length} records</span>
+      </div>
+      <div className="ix-card flush">
+        {loading ? <Spinner /> : (
+          <Table
+            headers={["Intern", "Date", "Type", "Action", "Time In", "Time Out", "Token"]}
+            rows={filtered.map((r) => [
+              <strong>{r.name}</strong>,
+              r.date,
+              <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
+              <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
+              fmtTime(r.checked_in_at),
+              fmtTime(r.checked_out_at),
+              <span className="ix-mono">{r.token?.substring(0, 20)}…</span>,
+            ])}
+            empty="No records match your filters."
           />
         )}
       </div>
@@ -99,188 +158,54 @@ function Home({ records, interns, supervisors, loading }) {
   );
 }
 
-// ── Interns ───────────────────────────────────────────────
-function Interns({ interns, records, loading, onRefresh }) {
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
-  const [saving, setSaving] = useState(null);
+/* ───────────────────────── Hours ───────────────────────── */
+function Hours({ records, interns, loading }) {
+  const hoursBased = interns.filter((u) => (u.tracking_type || "hours") === "hours");
+  const outputBased = interns.filter((u) => u.tracking_type === "output");
 
-  const updateSettings = async (id, field, value, current) => {
-    setSaving(id);
-    try {
-      await fetch(`${API}/users/${id}/settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          work_mode:     field === "work_mode"     ? value : current.work_mode || "onsite",
-          tracking_type: field === "tracking_type" ? value : current.tracking_type || "hours",
-        }),
-      });
-      onRefresh && onRefresh();
-    } finally {
-      setSaving(null);
-    }
-  };
+  const data = hoursBased.map((u) => {
+    const recs = records.filter((r) => r.user_id === u.id);
+    const days = [...new Set(recs.map((r) => r.date))].length;
+    const total = calcHours(recs);
+    return { ...u, days, total, pct: Math.min(Math.round((total / REQUIRED_HOURS) * 100), 100) };
+  });
 
   return (
     <>
-      <PageHeader title="Monitor Interns" sub="Real-time status of all interns" live />
-      {loading ? <Spinner /> : (
-        <div style={{ display:"flex", flexDirection:"column", gap:"0.75rem" }}>
-          {interns.map(u => {
-            const recs    = records.filter(r => r.user_id === u.id);
-            const isIn    = recs.some(r => r.date === today && r.action === "CHECK_IN" && !r.checked_out_at);
-            const days    = [...new Set(recs.map(r => r.date))].length;
-            const lastRec = recs[0];
-            return (
-              <div key={u.id} style={{ ...card, marginBottom:0 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:"1rem", marginBottom: "0.85rem" }}>
-                  <div style={{ width:44, height:44, borderRadius:"50%", background:isIn?"#265faf":"#94a3b8", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:700, color:"#fff", flexShrink:0 }}>
-                    {u.name?.charAt(0).toUpperCase()}
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:14, fontWeight:600, color:"#1e293b" }}>{u.name}</div>
-                    <div style={{ fontSize:12, color:"#94a3b8" }}>{u.email}</div>
-                  </div>
-                  <div style={{ textAlign:"center", padding:"0 1rem" }}>
-                    <div style={{ fontSize:20, fontWeight:700, color:"#1A2E5A" }}>{days}</div>
-                    <div style={{ fontSize:11, color:"#94a3b8" }}>Days</div>
-                  </div>
-                  <Badge label={isIn ? "Present Now" : "Not In"} type={isIn ? "in" : "out"} />
-                  <div style={{ fontSize:12, color:"#94a3b8" }}>Last: {lastRec?.date || "—"}</div>
-                </div>
-
-                <div style={{ display:"flex", gap:10, paddingTop:"0.75rem", borderTop:"1px solid #f1f5f9", flexWrap:"wrap", alignItems:"center" }}>
-                  <div style={fld2}>
-                    <label style={lbl2}>Work Mode</label>
-                    <select
-                      value={u.work_mode || "onsite"}
-                      disabled={saving === u.id}
-                      onChange={e => updateSettings(u.id, "work_mode", e.target.value, u)}
-                      style={selInp}
-                    >
-                      <option value="onsite">Onsite</option>
-                      <option value="offsite">Offsite (WFH)</option>
-                    </select>
-                  </div>
-                  <div style={fld2}>
-                    <label style={lbl2}>Tracking Type</label>
-                    <select
-                      value={u.tracking_type || "hours"}
-                      disabled={saving === u.id}
-                      onChange={e => updateSettings(u.id, "tracking_type", e.target.value, u)}
-                      style={selInp}
-                    >
-                      <option value="hours">Hours-based</option>
-                      <option value="output">Output-based</option>
-                    </select>
-                  </div>
-                  {saving === u.id && <span style={{ fontSize:12, color:"#94a3b8" }}>Saving...</span>}
-                </div>
-              </div>
-            );
-          })}
+      <PageHeader title="Hours Summary" sub="Total OJT hours per intern (hours-based only)." />
+      <div className="ix-card flush">
+        {loading ? <Spinner /> : (
+          <Table
+            headers={["Intern", "Email", "Days Present", "Total Hours", "Progress", "Status"]}
+            rows={data.map((d) => [
+              <strong>{d.name}</strong>,
+              d.email,
+              d.days + " days",
+              <strong>{d.total}h</strong>,
+              <div className="ix-prog"><Bar pct={d.pct} /><span>{d.pct}%</span></div>,
+              <Badge
+                label={d.pct >= 100 ? "Complete" : d.pct >= 50 ? "Halfway" : "In Progress"}
+                type={d.pct >= 100 ? "approved" : d.pct >= 50 ? "pending" : "rejected"}
+              />,
+            ])}
+            empty="No hours-based interns yet."
+          />
+        )}
+      </div>
+      {!loading && outputBased.length > 0 && (
+        <div className="ix-note">
+          <Icon name="info" size={18} />
+          <span>
+            <strong>Output-based interns</strong> are not tracked by hours: {outputBased.map((u) => u.name).join(", ")}.
+            See MOV Submissions for their progress.
+          </span>
         </div>
       )}
     </>
   );
 }
 
-const fld2 = { display:"flex", flexDirection:"column", gap:3 };
-const lbl2 = { fontSize:10.5, fontWeight:600, color:"#94a3b8", textTransform:"uppercase", letterSpacing:0.4 };
-const selInp = { padding:"6px 10px", border:"1px solid #e2e8f0", borderRadius:6, fontSize:12.5, fontFamily:"inherit", background:"#fff" };
-
-// ── Records ───────────────────────────────────────────────
-function Records({ records, loading }) {
-  const [dateFilter, setDateFilter] = useState("");
-  const [search,     setSearch]     = useState("");
-  const filtered = records
-    .filter(r => !dateFilter || r.date === dateFilter)
-    .filter(r => r.name?.toLowerCase().includes(search.toLowerCase()));
-  return (
-    <>
-      <PageHeader title="All Attendance Records" sub="Complete system-wide attendance log" live />
-      <div style={{ display:"flex", gap:10, marginBottom:"1rem", flexWrap:"wrap" }}>
-        <input type="text" placeholder="Search intern..." value={search}
-          onChange={e => setSearch(e.target.value)} style={filterInp} />
-        <input type="date" value={dateFilter}
-          onChange={e => setDateFilter(e.target.value)} style={filterInp} />
-        {dateFilter && (
-          <button onClick={() => setDateFilter("")}
-            style={{ padding:"8px 14px", border:"1px solid #e2e8f0", borderRadius:8, background:"#fff", cursor:"pointer", fontSize:13, color:"#64748b" }}>
-            Clear
-          </button>
-        )}
-      </div>
-      {loading ? <Spinner /> : (
-        <Table
-          headers={["Intern","Date","Type","Action","Time In","Time Out","Token"]}
-          rows={filtered.map(r => [
-            r.name, r.date,
-            <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
-            <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-            r.checked_in_at  ? new Date(r.checked_in_at).toLocaleTimeString("en-PH")  : "—",
-            r.checked_out_at ? new Date(r.checked_out_at).toLocaleTimeString("en-PH") : "—",
-            <span style={{ fontFamily:"monospace", fontSize:10, color:"#94a3b8" }}>{r.token?.substring(0,20)}…</span>,
-          ])}
-        />
-      )}
-    </>
-  );
-}
-
-// ── Hours ─────────────────────────────────────────────────
-function Hours({ records, interns, loading }) {
-  const hoursBased = interns.filter(u => (u.tracking_type || "hours") === "hours");
-  const outputBased = interns.filter(u => u.tracking_type === "output");
-
-  const data = hoursBased.map(u => {
-    const recs = records.filter(r => r.user_id === u.id);
-    const days = [...new Set(recs.map(r => r.date))].length;
-    let total  = 0;
-    const byDate = {};
-    recs.forEach(r => {
-      if (!byDate[r.date]) byDate[r.date] = {};
-      if (r.checked_in_at  && !byDate[r.date].in)  byDate[r.date].in  = r.checked_in_at;
-      if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
-    });
-    Object.values(byDate).forEach(({ in:i, out:o }) => { if (i && o) total += (new Date(o) - new Date(i)) / 3600000; });
-    total = Math.round(total * 10) / 10;
-    return { ...u, days, total, pct: Math.min(Math.round((total / 486) * 100), 100) };
-  });
-
-  return (
-    <>
-      <PageHeader title="Hours Summary" sub="Total OJT hours per intern (hours-based only)" />
-      {loading ? <Spinner /> : (
-        <>
-          <Table
-            headers={["Intern","Email","Days Present","Total Hours","Progress","Status"]}
-            rows={data.map(d => [
-              d.name, d.email, d.days + " days", d.total + "h",
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <div style={{ flex:1, background:"#e2e8f0", borderRadius:99, height:8, overflow:"hidden", minWidth:80 }}>
-                  <div style={{ width:d.pct + "%", height:"100%", background:"#2E86C1", borderRadius:99 }} />
-                </div>
-                <span style={{ fontSize:11, color:"#64748b" }}>{d.pct}%</span>
-              </div>,
-              <Badge label={d.pct >= 100 ? "Complete" : d.pct >= 50 ? "Halfway" : "In Progress"}
-                type={d.pct >= 100 ? "approved" : d.pct >= 50 ? "pending" : "rejected"} />,
-            ])}
-          />
-          {outputBased.length > 0 && (
-            <div style={{ ...card, marginTop:"1rem", background:"#f8fafc" }}>
-              <div style={cardLabel}>Output-based interns (not tracked by hours)</div>
-              <div style={{ fontSize:13, color:"#64748b" }}>
-                {outputBased.map(u => u.name).join(", ")} — see MOV Submissions for their progress.
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
+/* ───────────────────────── MOV Submissions ───────────────────────── */
 function Submissions({ movs, user, onRefresh }) {
   const [processing, setProcessing] = useState(null);
   const [remarks, setRemarks] = useState({});
@@ -296,10 +221,10 @@ function Submissions({ movs, user, onRefresh }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      setMsg({ type:"success", text: data.message });
+      setMsg({ type: "success", text: data.message });
       onRefresh();
     } catch (err) {
-      setMsg({ type:"error", text: err.message });
+      setMsg({ type: "error", text: err.message });
     } finally {
       setProcessing(null);
     }
@@ -307,63 +232,46 @@ function Submissions({ movs, user, onRefresh }) {
 
   return (
     <>
-      <PageHeader title="MOV Submissions" sub="Review intern-submitted documents (MOVs, forms, certificates)" live />
-      {msg && (
-        <div style={{
-          padding:"10px 14px", borderRadius:8, border:"1px solid", fontSize:13, marginBottom:"1rem",
-          background:  msg.type === "success" ? "#f0fdf4" : "#fef2f2",
-          borderColor: msg.type === "success" ? "#86efac" : "#fca5a5",
-          color:       msg.type === "success" ? "#15803d" : "#dc2626",
-        }}>{msg.text}</div>
-      )}
+      <PageHeader title="MOV Submissions" sub="Review intern-submitted documents (MOVs, forms, certificates)." live />
+      <Msg msg={msg} />
       {movs.length === 0 ? (
-        <div style={{ ...card, textAlign:"center", padding:"4rem", color:"#94a3b8" }}>
-          No submissions yet.
-        </div>
+        <div className="ix-card"><Empty icon="inbox" title="No submissions yet" sub="Interns' uploaded documents will show up here." /></div>
       ) : (
-        <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-          {movs.map(m => (
-            <div key={m.id} style={card}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"0.75rem" }}>
-                <div>
-                  <div style={{ fontSize:15, fontWeight:600, color:"#1e293b" }}>{m.title}</div>
-                  <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>
-                    {m.intern_name} · {m.intern_email}
-                  </div>
+        <div className="ix-list">
+          {movs.map((m) => (
+            <div key={m.id} className="ix-sub">
+              <div className="ix-sub-top">
+                <Avatar name={m.intern_name} />
+                <div className="ix-ic-id">
+                  <strong>{m.intern_name}</strong>
+                  <span>{m.intern_email}</span>
                 </div>
                 <Badge
                   label={m.status.charAt(0).toUpperCase() + m.status.slice(1)}
                   type={m.status === "approved" ? "approved" : m.status === "rejected" ? "rejected" : "pending"}
                 />
-              </div> 
-              <a
-                href={`http://localhost:8000/storage/${m.file_path}`}
-                target="_blank" rel="noopener noreferrer"
-                style={{ fontSize:13, color:"#2E86C1", textDecoration:"underline" }}
-              >
-                📎 {m.original_name}
+              </div>
+              <div className="ix-sub-title">{m.title}</div>
+              <a className="ix-file" href={`http://localhost:8000/storage/${m.file_path}`} target="_blank" rel="noopener noreferrer">
+                <Icon name="clip" size={16} /> {m.original_name}
               </a>
+
               {m.status === "pending" && (
-                <div style={{ display:"flex", gap:10, alignItems:"center", marginTop:"0.85rem" }}>
+                <div className="ix-review">
                   <input
-                    type="text" placeholder="Add remarks (optional)"
+                    type="text" className="ix-input" placeholder="Add remarks (optional)"
                     value={remarks[m.id] || ""}
-                    onChange={e => setRemarks(r => ({ ...r, [m.id]: e.target.value }))}
-                    style={{ flex:1, padding:"8px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13, fontFamily:"inherit" }}
+                    onChange={(e) => setRemarks((r) => ({ ...r, [m.id]: e.target.value }))}
                   />
-                  <button onClick={() => handleReview(m.id, "rejected")} disabled={!!processing}
-                    style={{ padding:"8px 18px", background:"#fff", color:"#dc2626", border:"1px solid #fca5a5", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:600 }}>
+                  <button className="ix-b danger" onClick={() => handleReview(m.id, "rejected")} disabled={!!processing}>
                     {processing === m.id + "rejected" ? "..." : "Reject"}
                   </button>
-                  <button onClick={() => handleReview(m.id, "approved")} disabled={!!processing}
-                    style={{ padding:"8px 18px", background:"#15803d", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:600 }}>
+                  <button className="ix-b ok" onClick={() => handleReview(m.id, "approved")} disabled={!!processing}>
                     {processing === m.id + "approved" ? "..." : "Approve"}
                   </button>
                 </div>
               )}
-              {m.remarks && (
-                <div style={{ fontSize:12, color:"#94a3b8", marginTop:8 }}>Remarks: {m.remarks}</div>
-              )}
+              {m.remarks && <div className="ix-remarks">Remarks: {m.remarks}</div>}
             </div>
           ))}
         </div>
@@ -372,31 +280,36 @@ function Submissions({ movs, user, onRefresh }) {
   );
 }
 
-// ── Manage Accounts ───────────────────────────────────────
+/* ───────────────────────── Manage Accounts ───────────────────────── */
+const BLANK_FORM = {
+  name: "", email: "", password: "password123", role: "intern",
+  uid: "", work_mode: "onsite", tracking_type: "hours",
+};
+const ROLE_NAME = { intern: "Intern", supervisor: "Supervisor", admin: "Admin", ojt_coordinator: "OJT Coordinator" };
+
 function Accounts({ users, onRefresh }) {
-  const [form, setForm] = useState({
-  name:"", email:"", password:"password123", role:"intern",
-  uid:"", work_mode:"onsite", tracking_type:"hours",
-});
-  const [adding,   setAdding]   = useState(false);
+  const [form, setForm] = useState(BLANK_FORM);
+  const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(null);
-  const [msg,      setMsg]      = useState(null);
+  const [msg, setMsg] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [scanning, setScanning] = useState(false);
   const uidBuffer = useRef("");
 
+  // Listens for the NFC reader (it "types" the UID and presses Enter)
   useEffect(() => {
     const handleKey = (e) => {
       if (!scanning) return;
       if (e.key === "Enter") {
+        e.preventDefault();
         const uid = uidBuffer.current.trim();
         uidBuffer.current = "";
         if (uid.length >= 4) {
-          setForm(f => ({ ...f, uid }));
+          setForm((f) => ({ ...f, uid }));
           setScanning(false);
         }
-      } else {
-        if (e.key.length === 1) uidBuffer.current += e.key;
+      } else if (e.key.length === 1) {
+        uidBuffer.current += e.key;
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -405,281 +318,194 @@ function Accounts({ users, onRefresh }) {
 
   useEffect(() => {
     if (form.role !== "intern") {
-      setForm(f => ({ ...f, uid:"" }));
+      setForm((f) => ({ ...f, uid: "" }));
       setScanning(false);
       uidBuffer.current = "";
     }
   }, [form.role]);
 
-  // Lock body scroll when modal is open
-  useEffect(() => {
-    document.body.style.overflow = showForm ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
-  }, [showForm]);
-
-  const openModal  = () => { setMsg(null); setShowForm(true); };
+  const openModal = () => { setMsg(null); setShowForm(true); };
   const closeModal = () => {
-  setShowForm(false);
-  setForm({ name:"", email:"", password:"password123", role:"intern", uid:"", work_mode:"onsite", tracking_type:"hours" });
-  setScanning(false);
-  uidBuffer.current = "";
-};
+    setShowForm(false);
+    setForm(BLANK_FORM);
+    setScanning(false);
+    uidBuffer.current = "";
+  };
 
   const handleAdd = async (e) => {
     e.preventDefault(); setAdding(true); setMsg(null);
     try {
-      const res  = await fetch(`${API}/admin/users`, {
+      const res = await fetch(`${API}/admin/users`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      setMsg({ type:"success", text: data.message });
+      setMsg({ type: "success", text: data.message });
       closeModal();
       onRefresh();
     } catch (err) {
-      setMsg({ type:"error", text: err.message });
+      setMsg({ type: "error", text: err.message });
     } finally { setAdding(false); }
   };
 
   const handleDelete = async (id, name) => {
-    if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete user "${name}"? This cannot be undone.`)) return;
     setDeleting(id);
     try {
-      const res  = await fetch(`${API}/admin/users/${id}`, { method:"DELETE" });
+      const res = await fetch(`${API}/admin/users/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
-      setMsg({ type:"success", text:"User deleted." });
+      setMsg({ type: "success", text: "User deleted." });
       onRefresh();
     } catch (err) {
-      setMsg({ type:"error", text: err.message });
+      setMsg({ type: "error", text: err.message });
     } finally { setDeleting(null); }
   };
 
-  const roleColor = { intern:"#059669", supervisor:"#7C3AED", admin:"#D97706", ojt_coordinator:"#2E86C1" };
-
   return (
     <>
-      <PageHeader title="Manage Accounts" sub="Add or remove users from the system" />
+      <PageHeader title="Manage Accounts" sub="Add or remove users from the system.">
+        <button className="ix-b primary" onClick={openModal}><Icon name="plus" size={16} /> Add New User</button>
+      </PageHeader>
 
-      {msg && (
-        <div style={{
-          padding:"10px 14px", borderRadius:8, border:"1px solid", fontSize:13, marginBottom:"1rem",
-          background:  msg.type === "success" ? "#f0fdf4" : "#fef2f2",
-          borderColor: msg.type === "success" ? "#86efac" : "#fca5a5",
-          color:       msg.type === "success" ? "#15803d" : "#dc2626",
-        }}>{msg.text}</div>
-      )}
+      {!showForm && <Msg msg={msg} />}
 
-      <button
-        onClick={openModal}
-        style={{ marginBottom:"1rem", padding:"10px 20px", background:"#16541e", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:600 }}
-      >
-        + Add New User
-      </button>
+      <div className="ix-card flush">
+        <Table
+          headers={["Name", "Email", "Role", "Setup", "Action"]}
+          rows={users.map((u) => [
+            <strong>{u.name}</strong>,
+            u.email,
+            <Badge label={ROLE_NAME[u.role] || u.role} type={`r-${u.role}`} />,
+            u.role === "intern"
+              ? <span className="ix-muted">{u.work_mode === "offsite" ? "WFH" : "Onsite"} · {u.tracking_type === "output" ? "Output" : "Hours"}</span>
+              : <span className="ix-muted">—</span>,
+            <button className="ix-b danger sm" onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}>
+              <Icon name="trash" size={14} /> {deleting === u.id ? "..." : "Delete"}
+            </button>,
+          ])}
+          empty="No users yet."
+        />
+      </div>
 
-      <Table
-        headers={["Name","Email","Role","Action"]}
-        rows={users.map(u => [
-          u.name, u.email,
-          <span style={{ fontSize:11, fontWeight:600, padding:"2px 8px", borderRadius:99, background:(roleColor[u.role] || "#94a3b8") + "22", color: roleColor[u.role] || "#94a3b8" }}>
-            {u.role}
-          </span>,
-          <button onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}
-            style={{ padding:"5px 12px", background:"#fff", color:"#dc2626", border:"1px solid #fca5a5", borderRadius:6, cursor:"pointer", fontSize:12, fontWeight:600, opacity: deleting === u.id ? 0.5 : 1 }}>
-            {deleting === u.id ? "..." : "Delete"}
-          </button>,
-        ])}
-      />
-
-      {/* ── Modal Overlay ── */}
       {showForm && (
-        <div
-          onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
-          style={{
-            position:"fixed", inset:0, zIndex:1000,
-            background:"rgba(15,23,42,0.45)",
-            backdropFilter:"blur(3px)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            padding:"1rem",
-          }}
-        >
-          <div style={{
-            background:"#fff", borderRadius:16, width:"100%", maxWidth:480,
-            boxShadow:"0 20px 60px rgba(0,0,0,0.15)",
-            maxHeight:"90vh", overflowY:"auto",
-          }}>
-
-            {/* Modal Header */}
-            <div style={{
-              display:"flex", alignItems:"center", justifyContent:"space-between",
-              padding:"1.25rem 1.5rem",
-              borderBottom:"1px solid #f1f5f9",
-            }}>
-              <div>
-                <div style={{ fontSize:16, fontWeight:700, color:"#0f172a" }}>Add New User</div>
-                <div style={{ fontSize:12, color:"#94a3b8", marginTop:2 }}>Fill in the details below</div>
-              </div>
-              <button
-                onClick={closeModal}
-                style={{ background:"#f1f5f9", border:"none", borderRadius:8, width:32, height:32, cursor:"pointer", fontSize:16, color:"#64748b", display:"flex", alignItems:"center", justifyContent:"center" }}
-              >
-                ✕
-              </button>
+        <Modal title="Add New User" sub="Fill in the details below." onClose={closeModal}>
+          <Msg msg={msg} />
+          <form onSubmit={handleAdd} className="ix-form">
+            <div className="ix-field">
+              <label htmlFor="acc-name">Full name</label>
+              <input id="acc-name" type="text" required placeholder="e.g. Juan Dela Cruz" value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="acc-email">Email</label>
+              <input id="acc-email" type="email" required placeholder="e.g. juan@csu.edu.ph" value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="acc-pass">Password</label>
+              <input id="acc-pass" type="password" required value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="acc-role">Role</label>
+              <select id="acc-role" value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
+                <option value="intern">Intern</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="ojt_coordinator">OJT Coordinator</option>
+                <option value="admin">Admin</option>
+              </select>
             </div>
 
-            {/* Modal Body */}
-            <div style={{ padding:"1.5rem" }}>
-              {msg && (
-                <div style={{
-                  padding:"10px 14px", borderRadius:8, border:"1px solid", fontSize:13, marginBottom:"1rem",
-                  background:  msg.type === "success" ? "#f0fdf4" : "#fef2f2",
-                  borderColor: msg.type === "success" ? "#86efac" : "#fca5a5",
-                  color:       msg.type === "success" ? "#15803d" : "#dc2626",
-                }}>{msg.text}</div>
-              )}
-
-              <form onSubmit={handleAdd} style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-
-                <div style={fld}>
-                  <label style={lbl}>Full Name</label>
-                  <input type="text" required placeholder="e.g. Juan Dela Cruz" value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inp} />
-                </div>
-
-                <div style={fld}>
-                  <label style={lbl}>Email</label>
-                  <input type="email" required placeholder="e.g. juan@csu.edu.ph" value={form.email}
-                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={inp} />
-                </div>
-
-                <div style={fld}>
-                  <label style={lbl}>Password</label>
-                  <input type="password" required value={form.password}
-                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))} style={inp} />
-                </div>
-
-                <div style={fld}>
-                  <label style={lbl}>Role</label>
-                  <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} style={inp}>
-                    <option value="intern">Intern</option>
-                    <option value="supervisor">Supervisor</option>
-                    <option value="ojt_coordinator">OJT Coordinator</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                {form.role === "intern" && (
-  <div style={{ display:"flex", gap:10 }}>
-    <div style={{ ...fld, flex:1 }}>
-      <label style={lbl}>Work Mode</label>
-      <select value={form.work_mode} onChange={e => setForm(f => ({ ...f, work_mode: e.target.value }))} style={inp}>
-        <option value="onsite">Onsite</option>
-        <option value="offsite">Offsite (WFH)</option>
-      </select>
-    </div>
-    <div style={{ ...fld, flex:1 }}>
-      <label style={lbl}>Tracking Type</label>
-      <select value={form.tracking_type} onChange={e => setForm(f => ({ ...f, tracking_type: e.target.value }))} style={inp}>
-        <option value="hours">Hours-based</option>
-        <option value="output">Output-based</option>
-      </select>
-    </div>
-  </div>
-)}
-
-                {form.role === "intern" && (
-                  <div style={fld}>
-                    <label style={lbl}>NFC Card UID</label>
-                    <div style={{ display:"flex", gap:8 }}>
-                      <input
-                        type="text"
-                        placeholder={scanning ? "Tap the NFC card on the reader..." : "Tap NFC card or enter UID manually"}
-                        value={scanning ? "📡 Waiting for card tap..." : form.uid}
-                        readOnly={scanning}
-                        onChange={e => setForm(f => ({ ...f, uid: e.target.value }))}
-                        style={{
-                          ...inp, flex:1,
-                          background:  scanning ? "#eff6ff" : "#fff",
-                          borderColor: scanning ? "#2E86C1" : "#e2e8f0",
-                          color:       scanning ? "#1d4ed8" : "#1e293b",
-                          cursor:      scanning ? "not-allowed" : "text",
-                        }}
-                      />
-                    </div>
-                    {scanning && (
-                      <div style={{ fontSize:11, color:"#1d4ed8", marginTop:4, padding:"7px 10px", background:"#eff6ff", borderRadius:6, lineHeight:1.5 }}>
-                        ✋ Keep this window focused, then tap the NFC card on the reader.
-                      </div>
-                    )}
-                    {form.uid && !scanning && (
-                      <div style={{ fontSize:11, color:"#059669", marginTop:4, display:"flex", alignItems:"center", gap:6 }}>
-                        <span style={{ width:16, height:16, borderRadius:"50%", background:"#059669", color:"#fff", display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, flexShrink:0 }}>✓</span>
-                        UID captured: <strong style={{ fontFamily:"monospace" }}>{form.uid}</strong>
-                        <button type="button" onClick={() => setForm(f => ({ ...f, uid:"" }))}
-                          style={{ background:"none", border:"none", color:"#94a3b8", cursor:"pointer", fontSize:11, textDecoration:"underline", marginLeft:4 }}>
-                          clear
-                        </button>
-                      </div>
-                    )}
-                    <div style={{ fontSize:11, color:"#94a3b8", marginTop:2 }}>
-                      Leave blank if no NFC card yet.
-                    </div>
+            {form.role === "intern" && (
+              <>
+                <div className="ix-row-gap">
+                  <div className="ix-field">
+                    <label htmlFor="acc-wm">Work mode</label>
+                    <select id="acc-wm" value={form.work_mode} onChange={(e) => setForm((f) => ({ ...f, work_mode: e.target.value }))}>
+                      <option value="onsite">Onsite</option>
+                      <option value="offsite">Offsite (WFH)</option>
+                    </select>
                   </div>
-                )}
-
-                {/* Modal Footer Buttons */}
-                <div style={{ display:"flex", gap:8, marginTop:4 }}>
-                  <button
-                    type="button"
-                    onClick={closeModal}
-                    style={{ flex:1, padding:"11px", background:"#f1f5f9", color:"#64748b", border:"none", borderRadius:8, cursor:"pointer", fontSize:14, fontWeight:600 }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={adding}
-                    style={{ flex:1, padding:"11px", background:"#16541e", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:14, fontWeight:600, opacity: adding ? 0.7 : 1 }}
-                  >
-                    {adding ? "Adding..." : "Add User"}
-                  </button>
+                  <div className="ix-field">
+                    <label htmlFor="acc-tt">Tracking type</label>
+                    <select id="acc-tt" value={form.tracking_type} onChange={(e) => setForm((f) => ({ ...f, tracking_type: e.target.value }))}>
+                      <option value="hours">Hours-based</option>
+                      <option value="output">Output-based</option>
+                    </select>
+                  </div>
                 </div>
 
-              </form>
+                <div className="ix-field">
+                  <label htmlFor="acc-uid">NFC card UID</label>
+                  <div className="ix-row-gap">
+                    <input
+                      id="acc-uid" type="text"
+                      className={scanning ? "scanning" : ""}
+                      placeholder="Scan the card or type the UID"
+                      value={scanning ? "Waiting for card tap..." : form.uid}
+                      readOnly={scanning}
+                      onChange={(e) => setForm((f) => ({ ...f, uid: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className={scanning ? "ix-b ghost" : "ix-b primary"}
+                      onClick={(e) => { e.currentTarget.blur(); uidBuffer.current = ""; setScanning((s) => !s); }}
+                    >
+                      <Icon name="nfc" size={16} /> {scanning ? "Cancel" : "Scan"}
+                    </button>
+                  </div>
+                  {scanning && (
+                    <div className="ix-hint info">Keep this window focused, then tap the NFC card on the reader.</div>
+                  )}
+                  {form.uid && !scanning && (
+                    <div className="ix-hint good">
+                      <Icon name="check" size={14} /> UID captured: <strong style={{ fontFamily: "monospace" }}>{form.uid}</strong>
+                      <button type="button" onClick={() => setForm((f) => ({ ...f, uid: "" }))}>clear</button>
+                    </div>
+                  )}
+                  <div className="ix-hint">Leave blank if there's no NFC card yet.</div>
+                </div>
+              </>
+            )}
+
+            <div className="ix-form-actions">
+              <button type="button" className="ix-b ghost" onClick={closeModal}>Cancel</button>
+              <button type="submit" className="ix-b primary" disabled={adding}>{adding ? "Adding..." : "Add User"}</button>
             </div>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
     </>
   );
 }
 
-
-
-// ── DTR ───────────────────────────────────────────────────
+/* ───────────────────────── DTR ───────────────────────── */
 function DTR({ interns, records }) {
   const [selectedId, setSelectedId] = useState("");
-  const [month,      setMonth]      = useState(new Date().toISOString().slice(0, 7));
-  const printRef = useRef();
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
 
-  const intern   = interns.find(u => u.id === parseInt(selectedId));
-  const filtered = records.filter(r => r.user_id === parseInt(selectedId) && r.date?.startsWith(month));
+  const intern = interns.find((u) => u.id === parseInt(selectedId));
+  const filtered = records.filter((r) => r.user_id === parseInt(selectedId) && r.date?.startsWith(month));
 
   const byDate = {};
-  filtered.forEach(r => {
-    if (!byDate[r.date]) byDate[r.date] = { in:null, out:null };
-    if (r.checked_in_at  && !byDate[r.date].in)  byDate[r.date].in  = r.checked_in_at;
+  filtered.forEach((r) => {
+    if (!byDate[r.date]) byDate[r.date] = { in: null, out: null };
+    if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
     if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
   });
 
   let totalHrs = 0;
-  Object.values(byDate).forEach(({ in:i, out:o }) => { if (i && o) totalHrs += (new Date(o) - new Date(i)) / 3600000; });
+  Object.values(byDate).forEach(({ in: i, out: o }) => { if (i && o) totalHrs += (new Date(o) - new Date(i)) / 3600000; });
   totalHrs = Math.round(totalHrs * 10) / 10;
+
+  const monthLabel = new Date(month + "-01").toLocaleDateString("en-PH", { month: "long", year: "numeric" });
 
   const handlePrint = () => {
     const w = window.open("", "_blank");
-    w.document.write(`<html><head><title>DTR - ${intern?.name}</title><style>
+    w.document.write(`<html><head><title>DTR - ${esc(intern?.name)}</title><style>
       body{font-family:'Times New Roman',serif;padding:40px;color:#000;}
       h2,h3{text-align:center;margin:0;}
       p{text-align:center;font-size:13px;margin:2px 0;}
@@ -697,12 +523,12 @@ function DTR({ interns, records }) {
       <hr style="margin:12px 0"/>
       <table style="border:none;margin-top:0;">
         <tr style="border:none;">
-          <td style="border:none;text-align:left;padding:3px 0;"><strong>Name:</strong> ${intern?.name}</td>
-          <td style="border:none;text-align:right;padding:3px 0;"><strong>Month:</strong> ${new Date(month + "-01").toLocaleDateString("en-PH", { month:"long", year:"numeric" })}</td>
+          <td style="border:none;text-align:left;padding:3px 0;"><strong>Name:</strong> ${esc(intern?.name)}</td>
+          <td style="border:none;text-align:right;padding:3px 0;"><strong>Month:</strong> ${monthLabel}</td>
         </tr>
         <tr style="border:none;">
-          <td style="border:none;text-align:left;padding:3px 0;"><strong>Email:</strong> ${intern?.email}</td>
-          <td style="border:none;text-align:right;padding:3px 0;"><strong>Required Hours:</strong> 486 hours</td>
+          <td style="border:none;text-align:left;padding:3px 0;"><strong>Email:</strong> ${esc(intern?.email)}</td>
+          <td style="border:none;text-align:right;padding:3px 0;"><strong>Required Hours:</strong> ${REQUIRED_HOURS} hours</td>
         </tr>
       </table>
       <table>
@@ -710,11 +536,11 @@ function DTR({ interns, records }) {
         <tbody>
           ${Object.entries(byDate).sort().map(([date, t]) => {
             const hrs = t.in && t.out ? ((new Date(t.out) - new Date(t.in)) / 3600000).toFixed(2) : "—";
-            const day = new Date(date).toLocaleDateString("en-PH", { weekday:"short" });
+            const day = new Date(date).toLocaleDateString("en-PH", { weekday: "short" });
             const remark = !t.in ? "Absent" : !t.out ? "No checkout" : "";
             return `<tr>
               <td>${date}</td><td>${day}</td>
-              <td>${t.in  ? new Date(t.in).toLocaleTimeString("en-PH")  : "—"}</td><td></td>
+              <td>${t.in ? new Date(t.in).toLocaleTimeString("en-PH") : "—"}</td><td></td>
               <td></td><td>${t.out ? new Date(t.out).toLocaleTimeString("en-PH") : "—"}</td>
               <td>${hrs !== "—" ? hrs + " hrs" : "—"}</td>
               <td>${remark}</td>
@@ -734,92 +560,88 @@ function DTR({ interns, records }) {
 
   return (
     <>
-      <PageHeader title="Generate DTR" sub="Daily Time Record for each intern" />
-      <div style={{ display:"flex", gap:10, marginBottom:"1.25rem", flexWrap:"wrap", alignItems:"center" }}>
-        <select value={selectedId} onChange={e => setSelectedId(e.target.value)}
-          style={{ padding:"9px 14px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13, fontFamily:"inherit", minWidth:220 }}>
-          <option value="">— Select Intern —</option>
-          {interns.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+      <PageHeader title="Generate DTR" sub="Daily Time Record for each intern." />
+      <div className="ix-toolbar">
+        <select className="ix-select" value={selectedId} onChange={(e) => setSelectedId(e.target.value)} style={{ minWidth: 240 }}>
+          <option value="">Select an intern…</option>
+          {interns.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
-        <input type="month" value={month} onChange={e => setMonth(e.target.value)}
-          style={{ padding:"9px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13 }} />
+        <input type="month" className="ix-input" value={month} onChange={(e) => setMonth(e.target.value)} />
         {selectedId && (
-          <button onClick={handlePrint}
-            style={{ padding:"9px 20px", background:"#124d1a", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:600 }}>
-            🖨 Print DTR
-          </button>
+          <button className="ix-b primary" onClick={handlePrint}><Icon name="print" size={16} /> Print DTR</button>
         )}
       </div>
 
       {selectedId && intern ? (
-        <div style={card} ref={printRef}>
-          <div style={{ textAlign:"center", borderBottom:"2px solid #1A2E5A", paddingBottom:"1rem", marginBottom:"1rem" }}>
-            <div style={{ fontSize:18, fontWeight:700, color:"#1A2E5A" }}>CARAGA STATE UNIVERSITY</div>
-            <div style={{ fontSize:13, color:"#64748b" }}>Butuan City, Agusan Del Norte</div>
-            <div style={{ fontSize:14, fontWeight:600, marginTop:6 }}>DAILY TIME RECORD (OJT Attendance)</div>
+        <div className="ix-doc">
+          <div className="ix-doc-head">
+            <h2>CARAGA STATE UNIVERSITY</h2>
+            <p>Butuan City, Agusan del Norte</p>
+            <h3>DAILY TIME RECORD (OJT Attendance)</h3>
           </div>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"1rem", fontSize:14, flexWrap:"wrap", gap:8 }}>
-            <div><span style={{ color:"#94a3b8" }}>Name: </span><strong>{intern.name}</strong></div>
-            <div><span style={{ color:"#94a3b8" }}>Email: </span>{intern.email}</div>
-            <div><span style={{ color:"#94a3b8" }}>Month: </span><strong>{new Date(month + "-01").toLocaleDateString("en-PH", { month:"long", year:"numeric" })}</strong></div>
+          <div className="ix-doc-meta">
+            <div><span>Name: </span><strong>{intern.name}</strong></div>
+            <div><span>Email: </span>{intern.email}</div>
+            <div><span>Month: </span><strong>{monthLabel}</strong></div>
           </div>
-          <Table
-            headers={["Date","Day","Time In","Time Out","Hours Worked","Remarks"]}
-            rows={Object.entries(byDate).sort().map(([date, t]) => {
-              const hrs = t.in && t.out ? ((new Date(t.out) - new Date(t.in)) / 3600000).toFixed(2) + " hrs" : "—";
-              return [
-                date,
-                new Date(date).toLocaleDateString("en-PH", { weekday:"short" }),
-                t.in  ? new Date(t.in).toLocaleTimeString("en-PH")  : "—",
-                t.out ? new Date(t.out).toLocaleTimeString("en-PH") : "—",
-                hrs,
-                t.in && !t.out ? <Badge label="No Checkout" type="pending" /> : "",
-              ];
-            })}
-            empty="No records for this month."
-          />
-          <div style={{ textAlign:"right", marginTop:"1rem", fontSize:15, fontWeight:700, color:"#1A2E5A" }}>
-            Total Hours Rendered: {totalHrs} hours
+          <div className="ix-card flush" style={{ boxShadow: "none", border: "1px solid #f1f5f9" }}>
+            <Table
+              headers={["Date", "Day", "Time In", "Time Out", "Hours Worked", "Remarks"]}
+              rows={Object.entries(byDate).sort().map(([date, t]) => {
+                const hrs = t.in && t.out ? ((new Date(t.out) - new Date(t.in)) / 3600000).toFixed(2) + " hrs" : "—";
+                return [
+                  date,
+                  new Date(date).toLocaleDateString("en-PH", { weekday: "short" }),
+                  fmtTime(t.in),
+                  fmtTime(t.out),
+                  hrs,
+                  t.in && !t.out ? <Badge label="No Checkout" type="pending" /> : "",
+                ];
+              })}
+              empty="No records for this month."
+            />
           </div>
-          <div style={{ display:"flex", justifyContent:"space-between", marginTop:"3rem" }}>
-            {["Intern's Signature","Supervisor's Signature","OJT Coordinator"].map(lbl => (
-              <div key={lbl} style={{ textAlign:"center" }}>
-                <div style={{ width:180, borderTop:"1px solid #1e293b", paddingTop:6, fontSize:12, color:"#64748b" }}>{lbl}</div>
-              </div>
+          <div className="ix-doc-total">Total Hours Rendered: {totalHrs} hours</div>
+          <div className="ix-doc-sigs">
+            {["Intern's Signature", "Supervisor's Signature", "OJT Coordinator"].map((l) => (
+              <div key={l} className="ix-doc-sig">{l}</div>
             ))}
           </div>
         </div>
       ) : (
-        <div style={{ ...card, textAlign:"center", padding:"3rem", color:"#94a3b8" }}>
-          Select an intern and month above to preview the DTR.
+        <div className="ix-card">
+          <Empty icon="file" title="Nothing to preview yet" sub="Select an intern and month above to preview the DTR." />
         </div>
       )}
     </>
   );
 }
 
-// ── Reports ───────────────────────────────────────────────
+/* ───────────────────────── Reports ───────────────────────── */
 function Reports({ interns, records }) {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
 
-  const data = interns.map(u => {
-    const recs   = records.filter(r => r.user_id === u.id && r.date?.startsWith(month));
-    const days   = [...new Set(recs.map(r => r.date))].length;
-    const onsite = recs.filter(r => r.uid !== "ONLINE").length;
-    const online = recs.filter(r => r.uid === "ONLINE").length;
-    let total    = 0;
-    const byDate = {};
-    recs.forEach(r => {
-      if (!byDate[r.date]) byDate[r.date] = {};
-      if (r.checked_in_at  && !byDate[r.date].in)  byDate[r.date].in  = r.checked_in_at;
-      if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
-    });
-    Object.values(byDate).forEach(({ in:i, out:o }) => { if (i && o) total += (new Date(o) - new Date(i)) / 3600000; });
-    total = Math.round(total * 10) / 10;
-    return { name:u.name, email:u.email, days, onsite, online, total, pct: Math.min(Math.round((total / 486) * 100), 100) };
+  const data = interns.map((u) => {
+    const recs = records.filter((r) => r.user_id === u.id && r.date?.startsWith(month));
+    const days = [...new Set(recs.map((r) => r.date))].length;
+    const onsite = recs.filter((r) => r.uid !== "ONLINE").length;
+    const online = recs.filter((r) => r.uid === "ONLINE").length;
+    const total = calcHours(recs);
+    return { name: u.name, email: u.email, days, onsite, online, total, pct: Math.min(Math.round((total / REQUIRED_HOURS) * 100), 100) };
   });
 
+  const monthLabel = new Date(month + "-01").toLocaleDateString("en-PH", { month: "long", year: "numeric" });
+
   const handlePrint = () => {
+    const rowsHtml = data.map((d, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td style="text-align:left">${esc(d.name)}</td>
+        <td style="text-align:left">${esc(d.email)}</td>
+        <td>${d.days}</td><td>${d.onsite}</td><td>${d.online}</td>
+        <td>${d.total}h</td><td>${d.pct}%</td>
+      </tr>`).join("");
+
     const w = window.open("", "_blank");
     w.document.write(`<html><head><title>Consolidated Report</title><style>
       body{font-family:'Times New Roman',serif;padding:40px;}
@@ -833,25 +655,13 @@ function Reports({ interns, records }) {
       <p>College of Computing and Information Sciences</p>
       <p>Butuan City, Agusan del Norte</p>
       <h3 style="margin-top:10px;">CONSOLIDATED OJT ATTENDANCE REPORT</h3>
-      <p>For the Month of: <strong>${new Date(month + "-01").toLocaleDateString("en-PH", { month:"long", year:"numeric" })}</strong></p>
+      <p>For the Month of: <strong>${monthLabel}</strong></p>
       <hr style="margin:10px 0"/>
-      <Table
-  headers={["Name","Email","Role","Setup","Action"]}
-  rows={users.map(u => [
-    u.name, u.email,
-    <span style={{ fontSize:11, fontWeight:600, padding:"2px 8px", borderRadius:99, background:(roleColor[u.role] || "#94a3b8") + "22", color: roleColor[u.role] || "#94a3b8" }}>
-      {u.role}
-    </span>,
-    u.role === "intern"
-      ? <span style={{ fontSize:11, color:"#64748b" }}>{u.work_mode === "offsite" ? "WFH" : "Onsite"} · {u.tracking_type === "output" ? "Output" : "Hours"}</span>
-      : <span style={{ fontSize:11, color:"#cbd5e1" }}>—</span>,
-    <button onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}
-      style={{ padding:"5px 12px", background:"#fff", color:"#dc2626", border:"1px solid #fca5a5", borderRadius:6, cursor:"pointer", fontSize:12, fontWeight:600, opacity: deleting === u.id ? 0.5 : 1 }}>
-      {deleting === u.id ? "..." : "Delete"}
-    </button>,
-  ])}
-/>
-      <p style="text-align:right;margin-top:12px;font-size:11px;">Generated: ${new Date().toLocaleDateString("en-PH", { year:"numeric", month:"long", day:"numeric" })}</p>
+      <table>
+        <thead><tr><th>#</th><th>Intern</th><th>Email</th><th>Days</th><th>Onsite</th><th>Online</th><th>Total Hours</th><th>Progress</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <p style="text-align:right;margin-top:12px;font-size:11px;">Generated: ${new Date().toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p>
       <div style="display:flex;justify-content:flex-end;margin-top:50px;">
         <div class="sig-line">OJT Coordinator's Signature over Printed Name</div>
       </div>
@@ -861,46 +671,32 @@ function Reports({ interns, records }) {
 
   return (
     <>
-      <PageHeader title="Consolidated Report" sub="Monthly attendance summary for all interns" />
-      <div style={{ display:"flex", gap:10, marginBottom:"1.25rem", alignItems:"center" }}>
-        <input type="month" value={month} onChange={e => setMonth(e.target.value)}
-          style={{ padding:"9px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13 }} />
-        <button onClick={handlePrint}
-          style={{ padding:"9px 20px", background:"#16541e", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:600 }}>
-          🖨 Print Report
-        </button>
+      <PageHeader title="Consolidated Report" sub="Monthly attendance summary for all interns." />
+      <div className="ix-toolbar">
+        <input type="month" className="ix-input" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <button className="ix-b primary" onClick={handlePrint}><Icon name="print" size={16} /> Print Report</button>
       </div>
-      <div style={{ ...card, marginBottom:"1rem" }}>
-        <div style={cardLabel}>Summary — {new Date(month + "-01").toLocaleDateString("en-PH", { month:"long", year:"numeric" })}</div>
-        <div style={row}>
-          <StatCard label="Interns"     value={data.length}                                color="#1A2E5A" />
-          <StatCard label="Total Hours" value={data.reduce((s, d) => s + d.total, 0) + "h"} color="#2E86C1" />
-          <StatCard label="Total Days"  value={data.reduce((s, d) => s + d.days,  0)}       color="#059669" />
-          <StatCard label="Online Logs" value={data.reduce((s, d) => s + d.online, 0)}      color="#7C3AED" />
-        </div>
+
+      <div className="ix-stats">
+        <StatCard label="Interns" value={data.length} icon="users" tone="orange" />
+        <StatCard label="Total Hours" value={Math.round(data.reduce((s, d) => s + d.total, 0) * 10) / 10 + "h"} icon="clock" tone="blue" />
+        <StatCard label="Total Days" value={data.reduce((s, d) => s + d.days, 0)} icon="calendar" tone="green" />
+        <StatCard label="Online Logs" value={data.reduce((s, d) => s + d.online, 0)} icon="globe" tone="purple" />
       </div>
-      <Table
-        headers={["#","Intern","Email","Days","Onsite","Online","Total Hours","Progress"]}
-        rows={data.map((d, i) => [
-          i + 1, d.name, d.email, d.days, d.onsite, d.online, d.total + "h",
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <div style={{ flex:1, background:"#e2e8f0", borderRadius:99, height:8, overflow:"hidden", minWidth:80 }}>
-              <div style={{ width:d.pct + "%", height:"100%", background:"#2E86C1", borderRadius:99 }} />
-            </div>
-            <span style={{ fontSize:11, color:"#64748b" }}>{d.pct}%</span>
-          </div>,
-        ])}
-        empty="No records for this month."
-      />
+
+      <Section icon="chart" title={`Summary · ${monthLabel}`} count={data.length}>
+        <Table
+          headers={["#", "Intern", "Email", "Days", "Onsite", "Online", "Total Hours", "Progress"]}
+          rows={data.map((d, i) => [
+            i + 1,
+            <strong>{d.name}</strong>,
+            d.email, d.days, d.onsite, d.online,
+            <strong>{d.total}h</strong>,
+            <div className="ix-prog"><Bar pct={d.pct} /><span>{d.pct}%</span></div>,
+          ])}
+          empty="No records for this month."
+        />
+      </Section>
     </>
   );
 }
-
-// ── Shared styles ─────────────────────────────────────────
-const row      = { display:"flex", gap:"1rem", marginBottom:"1.25rem", flexWrap:"wrap" };
-const card     = { background:"#fff", borderRadius:12, border:"1px solid #e2e8f0", padding:"1.25rem", marginBottom:"1rem" };
-const cardLabel= { fontSize:11, fontWeight:600, color:"#94a3b8", textTransform:"uppercase", letterSpacing:0.5, marginBottom:12 };
-const fld      = { display:"flex", flexDirection:"column", gap:4 };
-const lbl      = { fontSize:12, fontWeight:600, color:"#374151" };
-const inp = { padding:"9px 12px", border:"1px solid #4f6685", borderRadius:8, fontSize:13, fontFamily:"inherit", color:"#000000", background:"#ffffff" };
-const filterInp= { padding:"8px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13, fontFamily:"inherit" };
