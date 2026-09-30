@@ -1,6 +1,27 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../assets/logo.png";
 
+const ICONS = {
+  home: <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />,
+  users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
+  list: <><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></>,
+  clock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
+  upload: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></>,
+  folder: <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />,
+  user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
+  settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></>,
+  file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></>,
+  chart: <><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></>,
+  inbox: <><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></>,
+  wifi: <><path d="M5 12.55a11 11 0 0 1 14.08 0" /><path d="M1.42 9a16 16 0 0 1 21.16 0" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><line x1="12" y1="20" x2="12.01" y2="20" /></>,
+};
+
+const Icon = ({ name, size = 17 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    {ICONS[name] || ICONS.file}
+  </svg>
+);
+
 export default function Layout({ children, navItems, role }) {
   const navigate  = useNavigate();
   const location  = useLocation();
@@ -17,6 +38,13 @@ export default function Layout({ children, navItems, role }) {
 
   return (
     <div style={s.page}>
+      {/* Animated contour background */}
+      <div style={s.bgLayer}>
+        <div style={{ ...s.blob, ...s.blob1 }} />
+        <div style={{ ...s.blob, ...s.blob2 }} />
+        <div style={{ ...s.blob, ...s.blob3 }} />
+      </div>
+
       {/* Sidebar */}
       <div style={s.sidebar}>
         <div style={s.brand}>
@@ -35,11 +63,12 @@ export default function Layout({ children, navItems, role }) {
             return (
               <button key={path} onClick={() => navigate(path)} style={{
                 ...s.navBtn,
-                background: active ? "#e9f7ee" : "transparent",
-                color: active ? "#16541e" : "#475569",
+                background: active ? "linear-gradient(135deg, #16541e, #1f7a2b)" : "transparent",
+                color: active ? "#fff" : "#475569",
                 fontWeight: active ? 600 : 500,
+                boxShadow: active ? "0 4px 14px rgba(22,84,30,0.28)" : "none",
               }}>
-                <span style={s.navIcon}>{icon}</span>
+                <Icon name={icon} />
                 {label}
               </button>
             );
@@ -54,10 +83,9 @@ export default function Layout({ children, navItems, role }) {
             <div style={s.profileName}>{user.name}</div>
             <div style={s.profileRole}>{roleLabel}</div>
           </div>
-          <span style={s.chevron}>›</span>
         </div>
         <button onClick={logout} style={s.signOutBtn}>
-          <span>⎋</span> Sign Out
+          <Icon name="upload" size={15} /> Sign Out
         </button>
       </div>
 
@@ -66,9 +94,12 @@ export default function Layout({ children, navItems, role }) {
 
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Segoe UI', sans-serif; background: #f8faf9; }
+        body { font-family: 'Segoe UI', sans-serif; }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        @keyframes float1 { 0%,100%{ transform: translate(0,0) scale(1); } 50%{ transform: translate(40px,-30px) scale(1.1); } }
+        @keyframes float2 { 0%,100%{ transform: translate(0,0) scale(1); } 50%{ transform: translate(-30px,40px) scale(1.15); } }
+        @keyframes float3 { 0%,100%{ transform: translate(0,0) scale(1); } 50%{ transform: translate(25px,25px) scale(0.95); } }
         input:focus, textarea:focus, select:focus { outline: none; border-color: #16541e !important; box-shadow: 0 0 0 3px rgba(22,84,30,0.1); }
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 99px; }
@@ -77,6 +108,8 @@ export default function Layout({ children, navItems, role }) {
     </div>
   );
 }
+
+export { Icon };
 
 export const Spinner = () => (
   <div style={{ display:"flex", justifyContent:"center", padding:"4rem" }}>
@@ -92,7 +125,7 @@ export const LiveBadge = () => (
 );
 
 export const StatCard = ({ label, value, sub, color="#16541e" }) => (
-  <div style={{ flex:1, background:"#fff", borderRadius:14, border:"1px solid #e5e7eb", padding:"1.1rem 1.25rem", minWidth:0 }}>
+  <div style={{ flex:1, background:"rgba(255,255,255,0.75)", backdropFilter:"blur(10px)", borderRadius:16, border:"1px solid rgba(255,255,255,0.6)", boxShadow:"0 4px 20px rgba(0,0,0,0.04)", padding:"1.1rem 1.25rem", minWidth:0 }}>
     <div style={{ fontSize:26, fontWeight:700, color }}>{value}</div>
     <div style={{ fontSize:13, color:"#1e293b", fontWeight:500, marginTop:4 }}>{label}</div>
     {sub && <div style={{ fontSize:11, color:"#94a3b8", marginTop:2 }}>{sub}</div>}
@@ -101,8 +134,9 @@ export const StatCard = ({ label, value, sub, color="#16541e" }) => (
 
 export const PageHeader = ({ title, sub, live=false }) => (
   <div style={{
-    background:"#fff", border:"1px solid #e5e7eb", borderRadius:16,
-    padding:"1.5rem 1.75rem", marginBottom:"1.5rem",
+    background:"rgba(255,255,255,0.75)", backdropFilter:"blur(10px)",
+    border:"1px solid rgba(255,255,255,0.6)", boxShadow:"0 4px 20px rgba(0,0,0,0.04)",
+    borderRadius:18, padding:"1.5rem 1.75rem", marginBottom:"1.5rem",
   }}>
     <div style={{ fontSize:22, fontWeight:700, color:"#0f172a" }}>{title}</div>
     <div style={{ fontSize:13.5, color:"#64748b", marginTop:6 }}>
@@ -111,16 +145,11 @@ export const PageHeader = ({ title, sub, live=false }) => (
   </div>
 );
 
-export const EmptyState = ({ icon="📭", title, sub }) => (
-  <div style={{
-    display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-    padding:"3.5rem 1.5rem", textAlign:"center",
-  }}>
-    <div style={{
-      width:56, height:56, borderRadius:"50%", background:"#f1f5f9",
-      display:"flex", alignItems:"center", justifyContent:"center",
-      fontSize:24, marginBottom:14,
-    }}>{icon}</div>
+export const EmptyState = ({ icon="folder", title, sub }) => (
+  <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"3.5rem 1.5rem", textAlign:"center" }}>
+    <div style={{ width:56, height:56, borderRadius:"50%", background:"#f1f5f9", display:"flex", alignItems:"center", justifyContent:"center", color:"#94a3b8", marginBottom:14 }}>
+      <Icon name={icon} size={22} />
+    </div>
     <div style={{ fontSize:15, fontWeight:600, color:"#1e293b", marginBottom:4 }}>{title}</div>
     {sub && <div style={{ fontSize:13, color:"#94a3b8", maxWidth:340, lineHeight:1.6 }}>{sub}</div>}
   </div>
@@ -129,11 +158,11 @@ export const EmptyState = ({ icon="📭", title, sub }) => (
 export const SectionCard = ({ icon, title, count, children }) => (
   <div style={{ marginBottom:"1.5rem" }}>
     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-      {icon && <span style={{ fontSize:15 }}>{icon}</span>}
+      {icon && <span style={{ color:"#16541e", display:"flex" }}><Icon name={icon} size={16} /></span>}
       <span style={{ fontSize:15, fontWeight:700, color:"#0f172a" }}>{title}</span>
       {count !== undefined && <span style={{ fontSize:14, fontWeight:700, color:"#0f172a" }}>({count})</span>}
     </div>
-    <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:16, overflow:"hidden" }}>
+    <div style={{ background:"rgba(255,255,255,0.75)", backdropFilter:"blur(10px)", border:"1px solid rgba(255,255,255,0.6)", boxShadow:"0 4px 20px rgba(0,0,0,0.04)", borderRadius:18, overflow:"hidden" }}>
       {children}
     </div>
   </div>
@@ -158,9 +187,9 @@ export const Badge = ({ label, type }) => {
 };
 
 export const Table = ({ headers, rows, empty="No records found." }) => (
-  <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"auto" }}>
+  <div style={{ overflow:"auto" }}>
     {rows.length === 0 ? (
-      <EmptyState icon="📋" title="No records yet" sub={empty} />
+      <EmptyState icon="list" title="No records yet" sub={empty} />
     ) : (
       <table style={{ width:"100%", borderCollapse:"collapse" }}>
         <thead>
@@ -179,16 +208,23 @@ export const Table = ({ headers, rows, empty="No records found." }) => (
 );
 
 const tS = {
-  th: { padding:"12px 18px", fontSize:11, fontWeight:600, color:"#94a3b8", textTransform:"uppercase", letterSpacing:0.5, textAlign:"left", background:"#fafbfc", borderBottom:"1px solid #f1f5f9", whiteSpace:"nowrap" },
-  td: { padding:"12px 18px", fontSize:13, color:"#1e293b", borderBottom:"1px solid #f8fafc" },
+  th: { padding:"12px 18px", fontSize:11, fontWeight:600, color:"#94a3b8", textTransform:"uppercase", letterSpacing:0.5, textAlign:"left", background:"rgba(248,250,252,0.6)", borderBottom:"1px solid rgba(241,245,249,0.8)", whiteSpace:"nowrap" },
+  td: { padding:"12px 18px", fontSize:13, color:"#1e293b", borderBottom:"1px solid rgba(248,250,252,0.8)" },
 };
 
 const s = {
-  page:     { display:"flex", height:"100vh", overflow:"hidden", background:"#f8faf9" },
+  page:     { display:"flex", height:"100vh", overflow:"hidden", position:"relative", background:"#f4f7f5" },
+  bgLayer:  { position:"absolute", inset:0, overflow:"hidden", zIndex:0, pointerEvents:"none" },
+  blob:     { position:"absolute", borderRadius:"50%", filter:"blur(70px)", opacity:0.35 },
+  blob1:    { width:420, height:420, top:-100, left:180, background:"#7fd897", animation:"float1 14s ease-in-out infinite" },
+  blob2:    { width:380, height:380, bottom:-80, left:"45%", background:"#a7e3b5", animation:"float2 18s ease-in-out infinite" },
+  blob3:    { width:320, height:320, top:"30%", right:-60, background:"#c9f0d0", animation:"float3 16s ease-in-out infinite" },
+
   sidebar:  {
-    width:240, background:"#fff", borderRight:"1px solid #eef1f0",
+    width:240, background:"rgba(255,255,255,0.7)", backdropFilter:"blur(16px)",
+    borderRight:"1px solid rgba(255,255,255,0.5)",
     display:"flex", flexDirection:"column", padding:"1.25rem 1rem",
-    flexShrink:0, overflowY:"auto",
+    flexShrink:0, overflowY:"auto", position:"relative", zIndex:1,
   },
   brand:    { display:"flex", alignItems:"center", gap:10, marginBottom:"1.75rem", padding:"0 0.25rem" },
   brandIcon:{ width:36, height:36, borderRadius:10, background:"#16541e", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 },
@@ -198,18 +234,18 @@ const s = {
     padding:"2px 8px", borderRadius:99, letterSpacing:0.4, display:"inline-block", marginTop:3,
   },
 
-  nav:      { display:"flex", flexDirection:"column", gap:2 },
+  nav:      { display:"flex", flexDirection:"column", gap:3 },
   navBtn:   {
     display:"flex", alignItems:"center", gap:11,
-    padding:"10px 12px", borderRadius:9, border:"none",
+    padding:"10px 12px", borderRadius:12, border:"none",
     cursor:"pointer", fontSize:13.5, textAlign:"left",
-    transition:"all 0.15s", width:"100%",
+    transition:"all 0.2s", width:"100%",
   },
-  navIcon:  { fontSize:16, width:18, textAlign:"center", flexShrink:0 },
 
   profileRow: {
     display:"flex", alignItems:"center", gap:10,
-    padding:"10px", borderRadius:12, border:"1px solid #eef1f0",
+    padding:"10px", borderRadius:12, border:"1px solid rgba(255,255,255,0.5)",
+    background:"rgba(255,255,255,0.4)",
     cursor:"pointer", marginBottom:6,
   },
   avatar: {
@@ -218,8 +254,7 @@ const s = {
     fontSize:14, fontWeight:700, color:"#fff", flexShrink:0,
   },
   profileName: { fontSize:12.5, fontWeight:600, color:"#0f172a", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" },
-  profileRole: { fontSize:10.5, color:"#94a3b8", display:"flex", alignItems:"center", gap:4 },
-  chevron: { fontSize:16, color:"#cbd5e1", flexShrink:0 },
+  profileRole: { fontSize:10.5, color:"#94a3b8" },
   signOutBtn: {
     display:"flex", alignItems:"center", gap:8,
     padding:"9px 10px", borderRadius:9, border:"none",
@@ -227,5 +262,5 @@ const s = {
     fontSize:13, fontWeight:500, width:"100%",
   },
 
-  content:  { flex:1, overflow:"auto", padding:"2rem 2.25rem", minWidth:0 },
+  content:  { flex:1, overflow:"auto", padding:"2rem 2.25rem", minWidth:0, position:"relative", zIndex:1 },
 };

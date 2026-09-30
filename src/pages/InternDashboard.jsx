@@ -3,13 +3,12 @@ import { useState, useEffect } from "react";
 import Layout, { Spinner, PageHeader, StatCard, Badge, Table, LiveBadge, SectionCard, EmptyState } from "../components/Layout.jsx";
 const API = "http://localhost:8000/api";
 const NAV = [
-  { path:"/intern",         label:"Home",               icon:"🏠" },
-  { path:"/intern/records", label:"My Attendance",       icon:"📋" },
-  { path:"/intern/hours",   label:"Total Hours",         icon:"⏱" },
-  { path:"/intern/online",  label:"Submit Online",       icon:"📤" },
-  { path:"/intern/movs",    label:"Submit MOV",          icon:"🗂️" },
-  { path:"/intern/profile", label:"My Profile",          icon:"👤" },
-  
+  { path:"/intern",         label:"Home",               icon:"home" },
+  { path:"/intern/records", label:"My Attendance",       icon:"list" },
+  { path:"/intern/hours",   label:"Total Hours",         icon:"clock" },
+  { path:"/intern/online",  label:"Submit Online",       icon:"upload" },
+  { path:"/intern/movs",    label:"Submit MOV",          icon:"folder" },
+  { path:"/intern/profile", label:"My Profile",          icon:"user" },
 ];
 export default function InternDashboard() {
   const user    = JSON.parse(sessionStorage.getItem("user") || "{}");

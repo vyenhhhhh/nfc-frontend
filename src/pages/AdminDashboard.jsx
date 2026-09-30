@@ -4,14 +4,14 @@ import Layout, { Spinner, PageHeader, StatCard, Badge, Table, LiveBadge } from "
 
 const API = "http://localhost:8000/api";
 const NAV = [
-  { path:"/admin",           label:"Home",               icon:"🏠" },
-  { path:"/admin/interns",   label:"Monitor Interns",    icon:"👥" },
-  { path:"/admin/records",   label:"Attendance Records", icon:"📋" },
-  { path:"/admin/hours",     label:"Hours Summary",      icon:"⏱" },
-  { path:"/admin/accounts",  label:"Manage Accounts",    icon:"⚙️" },
-  { path:"/admin/dtr",       label:"Generate DTR",       icon:"📄" },
-  { path:"/admin/reports",   label:"Consolidated Report",icon:"📊" },
-];  
+  { path:"/admin",           label:"Home",               icon:"home" },
+  { path:"/admin/interns",   label:"Monitor Interns",    icon:"users" },
+  { path:"/admin/records",   label:"Attendance Records", icon:"list" },
+  { path:"/admin/hours",     label:"Hours Summary",      icon:"clock" },
+  { path:"/admin/accounts",  label:"Manage Accounts",    icon:"settings" },
+  { path:"/admin/dtr",       label:"Generate DTR",       icon:"file" },
+  { path:"/admin/reports",   label:"Consolidated Report",icon:"chart" },
+]; 
 
 export default function AdminDashboard() {
   const user   = JSON.parse(sessionStorage.getItem("user") || "{}");
@@ -23,9 +23,9 @@ export default function AdminDashboard() {
 
   const isCoordinator = user.role === "ojt_coordinator";
 
-  const navItems = isCoordinator
-    ? [...NAV, { path:"/admin/submissions", label:"MOV Submissions", icon:"🗂️" }]
-    : NAV;
+const navItems = isCoordinator
+  ? [...NAV, { path:"/admin/submissions", label:"MOV Submissions", icon:"inbox" }]
+  : NAV;
 
   useEffect(() => {
     fetchAll();

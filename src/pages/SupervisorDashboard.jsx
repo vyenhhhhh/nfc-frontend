@@ -4,11 +4,11 @@ import Layout, { Spinner, PageHeader, StatCard, Badge, Table, LiveBadge } from "
 
 const API = "http://localhost:8000/api";
 const NAV = [
-  { path:"/supervisor",          label:"Home",               icon:"🏠" },
-  { path:"/supervisor/pending",  label:"Pending Submissions", icon:"📬" },
-  { path:"/supervisor/interns",  label:"Monitor Interns",     icon:"👥" },
-  { path:"/supervisor/records",  label:"Attendance Records",  icon:"📋" },
-  { path:"/supervisor/hours",    label:"Hours Summary",       icon:"⏱" },
+  { path:"/supervisor",          label:"Home",               icon:"home" },
+  { path:"/supervisor/pending",  label:"Pending Submissions", icon:"inbox" },
+  { path:"/supervisor/interns",  label:"Monitor Interns",     icon:"users" },
+  { path:"/supervisor/records",  label:"Attendance Records",  icon:"list" },
+  { path:"/supervisor/hours",    label:"Hours Summary",       icon:"clock" },
 ];
 
 export default function SupervisorDashboard() {
