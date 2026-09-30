@@ -328,7 +328,7 @@ export default function LoginForm({ variant = "student" }) {
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="you@carsu.edu.ph"
+                        placeholder="Username"
                         required
                         autoComplete="username"
                       />
@@ -346,7 +346,7 @@ export default function LoginForm({ variant = "student" }) {
                         type={showPassword ? "text" : "password"}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Your password"
+                        placeholder="Password"
                         required
                         autoComplete="current-password"
                       />
@@ -494,7 +494,7 @@ const css = `
   }
   .lf-logo-btn { background: none; border: none; cursor: pointer; display: flex; margin-right: 14px; }
   .lf-logo-btn { align-items: center; text-align: left; }
-  .lf-nav-logo { height: 42px; width: auto; flex-shrink: 0; }
+  .lf-nav-logo { height: 60px; width: auto; flex-shrink: 0; }
   .lf-brand-name {
     display: block; overflow: hidden; white-space: nowrap;
     max-width: 0; opacity: 0; margin-left: 0;
