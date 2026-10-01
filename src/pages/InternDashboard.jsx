@@ -1,10 +1,12 @@
 // InternDashboard.jsx
 import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import logo from "../assets/logo.png";
+import { useLocation, useNavigate } from "react-router-dom";
+import Shell, {
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Hero, Icon, Ring, Avatar,
+  calcHours, fmtTime, greeting, REQUIRED_HOURS,
+} from "../components/DashKit.jsx";
 
 const API = "http://localhost:8000/api";
-const REQUIRED_HOURS = 486;
 
 const NAV = [
   { path: "/intern",         label: "Home",          icon: "home" },
@@ -12,153 +14,17 @@ const NAV = [
   { path: "/intern/hours",   label: "Total Hours",   icon: "clock" },
   { path: "/intern/online",  label: "Submit Online", icon: "upload" },
   { path: "/intern/movs",    label: "Submit MOV",    icon: "folder" },
+  { path: "/intern/nfc",     label: "NFC Card",      icon: "card" },
   { path: "/intern/profile", label: "My Profile",    icon: "user" },
 ];
 
-/* ───────────────────────── icons ───────────────────────── */
-const PATHS = {
-  home: <path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10" />,
-  list: <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />,
-  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-  upload: <><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></>,
-  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
-  user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
-  logout: <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />,
-  calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>,
-  nfc: <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />,
-  globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>,
-  warn: <><path d="M12 3 2 20h20L12 3z" /><path d="M12 10v5M12 18h.01" /></>,
-  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
-  file: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>,
-  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
-  expand: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
-  shrink: <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />,
-  tap: <><path d="M9 11V5a2 2 0 0 1 4 0v6" /><path d="M13 11.5a2 2 0 0 1 4 0V14a6 6 0 0 1-6 6H10a5 5 0 0 1-4.3-2.5L3 13a1.6 1.6 0 0 1 2.6-1.8L9 14" /></>,
-};
-const Icon = ({ name, size = 20 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {PATHS[name]}
-  </svg>
-);
-
-/* ───────────────────────── small UI pieces ───────────────────────── */
-const fmtTime = (v) => (v ? new Date(v).toLocaleTimeString("en-PH") : "—");
-
-function Spinner() {
-  return (
-    <div className="ix-spin-wrap" role="status" aria-label="Loading">
-      <div className="ix-spin" />
-    </div>
-  );
-}
-
-function PageHeader({ title, sub, live }) {
-  return (
-    <div className="ix-ph">
-      <div>
-        <h1>{title}</h1>
-        {sub && <p>{sub}</p>}
-      </div>
-      {live && (
-        <span className="ix-live"><i /> Live</span>
-      )}
-    </div>
-  );
-}
-
-function StatCard({ label, value, icon, tone = "orange", sub }) {
-  return (
-    <div className="ix-stat">
-      <div className={`ix-stat-icon ${tone}`}><Icon name={icon} size={20} /></div>
-      <div>
-        <div className="ix-stat-label">{label}</div>
-        <div className="ix-stat-value">{value}</div>
-        {sub && <div className="ix-stat-sub">{sub}</div>}
-      </div>
-    </div>
-  );
-}
-
-function Badge({ label, type }) {
-  return <span className={`ix-badge ${type}`}>{label}</span>;
-}
-
-function Section({ icon, title, count, children }) {
-  return (
-    <section className="ix-section">
-      <header>
-        <span className="ix-section-icon"><Icon name={icon} size={16} /></span>
-        <h2>{title}</h2>
-        {count !== undefined && <span className="ix-count">{count}</span>}
-      </header>
-      {children}
-    </section>
-  );
-}
-
-function Empty({ icon, title, sub }) {
-  return (
-    <div className="ix-empty">
-      <div className="ix-empty-icon"><Icon name={icon} size={26} /></div>
-      <div className="ix-empty-title">{title}</div>
-      {sub && <div className="ix-empty-sub">{sub}</div>}
-    </div>
-  );
-}
-
-function Table({ headers, rows, empty = "Nothing here yet." }) {
-  if (!rows.length) return <Empty icon="list" title={empty} />;
-  return (
-    <div className="ix-table-wrap">
-      <table className="ix-table">
-        <thead>
-          <tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Ring({ pct, size = 140, stroke = 12, track = "rgba(255,255,255,0.28)", color = "#fff", children }) {
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const clamped = Math.max(0, Math.min(pct, 100));
-  return (
-    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
-      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={size / 2} cy={size / 2} r={r} stroke={track} strokeWidth={stroke} fill="none" />
-        <circle
-          cx={size / 2} cy={size / 2} r={r} stroke={color} strokeWidth={stroke} fill="none"
-          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - clamped / 100)}
-          style={{ transition: "stroke-dashoffset .9s cubic-bezier(.2,.8,.2,1)" }}
-        />
-      </svg>
-      <div className="ix-ring-center">{children}</div>
-    </div>
-  );
-}
-
-/* ───────────────────────── main component ───────────────────────── */
 export default function InternDashboard() {
   const user = JSON.parse(sessionStorage.getItem("user") || "{}");
-  const navigate = useNavigate();
   const { pathname: path } = useLocation();
+  const navigate = useNavigate();
 
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [isFull, setIsFull] = useState(false);
-
-  // Not signed in? Back to the login page.
-  useEffect(() => {
-    if (!user.id) navigate("/login", { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     fetchRecords();
@@ -167,140 +33,46 @@ export default function InternDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
-    const onFs = () => setIsFull(!!document.fullscreenElement);
-    window.addEventListener("keydown", onKey);
-    document.addEventListener("fullscreenchange", onFs);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.removeEventListener("fullscreenchange", onFs);
-    };
-  }, []);
-
-  // close the sidebar after navigating (helps on mobile)
-  useEffect(() => setMenuOpen(false), [path]);
-
   const fetchRecords = async () => {
     try {
       const res = await fetch(`${API}/intern/attendance?user_id=${user.id}`);
       const data = await res.json();
       setRecords(Array.isArray(data) ? data : []);
     } catch {
-      /* keep whatever we already have */
+      /* keep what we already have */
     } finally {
       setLoading(false);
     }
   };
 
-  const logout = () => {
-    sessionStorage.removeItem("user");
-    localStorage.removeItem("ojt_remember"); // stops "Remember me" from signing back in
-    navigate("/login", { replace: true });
-  };
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
-    else document.exitFullscreen?.();
-  };
-
-  // Stats
   const uniqueDays = [...new Set(records.map((r) => r.date))].length;
-  const totalHours = calcTotalHours(records);
+  const totalHours = calcHours(records);
   const onsite = records.filter((r) => r.uid !== "ONLINE").length;
   const online = records.filter((r) => r.uid === "ONLINE").length;
   const lastTap = records[0];
-
   const firstName = user.name?.split(" ")[0] || "Intern";
-  const initial = user.name?.charAt(0).toUpperCase() || "?";
 
   return (
-    <div className="ix-page">
-      {/* ── Top navbar ── */}
-      <header className="ix-nav">
-        <button className="ix-logo-btn" onClick={() => navigate("/intern")} aria-label="Home">
-          <img src={logo} alt="CSU CCIS" className="ix-nav-logo" />
-          <span className={menuOpen ? "ix-brand-name show" : "ix-brand-name"} aria-hidden={!menuOpen}>
-            CARAGA STATE<br />UNIVERSITY
-          </span>
-        </button>
-
-        <button
-          className="ix-icon-btn"
-          aria-label={menuOpen ? "Close menu" : "Open menu"}
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((o) => !o)}
-        >
-          <Icon name="menu" size={18} />
-        </button>
-        <button className="ix-icon-btn ix-fs-btn" aria-label="Toggle fullscreen" onClick={toggleFullscreen}>
-          <Icon name={isFull ? "shrink" : "expand"} size={18} />
-        </button>
-
-        <div className="ix-nav-right">
-          <div className="ix-user">
-            <div className="ix-avatar">{initial}</div>
-            <div className="ix-user-text">
-              <strong>{user.name || "Intern"}</strong>
-              <span>OJT Intern</span>
-            </div>
-          </div>
-          <button className="ix-logout" onClick={logout}>
-            <Icon name="logout" size={17} /> <span>Logout</span>
-          </button>
-        </div>
-      </header>
-
-      <div className="ix-body">
-        {/* Sidebar: pushes the page when expanded */}
-        <div className={menuOpen ? "ix-strip open" : "ix-strip"} />
-        {menuOpen && <div className="ix-backdrop" onClick={() => setMenuOpen(false)} />}
-        <aside className={menuOpen ? "ix-side open" : "ix-side"} aria-label="Main navigation">
-          {NAV.map((it) => (
-            <button
-              key={it.path}
-              className={path === it.path ? "ix-side-item active" : "ix-side-item"}
-              onClick={() => navigate(it.path)}
-              title={it.label}
-              aria-current={path === it.path ? "page" : undefined}
-            >
-              <span className="ix-side-icon"><Icon name={it.icon} /></span>
-              <span className="ix-side-label">{it.label}</span>
-            </button>
-          ))}
-          <div className="ix-side-foot">CSU CCIS OJT</div>
-        </aside>
-
-        <main className="ix-main">
-          <div className="ix-content" key={path}>
-            {path === "/intern" && (
-              <Home
-                user={user} firstName={firstName} uniqueDays={uniqueDays} totalHours={totalHours}
-                onsite={onsite} online={online} lastTap={lastTap} loading={loading} records={records}
-              />
-            )}
-            {path === "/intern/records" && <Records records={records} loading={loading} />}
-            {path === "/intern/hours" && <Hours records={records} loading={loading} />}
-            {path === "/intern/online" && <SubmitOnline user={user} />}
-            {path === "/intern/movs" && <SubmitMov user={user} />}
-            {path === "/intern/profile" && <Profile user={user} uniqueDays={uniqueDays} totalHours={totalHours} />}
-          </div>
-        </main>
-      </div>
-
-      <style>{css}</style>
-    </div>
+    <Shell navItems={NAV} user={user}>
+      <style>{internCss}</style>
+      {path === "/intern" && (
+        <Home
+          user={user} firstName={firstName} uniqueDays={uniqueDays} totalHours={totalHours}
+          onsite={onsite} online={online} lastTap={lastTap} loading={loading} records={records}
+          onApply={() => navigate("/intern/nfc")}
+        />
+      )}
+      {path === "/intern/records" && <Records records={records} loading={loading} />}
+      {path === "/intern/hours" && <Hours records={records} loading={loading} />}
+      {path === "/intern/online" && <SubmitOnline user={user} />}
+      {path === "/intern/movs" && <SubmitMov user={user} />}
+      {path === "/intern/nfc" && <NfcApply user={user} />}
+      {path === "/intern/profile" && <Profile user={user} uniqueDays={uniqueDays} totalHours={totalHours} />}
+    </Shell>
   );
 }
 
 /* ───────────────────────── Home ───────────────────────── */
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
-}
-
 function cheer(pct) {
   if (pct <= 0) return "Every tap counts. Your first one is waiting.";
   if (pct < 25) return "Great start! The hours are beginning to add up.";
@@ -310,36 +82,30 @@ function cheer(pct) {
   return "You did it! Your required hours are complete. 🎉";
 }
 
-function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap, loading, records }) {
+function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap, loading, records, onApply }) {
   const needsCardWarning = user.work_mode !== "offsite" && user.tracking_type !== "output" && !user.has_card;
   const pct = (totalHours / REQUIRED_HOURS) * 100;
-  const left = Math.max(REQUIRED_HOURS - totalHours, 0);
+  const left = Math.max(Math.round((REQUIRED_HOURS - totalHours) * 10) / 10, 0);
 
   return (
     <>
-      <div className="ix-hero">
-        <span className="ix-hero-blob b1" />
-        <span className="ix-hero-blob b2" />
-        <div className="ix-hero-text">
-          <span className="ix-hero-tag"><Icon name="nfc" size={14} /> OJT Progress</span>
-          <h1>{greeting()}, {firstName}!</h1>
-          <p>{cheer(pct)}</p>
-          <div className="ix-hero-facts">
-            <div><strong>{totalHours}h</strong><span>completed</span></div>
-            <div><strong>{left}h</strong><span>to go</span></div>
-            <div><strong>{uniqueDays}</strong><span>days present</span></div>
-          </div>
-        </div>
-        <Ring pct={pct} size={150} stroke={13}>
-          <strong>{pct.toFixed(0)}%</strong>
-          <span>of {REQUIRED_HOURS}h</span>
-        </Ring>
-      </div>
+      <Hero
+        tag="OJT Progress"
+        title={`${greeting()}, ${firstName}!`}
+        text={cheer(pct)}
+        facts={[
+          { v: totalHours + "h", l: "completed" },
+          { v: left + "h", l: "to go" },
+          { v: uniqueDays, l: "days present" },
+        ]}
+        ring={{ pct, top: pct.toFixed(0) + "%", bottom: `of ${REQUIRED_HOURS}h` }}
+      />
 
       {needsCardWarning && (
         <div className="ix-alert">
           <Icon name="warn" size={18} />
-          No NFC card linked to your account yet. Contact your admin to register your card.
+          No NFC card linked to your account yet.
+          <button className="ix-b primary sm" onClick={onApply}>Apply for a card</button>
         </div>
       )}
 
@@ -359,9 +125,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
                 type={lastTap.action === "CHECK_IN" ? "in" : "out"}
               />
               <div className="ix-last-date">{lastTap.date}</div>
-              <div className="ix-last-time">
-                {lastTap.checked_in_at ? new Date(lastTap.checked_in_at).toLocaleTimeString("en-PH") : "—"}
-              </div>
+              <div className="ix-last-time">{fmtTime(lastTap.checked_in_at)}</div>
             </div>
           ) : (
             <Empty icon="tap" title="No tap recorded yet" sub="Your latest check-in or check-out will appear here." />
@@ -428,7 +192,7 @@ function Records({ records, loading }) {
 
 /* ───────────────────────── Hours ───────────────────────── */
 function Hours({ records, loading }) {
-  const totalHours = calcTotalHours(records);
+  const totalHours = calcHours(records);
   const uniqueDays = [...new Set(records.map((r) => r.date))].length;
   const avgHours = uniqueDays > 0 ? (totalHours / uniqueDays).toFixed(1) : 0;
   const pct = Math.min((totalHours / REQUIRED_HOURS) * 100, 100);
@@ -472,7 +236,7 @@ function Hours({ records, loading }) {
         </div>
         <div className="ix-bar-marks"><span>0</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
         <div className="ix-bar-caption">
-          <strong>{totalHours}h</strong> completed · <strong>{Math.max(REQUIRED_HOURS - totalHours, 0)}h</strong> remaining
+          <strong>{totalHours}h</strong> completed · <strong>{Math.max(Math.round((REQUIRED_HOURS - totalHours) * 10) / 10, 0)}h</strong> remaining
         </div>
       </div>
 
@@ -512,7 +276,7 @@ function SubmitOnline({ user }) {
           <Icon name="info" size={18} />
           Submit your attendance for days you worked remotely. Your supervisor will review and approve or reject it.
         </div>
-        {msg && <div className={`ix-msg ${msg.type}`}>{msg.text}</div>}
+        <Msg msg={msg} />
         <form onSubmit={handleSubmit} className="ix-form">
           <div className="ix-field">
             <label htmlFor="ix-date">Date of work</label>
@@ -582,7 +346,7 @@ function SubmitMov({ user }) {
     <>
       <PageHeader title="Submit MOV" sub="Upload documents, certificates, or forms for your coordinator to review." />
       <div className="ix-card narrow" style={{ marginBottom: "1.5rem" }}>
-        {msg && <div className={`ix-msg ${msg.type}`}>{msg.text}</div>}
+        <Msg msg={msg} />
         <form onSubmit={handleSubmit} className="ix-form">
           <div className="ix-field">
             <label htmlFor="ix-title">Document title</label>
@@ -617,11 +381,7 @@ function SubmitMov({ user }) {
             headers={["Title", "File", "Status", "Remarks", "Submitted"]}
             rows={movs.map((m) => [
               <strong>{m.title}</strong>,
-              <a
-                className="ix-link"
-                href={`http://localhost:8000/storage/${m.file_path}`}
-                target="_blank" rel="noopener noreferrer"
-              >
+              <a className="ix-link" href={`http://localhost:8000/storage/${m.file_path}`} target="_blank" rel="noopener noreferrer">
                 {m.original_name}
               </a>,
               <Badge
@@ -639,6 +399,178 @@ function SubmitMov({ user }) {
   );
 }
 
+/* ───────────────────────── NFC card application ───────────────────────── */
+const STEPS = ["Submitted", "Approved", "Card issued"];
+const DONE_COUNT = { pending: 1, approved: 2, issued: 3 };
+const STATUS_TEXT = {
+  pending: "Waiting for your supervisor to review your request.",
+  approved: "Approved! Your card is being prepared. Your supervisor will link it to your account.",
+  issued: "Your card has been issued and linked to your account.",
+};
+
+function NfcApply({ user }) {
+  const [info, setInfo] = useState(null); // { has_card, uid, request }
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [type, setType] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${API}/intern/nfc-request?user_id=${user.id}`, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Could not load your NFC card status.");
+      setInfo(data);
+      setError(null);
+    } catch (e) {
+      setError(
+        e instanceof SyntaxError || e instanceof TypeError
+          ? "Couldn't reach the NFC card service. Please try again later."
+          : e.message
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 8000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const req = info?.request;
+  const status = req?.status;
+  const hasCard = !!info?.has_card;
+  const active = status === "pending" || status === "approved";
+  const types = hasCard ? ["Lost card", "Damaged card", "Replacement"] : ["First NFC card"];
+  const chosen = types.includes(type) ? type : types[0];
+
+  const submit = async (e) => {
+    e.preventDefault(); setSubmitting(true); setMsg(null);
+    try {
+      const res = await fetch(`${API}/intern/nfc-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ user_id: user.id, type: chosen, notes }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Could not submit your request.");
+      setMsg({ type: "success", text: data.message || "Request submitted!" });
+      setNotes("");
+      load();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof SyntaxError ? "The NFC card service isn't available yet." : err.message });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <PageHeader title="NFC Card" sub="Apply for your attendance card and track its status." />
+      {loading ? <Spinner /> : error ? (
+        <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>
+      ) : (
+        <div className="ix-stack">
+          {/* current card */}
+          <div className="ix-card narrow">
+            <div className="ix-nfc-status">
+              <div className={hasCard ? "ix-nfc-badge ok" : "ix-nfc-badge"}><Icon name="card" size={26} /></div>
+              <div>
+                <strong>{hasCard ? "Your NFC card is linked" : "No NFC card yet"}</strong>
+                <span>
+                  {hasCard
+                    ? `Card ID ending ${String(info.uid || "").slice(-4) || "••••"}. Tap it on the reader to log your attendance.`
+                    : "Apply below and your supervisor will get your card ready."}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* latest request */}
+          {req && (
+            <div className="ix-card narrow">
+              <div className="ix-card-label">Your latest request</div>
+              <div className="ix-req-meta">
+                <span className="ix-chip">{req.type || "NFC card"}</span>
+                {req.created_at && (
+                  <span className="ix-muted">
+                    Applied {new Date(req.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" })}
+                  </span>
+                )}
+              </div>
+
+              {status === "rejected" ? (
+                <div className="ix-msg error" style={{ marginTop: 14, marginBottom: 0 }}>
+                  Your request wasn't approved.{req.remarks ? ` Remarks: ${req.remarks}` : ""} You can apply again below.
+                </div>
+              ) : (
+                <>
+                  <ol className="ix-steps">
+                    {STEPS.map((label, i) => {
+                      const done = DONE_COUNT[status] ?? 0;
+                      return (
+                        <li key={label} className={i < done ? "done" : i === done ? "current" : ""}>
+                          <span className="ix-step-dot">{i < done ? <Icon name="check" size={16} /> : i + 1}</span>
+                          <span>{label}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  <div className="ix-step-text">{STATUS_TEXT[status]}</div>
+                  {req.remarks && <div className="ix-remarks" style={{ marginTop: 6 }}>Remarks: {req.remarks}</div>}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* application form */}
+          {!active && (
+            <div className="ix-card narrow">
+              <div className="ix-card-label">{hasCard ? "Request a replacement" : "Apply for your card"}</div>
+              <Msg msg={msg} />
+              <form onSubmit={submit} className="ix-form" style={{ marginTop: 14 }}>
+                {types.length > 1 ? (
+                  <div className="ix-field">
+                    <label htmlFor="nfc-type">Reason</label>
+                    <select id="nfc-type" value={chosen} onChange={(e) => setType(e.target.value)}>
+                      {types.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="ix-field">
+                    <label>Request type</label>
+                    <span className="ix-chip" style={{ alignSelf: "flex-start" }}>{chosen}</span>
+                  </div>
+                )}
+                <div className="ix-field">
+                  <label htmlFor="nfc-notes">Notes <span className="ix-muted">(optional)</span></label>
+                  <textarea
+                    id="nfc-notes" rows={4} value={notes} maxLength={500}
+                    placeholder="Anything your supervisor should know?"
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </div>
+                <div className="ix-note" style={{ margin: 0 }}>
+                  <Icon name="info" size={18} />
+                  Your supervisor reviews requests and links the card to your account. You'll see the progress here.
+                </div>
+                <button type="submit" disabled={submitting} className="ix-btn">
+                  {submitting ? "Submitting..." : "Submit Application"}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ───────────────────────── Profile ───────────────────────── */
 function Profile({ user, uniqueDays, totalHours }) {
   const pct = (totalHours / REQUIRED_HOURS) * 100;
@@ -647,7 +579,7 @@ function Profile({ user, uniqueDays, totalHours }) {
       <PageHeader title="My Profile" sub="Your account information." />
       <div className="ix-profile">
         <div className="ix-card ix-profile-card">
-          <div className="ix-profile-avatar">{user.name?.charAt(0).toUpperCase()}</div>
+          <div className="ix-profile-avatar"><Avatar name={user.name} photo={user.photo} size={96} /></div>
           <h2>{user.name}</h2>
           <p>{user.email}</p>
           <Badge label="OJT Intern" type="onsite" />
@@ -663,7 +595,7 @@ function Profile({ user, uniqueDays, totalHours }) {
           </dl>
         </div>
 
-        <div className="ix-card ix-profile-progress">
+        <div className="ix-card">
           <div className="ix-card-label">OJT progress</div>
           <div className="ix-profile-ring">
             <Ring pct={pct} size={170} stroke={15} track="#fde3d6" color="#e8582a">
@@ -673,7 +605,7 @@ function Profile({ user, uniqueDays, totalHours }) {
             <div className="ix-profile-ring-text">
               <div><strong>{totalHours}</strong> hrs completed</div>
               <div><strong>{REQUIRED_HOURS}</strong> hrs required</div>
-              <div><strong>{Math.max(REQUIRED_HOURS - totalHours, 0)}</strong> hrs remaining</div>
+              <div><strong>{Math.max(Math.round((REQUIRED_HOURS - totalHours) * 10) / 10, 0)}</strong> hrs remaining</div>
             </div>
           </div>
         </div>
@@ -682,236 +614,60 @@ function Profile({ user, uniqueDays, totalHours }) {
   );
 }
 
-/* ───────────────────────── helpers ───────────────────────── */
-function calcTotalHours(records) {
-  let total = 0;
-  const byDate = {};
-  records.forEach((r) => {
-    if (!byDate[r.date]) byDate[r.date] = {};
-    if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
-    if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
-  });
-  Object.values(byDate).forEach(({ in: i, out: o }) => {
-    if (i && o) total += (new Date(o) - new Date(i)) / 3600000;
-  });
-  return Math.round(total * 10) / 10;
-}
-
-/* ───────────────────────── styles ───────────────────────── */
-const css = `
-  .ix-page, .ix-page * { box-sizing: border-box; }
-  html, body, #root { height: 100%; width: 100%; margin: 0; }
-  .ix-page { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #0f172a; }
-  .ix-page h1, .ix-page h2, .ix-page p, .ix-page dl, .ix-page dd { margin: 0; }
-  .ix-page button { font-family: inherit; }
-
-  .ix-page { height: 100vh; min-height: 620px; display: flex; flex-direction: column; background: #f3f5f7; }
-
-  /* ───── Navbar ───── */
-  .ix-nav {
-    height: 75px; flex-shrink: 0; background: #fff; display: flex; align-items: center; gap: 10px;
-    padding: 0 22px 0 15px; position: relative; z-index: 30; box-shadow: 0 4px 14px rgba(15,23,42,0.12);
-  }
-  .ix-logo-btn { background: none; border: none; cursor: pointer; display: flex; align-items: center; text-align: left; margin-right: 14px; }
-  .ix-nav-logo { height: 42px; width: auto; flex-shrink: 0; }
-  .ix-brand-name {
-    display: block; overflow: hidden; white-space: nowrap; max-width: 0; opacity: 0; margin-left: 0;
-    font-size: 11.5px; font-weight: 800; line-height: 1.2; letter-spacing: .8px; color: #0b1220;
-    transition: max-width .35s cubic-bezier(.2,.8,.2,1), opacity .25s, margin-left .35s;
-  }
-  .ix-brand-name.show { max-width: 170px; opacity: 1; margin-left: 10px; }
-  .ix-icon-btn {
-    background: none; border: none; cursor: pointer; padding: 8px; border-radius: 8px; display: flex;
-    color: #1e293b; transition: background .15s, color .15s;
-  }
-  .ix-icon-btn:hover { background: #fdeee7; color: #e8582a; }
-  .ix-nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-  .ix-user { display: flex; align-items: center; gap: 10px; }
-  .ix-avatar {
-    width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; font-size: 15px;
-    box-shadow: 0 6px 14px rgba(232,88,42,0.35);
-  }
-  .ix-user-text { display: flex; flex-direction: column; line-height: 1.25; }
-  .ix-user-text strong { font-size: 13px; font-weight: 700; }
-  .ix-user-text span { font-size: 11px; color: #94a3b8; }
-  .ix-logout {
-    display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 10px; cursor: pointer;
-    background: #fff; border: 1.5px solid #e2e8f0; color: #334155; font-size: 13px; font-weight: 600;
-    transition: all .15s;
-  }
-  .ix-logout:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
-  .ix-icon-btn:focus-visible, .ix-logout:focus-visible, .ix-logo-btn:focus-visible, .ix-side-item:focus-visible,
-  .ix-pill:focus-visible, .ix-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
-
-  /* ───── Sidebar (white, pushes the page) ───── */
-  .ix-body { flex: 1; display: flex; min-height: 0; position: relative; }
-  .ix-strip { width: 65px; flex-shrink: 0; transition: width .3s cubic-bezier(.2,.8,.2,1); }
-  .ix-strip.open { width: 236px; }
-  .ix-backdrop { display: none; position: absolute; inset: 0; background: rgba(15,23,42,0.35); z-index: 18; animation: ix-fade .2s; }
-  .ix-side {
-    position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow: hidden; background: #fff;
-    box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px;
-    transition: width .3s cubic-bezier(.2,.8,.2,1);
-  }
-  .ix-side.open { width: 236px; }
-  .ix-side-item {
-    position: relative; display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px; padding: 0 0 0 13px;
-    border: none; background: none; cursor: pointer; color: #334155; border-radius: 12px; white-space: nowrap;
-    text-align: left; transition: background .15s, color .15s;
-  }
-  .ix-side-item:hover { background: #fdeee7; color: #e8582a; }
-  .ix-side-item.active { background: #fdeee7; color: #e8582a; }
-  .ix-side-item.active::before { content: ""; position: absolute; left: -10px; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: #e8582a; }
-  .ix-side-icon { display: flex; flex-shrink: 0; }
-  .ix-side-label { font-size: 14px; font-weight: 600; opacity: 0; transform: translateX(-6px); transition: opacity .2s, transform .25s; }
-  .ix-side.open .ix-side-label { opacity: 1; transform: none; transition-delay: .1s; }
-  .ix-side-foot { margin-top: auto; padding: 18px 22px; font-size: 11px; letter-spacing: .5px; color: #94a3b8; white-space: nowrap; opacity: 0; transition: opacity .2s; }
-  .ix-side.open .ix-side-foot { opacity: 1; transition-delay: .15s; }
-
-  /* ───── Main ───── */
-  .ix-main { flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px 40px; }
-  .ix-content { max-width: 1180px; margin: 0 auto; animation: ix-rise .45s cubic-bezier(.2,.8,.2,1) both; }
-
-  .ix-ph { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
-  .ix-ph h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.4px; color: #0b1220; }
-  .ix-ph p { font-size: 13.5px; color: #64748b; margin-top: 3px; }
-  .ix-live { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 99px; background: #ecfdf3; color: #15803d; font-size: 12px; font-weight: 600; }
-  .ix-live i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: ix-blink 1.6s ease-in-out infinite; }
-
-  /* ───── Hero ───── */
-  .ix-hero {
-    position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
-    padding: 28px 32px; border-radius: 24px; margin-bottom: 20px; color: #fff;
-    background: linear-gradient(135deg, #f2864f 0%, #e8582a 55%, #d94a1c 100%); box-shadow: 0 20px 44px rgba(232,88,42,0.30);
-  }
-  .ix-hero-blob { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.10); pointer-events: none; }
-  .ix-hero-blob.b1 { width: 320px; height: 320px; right: -80px; top: -140px; }
-  .ix-hero-blob.b2 { width: 220px; height: 220px; left: 30%; bottom: -130px; background: rgba(255,255,255,0.07); }
-  .ix-hero-text { position: relative; max-width: 560px; }
-  .ix-hero-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: 99px; background: rgba(255,255,255,0.2); font-size: 11.5px; font-weight: 600; }
-  .ix-hero h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-top: 12px; }
-  .ix-hero p { font-size: 14px; line-height: 1.55; margin-top: 6px; color: rgba(255,255,255,0.92); }
-  .ix-hero-facts { display: flex; gap: 26px; margin-top: 18px; flex-wrap: wrap; }
-  .ix-hero-facts div { display: flex; flex-direction: column; }
-  .ix-hero-facts strong { font-size: 20px; font-weight: 800; }
-  .ix-hero-facts span { font-size: 11.5px; color: rgba(255,255,255,0.8); }
-  .ix-ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; }
-  .ix-ring-center strong { font-size: 26px; font-weight: 800; line-height: 1.1; }
-  .ix-ring-center span { font-size: 11px; opacity: .85; }
-  .ix-ring-center .dark { color: #0b1220; opacity: 1; }
-  .ix-ring-center span.dark { color: #64748b; }
-  .ix-hero > div:last-child { position: relative; }
-
-  .ix-alert { display: flex; align-items: center; gap: 10px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 14px; padding: 12px 16px; font-size: 13px; margin-bottom: 20px; }
-
-  /* ───── Stats ───── */
-  .ix-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin-bottom: 20px; }
-  .ix-stat { display: flex; align-items: center; gap: 14px; background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); transition: transform .2s, box-shadow .2s; }
-  .ix-stat:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 14px 30px rgba(15,23,42,0.09); }
-  .ix-stat-icon { width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .ix-stat-icon.orange { background: #fdeee7; color: #e8582a; }
-  .ix-stat-icon.blue { background: #e8f1fd; color: #2563eb; }
-  .ix-stat-icon.green { background: #e6f7ee; color: #16a34a; }
-  .ix-stat-icon.purple { background: #f0eafd; color: #7c3aed; }
-  .ix-stat-label { font-size: 11.5px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; }
-  .ix-stat-value { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2; }
-  .ix-stat-sub { font-size: 11px; color: #94a3b8; }
-
-  /* ───── Cards / sections ───── */
+/* ───────────────────────── intern-only styles ───────────────────────── */
+const internCss = `
   .ix-grid-2 { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
-  .ix-section, .ix-card { background: #fff; border-radius: 20px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); overflow: hidden; }
-  .ix-section header { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid #f1f5f9; }
-  .ix-section header h2 { font-size: 14.5px; font-weight: 700; }
-  .ix-section-icon { width: 28px; height: 28px; border-radius: 9px; background: #fdeee7; color: #e8582a; display: flex; align-items: center; justify-content: center; }
-  .ix-count { margin-left: auto; padding: 2px 10px; border-radius: 99px; background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 600; }
-  .ix-card { padding: 22px; }
-  .ix-card.flush { padding: 0; }
-  .ix-card.narrow { max-width: 580px; }
-  .ix-card-label { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .6px; }
+  .ix-stack { display: flex; flex-direction: column; gap: 20px; }
+  .ix-card.narrow { max-width: 580px; width: 100%; }
+  .ix-card .ix-note { margin: 0 0 18px; }
 
   .ix-last { padding: 22px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .ix-last-date { font-size: 20px; font-weight: 800; margin-top: 8px; }
   .ix-last-time { font-size: 14px; color: #64748b; font-family: ui-monospace, monospace; }
 
-  /* ───── Table ───── */
-  .ix-table-wrap { overflow-x: auto; }
-  .ix-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .ix-table th { text-align: left; padding: 12px 20px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #94a3b8; background: #fafbfc; white-space: nowrap; }
-  .ix-table td { padding: 13px 20px; border-top: 1px solid #f1f5f9; color: #334155; white-space: nowrap; }
-  .ix-table tbody tr { transition: background .12s; }
-  .ix-table tbody tr:hover { background: #fffaf7; }
-  .ix-mono { font-family: ui-monospace, monospace; font-size: 10.5px; color: #94a3b8; }
-  .ix-muted { color: #94a3b8; }
-  .ix-link { color: #e8582a; font-weight: 600; text-decoration: none; }
-  .ix-link:hover { text-decoration: underline; }
-
-  .ix-badge { display: inline-block; padding: 3px 11px; border-radius: 99px; font-size: 11.5px; font-weight: 700; letter-spacing: .3px; }
-  .ix-badge.in { background: #e6f7ee; color: #15803d; }
-  .ix-badge.out { background: #fdeee7; color: #d94a1c; }
-  .ix-badge.online { background: #f0eafd; color: #6d28d9; }
-  .ix-badge.onsite { background: #e8f1fd; color: #1d4ed8; }
-  .ix-badge.approved { background: #e6f7ee; color: #15803d; }
-  .ix-badge.rejected { background: #fef2f2; color: #dc2626; }
-  .ix-badge.pending { background: #fffbeb; color: #b45309; }
-
-  .ix-empty { padding: 36px 20px; text-align: center; }
-  .ix-empty-icon { width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 50%; background: #fdeee7; color: #e8582a; display: flex; align-items: center; justify-content: center; }
-  .ix-empty-title { font-size: 14px; font-weight: 700; }
-  .ix-empty-sub { font-size: 12.5px; color: #94a3b8; margin-top: 3px; }
-
-  .ix-spin-wrap { display: flex; justify-content: center; padding: 36px; }
-  .ix-spin { width: 30px; height: 30px; border-radius: 50%; border: 3px solid #fde3d6; border-top-color: #e8582a; animation: ix-spin .8s linear infinite; }
-
-  /* ───── Filters ───── */
-  .ix-pills { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-  .ix-pill { padding: 7px 18px; border-radius: 99px; border: 1.5px solid #e2e8f0; background: #fff; color: #64748b; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; }
-  .ix-pill:hover { border-color: #f5b79f; color: #e8582a; }
-  .ix-pill.active { background: linear-gradient(135deg, #f2733a, #e04a1a); border-color: transparent; color: #fff; box-shadow: 0 6px 14px rgba(232,88,42,0.3); }
-
-  /* ───── Progress bar ───── */
   .ix-bar { position: relative; margin-top: 16px; height: 14px; border-radius: 99px; background: #f1f5f9; overflow: hidden; }
-  .ix-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #f2864f, #e8582a); transition: width .8s cubic-bezier(.2,.8,.2,1); }
   .ix-bar i { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; opacity: .9; }
   .ix-bar-marks { display: flex; justify-content: space-between; font-size: 10.5px; color: #94a3b8; margin-top: 6px; }
   .ix-bar-caption { font-size: 13px; color: #64748b; margin-top: 12px; }
   .ix-bar-caption strong { color: #0b1220; }
 
-  /* ───── Forms ───── */
-  .ix-form { display: flex; flex-direction: column; gap: 18px; }
-  .ix-field { display: flex; flex-direction: column; gap: 6px; }
-  .ix-field > label { font-size: 12px; font-weight: 700; color: #334155; letter-spacing: .2px; }
-  .ix-field input[type="text"], .ix-field input[type="date"], .ix-field textarea {
-    padding: 11px 14px; border: 1.5px solid #e2e8f0; border-radius: 12px; font-size: 14px; color: #1e293b;
-    font-family: inherit; background: #fff; transition: border-color .15s, box-shadow .15s;
-  }
   .ix-field textarea { resize: vertical; line-height: 1.6; }
-  .ix-field input:focus, .ix-field textarea:focus { outline: none; border-color: #e8582a; box-shadow: 0 0 0 4px rgba(232,88,42,0.12); }
-  .ix-field input::placeholder, .ix-field textarea::placeholder { color: #b6c0cc; }
-  .ix-btn {
-    padding: 13px; border: none; border-radius: 12px; cursor: pointer; color: #fff; font-size: 14px; font-weight: 700; letter-spacing: .3px;
-    background: linear-gradient(135deg, #f2733a, #e04a1a); box-shadow: 0 10px 22px rgba(232,88,42,0.32); transition: transform .15s, box-shadow .15s;
-  }
+  .ix-btn { padding: 13px; border: none; border-radius: 12px; cursor: pointer; color: #fff; font-size: 14px; font-weight: 700; letter-spacing: .3px; background: linear-gradient(135deg, #f2733a, #e04a1a); box-shadow: 0 10px 22px rgba(232,88,42,0.32); transition: transform .15s, box-shadow .15s; }
   .ix-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(232,88,42,0.4); }
   .ix-btn:disabled { opacity: .7; cursor: default; }
-  .ix-note { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.55; color: #9a3412; background: #fff5ef; border: 1px solid #fde1d5; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; }
-  .ix-note svg { flex-shrink: 0; margin-top: 1px; color: #e8582a; }
-  .ix-msg { padding: 10px 14px; border-radius: 10px; border: 1px solid; font-size: 13px; margin-bottom: 16px; }
-  .ix-msg.success { background: #f0fdf4; border-color: #86efac; color: #15803d; }
-  .ix-msg.error { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+  .ix-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
 
   .ix-drop { position: relative; display: flex; align-items: center; gap: 14px; padding: 18px; border: 2px dashed #f5b79f; border-radius: 14px; background: #fffaf7; cursor: pointer; transition: all .15s; }
   .ix-drop:hover { border-color: #e8582a; background: #fff5ef; }
   .ix-drop.has-file { border-style: solid; border-color: #e8582a; }
-  .ix-drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  .ix-field .ix-drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; background: transparent; box-shadow: none; }
   .ix-drop-icon { width: 46px; height: 46px; border-radius: 14px; background: #fdeee7; color: #e8582a; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .ix-drop-text { display: flex; flex-direction: column; font-size: 13.5px; font-weight: 600; color: #1e293b; min-width: 0; word-break: break-all; }
   .ix-drop-text small { font-size: 11.5px; font-weight: 400; color: #94a3b8; margin-top: 2px; }
 
-  /* ───── Profile ───── */
+  /* NFC application */
+  .ix-nfc-status { display: flex; align-items: center; gap: 16px; }
+  .ix-nfc-status strong { display: block; font-size: 15px; font-weight: 800; }
+  .ix-nfc-status span { font-size: 12.5px; color: #64748b; line-height: 1.5; }
+  .ix-nfc-badge { width: 56px; height: 56px; border-radius: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #f1f5f9; color: #94a3b8; }
+  .ix-nfc-badge.ok { background: #e6f7ee; color: #16a34a; }
+  .ix-req-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; }
+  .ix-steps { list-style: none; margin: 22px 0 0; padding: 0; display: flex; }
+  .ix-steps li { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #94a3b8; text-align: center; }
+  .ix-steps li:not(:last-child)::after { content: ""; position: absolute; top: 17px; left: calc(50% + 24px); right: calc(-50% + 24px); height: 3px; border-radius: 3px; background: #f1f5f9; }
+  .ix-steps li.done:not(:last-child)::after { background: #e8582a; }
+  .ix-step-dot { width: 36px; height: 36px; border-radius: 50%; background: #f1f5f9; color: #94a3b8; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; }
+  .ix-steps li.done { color: #0b1220; }
+  .ix-steps li.done .ix-step-dot { background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; box-shadow: 0 6px 14px rgba(232,88,42,0.3); }
+  .ix-steps li.current { color: #e8582a; }
+  .ix-steps li.current .ix-step-dot { background: #fdeee7; color: #e8582a; box-shadow: 0 0 0 4px rgba(232,88,42,0.15); }
+  .ix-step-text { margin-top: 18px; font-size: 13px; color: #475569; text-align: center; line-height: 1.5; }
+
+  /* profile */
   .ix-profile { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
   .ix-profile-card { text-align: center; }
-  .ix-profile-avatar { width: 84px; height: 84px; border-radius: 50%; margin: 0 auto 14px; display: flex; align-items: center; justify-content: center; font-size: 34px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #f2864f, #e8582a); box-shadow: 0 12px 26px rgba(232,88,42,0.38); }
+  .ix-profile-avatar { display: flex; justify-content: center; margin-bottom: 14px; }
+  .ix-profile-avatar .ix-av { box-shadow: 0 12px 26px rgba(232,88,42,0.38); }
   .ix-profile-card h2 { font-size: 18px; font-weight: 800; }
   .ix-profile-card p { font-size: 13px; color: #64748b; margin: 3px 0 10px; }
   .ix-profile-card dl { margin-top: 18px; padding-top: 16px; border-top: 1px solid #f1f5f9; text-align: left; }
@@ -921,35 +677,8 @@ const css = `
   .ix-profile-ring { display: flex; align-items: center; gap: 32px; margin-top: 20px; flex-wrap: wrap; }
   .ix-profile-ring-text { display: flex; flex-direction: column; gap: 10px; font-size: 13.5px; color: #64748b; }
   .ix-profile-ring-text strong { color: #0b1220; font-size: 18px; }
+  .ix-ring-center .dark { color: #0b1220; opacity: 1; }
+  .ix-ring-center span.dark { color: #64748b; }
 
-  /* ───── Motion ───── */
-  @keyframes ix-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-  @keyframes ix-fade { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes ix-spin { to { transform: rotate(360deg); } }
-  @keyframes ix-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-  @media (prefers-reduced-motion: reduce) {
-    .ix-content, .ix-live i, .ix-spin { animation: none !important; }
-    .ix-side, .ix-strip, .ix-side-label, .ix-brand-name { transition: none !important; }
-  }
-
-  /* ───── Responsive ───── */
-  @media (max-width: 1000px) {
-    .ix-grid-2, .ix-profile { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 900px) {
-    .ix-strip, .ix-strip.open { width: 0; }
-    .ix-side { width: 0; }
-    .ix-side.open { width: 236px; box-shadow: 10px 0 40px rgba(0,0,0,0.25); }
-    .ix-backdrop { display: block; }
-    .ix-fs-btn { display: none; }
-    .ix-main { padding: 20px 16px 32px; }
-  }
-  @media (max-width: 600px) {
-    .ix-user-text, .ix-logout span { display: none; }
-    .ix-logout { padding: 9px; }
-    .ix-hero { padding: 22px; }
-    .ix-hero h1 { font-size: 22px; }
-    .ix-brand-name { font-size: 9.5px; letter-spacing: .4px; }
-    .ix-brand-name.show { max-width: 110px; margin-left: 6px; }
-  }
+  @media (max-width: 1000px) { .ix-grid-2, .ix-profile { grid-template-columns: 1fr; } }
 `;

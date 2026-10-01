@@ -7,6 +7,10 @@ import logo from "../assets/logo.png";
 
 const API = "http://localhost:8000/api";
 export const REQUIRED_HOURS = 486;
+const STORAGE = "http://localhost:8000/storage/";
+
+// Turns a stored photo path (e.g. "profiles/abc.jpg") into a full URL
+export const photoUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
 
 /* ───────────────────────── helpers ───────────────────────── */
 export const todayManila = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
@@ -65,6 +69,9 @@ const PATHS = {
   x: <path d="M6 6l12 12M18 6L6 18" />,
   print: <><path d="M6 9V3h12v6" /><rect x="3" y="9" width="18" height="9" rx="2" /><path d="M7 14h10v7H7z" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
+  camera: <><path d="M4 8a2 2 0 0 1 2-2h1.5l1-2h7l1 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><circle cx="12" cy="13" r="3.5" /></>,
+  card: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20M6 15h4" /></>,
+  send: <path d="M22 2 11 13M22 2l-7 20-4-9-9-4z" />,
   clip: <path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" />,
 };
 export const Icon = ({ name, size = 20 }) => (
@@ -215,11 +222,69 @@ export function Bar({ pct }) {
   );
 }
 
-export function Avatar({ name, status, size = 44 }) {
+export function Avatar({ name, photo, status, size = 44 }) {
+  const [bad, setBad] = useState(false);
+  const src = photoUrl(photo);
+  useEffect(() => setBad(false), [photo]);
   return (
     <div className="ix-av" style={{ width: size, height: size, fontSize: size * 0.4 }}>
-      {name?.charAt(0).toUpperCase() || "?"}
+      {src && !bad ? <img src={src} alt="" onError={() => setBad(true)} /> : (name?.charAt(0).toUpperCase() || "?")}
       {status && <i className={`ix-dot ${status}`} />}
+    </div>
+  );
+}
+
+// Square profile photo for the sidebar
+function SquarePhoto({ name, photo }) {
+  const [bad, setBad] = useState(false);
+  const src = photoUrl(photo);
+  useEffect(() => setBad(false), [photo]);
+  return (
+    <div className="ix-side-photo">
+      {src && !bad
+        ? <img src={src} alt={name || "Profile photo"} onError={() => setBad(true)} />
+        : <span>{name?.charAt(0).toUpperCase() || "?"}</span>}
+    </div>
+  );
+}
+
+// Click-to-choose square photo picker (used when adding a user)
+export function PhotoPicker({ file, onChange }) {
+  const [preview, setPreview] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    if (!file) { setPreview(null); return; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const pick = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!f.type.startsWith("image/")) { setErr("Please choose an image file."); return; }
+    if (f.size > 2 * 1024 * 1024) { setErr("Photo must be under 2 MB."); return; }
+    setErr(null);
+    onChange(f);
+  };
+
+  return (
+    <div className="ix-photo-pick">
+      <label className="ix-photo-box">
+        <input type="file" accept="image/*" onChange={pick} />
+        {preview
+          ? <img src={preview} alt="Selected profile" />
+          : <span className="ix-photo-ph"><Icon name="camera" size={26} /><small>Add photo</small></span>}
+        <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
+      </label>
+      <div className="ix-photo-info">
+        <strong>Profile photo</strong>
+        <span>Square photo works best. JPG or PNG, max 2 MB.</span>
+        {file && <button type="button" onClick={() => { setErr(null); onChange(null); }}>Remove photo</button>}
+        {err && <em>{err}</em>}
+      </div>
     </div>
   );
 }
@@ -303,7 +368,7 @@ export function InternMonitor({ interns, records, loading, onRefresh }) {
           {rows.map(({ u, isIn, days, last }) => (
             <div key={u.id} className="ix-ic">
               <div className="ix-ic-top">
-                <Avatar name={u.name} status={isIn ? "on" : "off"} />
+                <Avatar name={u.name} photo={u.photo} status={isIn ? "on" : "off"} />
                 <div className="ix-ic-id">
                   <strong>{u.name}</strong>
                   <span>{u.email}</span>
@@ -418,7 +483,7 @@ export default function Shell({ navItems, user, children }) {
 
         <div className="ix-nav-right">
           <div className="ix-user">
-            <div className="ix-avatar">{user?.name?.charAt(0).toUpperCase() || "?"}</div>
+            <Avatar name={user?.name} photo={user?.photo} size={38} />
             <div className="ix-user-text">
               <strong>{user?.name || "User"}</strong>
               <span>{ROLE_LABEL[user?.role] || "Staff"}</span>
@@ -434,6 +499,13 @@ export default function Shell({ navItems, user, children }) {
         <div className={menuOpen ? "ix-strip open" : "ix-strip"} />
         {menuOpen && <div className="ix-backdrop" onClick={() => setMenuOpen(false)} />}
         <aside className={menuOpen ? "ix-side open" : "ix-side"} aria-label="Main navigation">
+          <div className="ix-side-profile">
+            <SquarePhoto name={user?.name} photo={user?.photo} />
+            <div className="ix-side-who">
+              <strong>{user?.name || "User"}</strong>
+              <span>{ROLE_LABEL[user?.role] || "Staff"}</span>
+            </div>
+          </div>
           {navItems.map((it) => (
             <button
               key={it.path}
@@ -491,8 +563,17 @@ const css = `
   .ix-strip { width: 65px; flex-shrink: 0; transition: width .3s cubic-bezier(.2,.8,.2,1); }
   .ix-strip.open { width: 236px; }
   .ix-backdrop { display: none; position: absolute; inset: 0; background: rgba(15,23,42,0.35); z-index: 18; animation: ix-fade .2s; }
-  .ix-side { position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow: hidden; background: #fff; box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px; transition: width .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-side { position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: #fff; box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px; transition: width .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-side::-webkit-scrollbar { display: none; }
   .ix-side.open { width: 236px; }
+  .ix-side-profile { margin: 0 10px 10px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+  .ix-side-photo { width: 45px; height: 45px; border-radius: 12px; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 18px rgba(232,88,42,0.28); transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1), border-radius .3s, font-size .3s; }
+  .ix-side.open .ix-side-photo { width: 120px; height: 120px; border-radius: 22px; font-size: 46px; }
+  .ix-side-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ix-side-who { text-align: center; max-height: 0; max-width: 200px; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-height .3s, opacity .2s, margin .3s; }
+  .ix-side-who strong { display: block; font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
+  .ix-side-who span { font-size: 11.5px; color: #94a3b8; }
+  .ix-side.open .ix-side-who { max-height: 56px; opacity: 1; margin-top: 12px; transition-delay: .1s; }
   .ix-side-item { position: relative; display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px; padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #334155; border-radius: 12px; white-space: nowrap; text-align: left; transition: background .15s, color .15s; }
   .ix-side-item:hover { background: #fdeee7; color: #e8582a; }
   .ix-side-item.active { background: #fdeee7; color: #e8582a; }
@@ -620,6 +701,32 @@ const css = `
   .ix-note { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.55; color: #9a3412; background: #fff5ef; border: 1px solid #fde1d5; padding: 12px 14px; border-radius: 12px; margin-top: 16px; }
   .ix-note svg { flex-shrink: 0; margin-top: 1px; color: #e8582a; }
 
+  /* ───── Tabs / pills ───── */
+  .ix-pills { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .ix-pill { display: inline-flex; align-items: center; gap: 8px; padding: 7px 18px; border-radius: 99px; border: 1.5px solid #e2e8f0; background: #fff; color: #64748b; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; }
+  .ix-pill:hover { border-color: #f5b79f; color: #e8582a; }
+  .ix-pill.active { background: linear-gradient(135deg, #f2733a, #e04a1a); border-color: transparent; color: #fff; box-shadow: 0 6px 14px rgba(232,88,42,0.3); }
+  .ix-pill:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+  .ix-pill-count { min-width: 20px; padding: 1px 6px; border-radius: 99px; background: #e8582a; color: #fff; font-size: 11px; font-weight: 700; text-align: center; }
+  .ix-pill.active .ix-pill-count { background: #fff; color: #e8582a; }
+  .ix-actions { display: flex; gap: 8px; align-items: center; }
+
+  /* ───── Photo picker ───── */
+  .ix-photo-pick { display: flex; align-items: center; gap: 16px; padding: 14px; border: 1.5px dashed #f5b79f; border-radius: 16px; background: #fffaf7; }
+  .ix-photo-box { position: relative; width: 92px; height: 92px; border-radius: 18px; overflow: hidden; flex-shrink: 0; cursor: pointer; background: #fdeee7; color: #e8582a; display: flex; align-items: center; justify-content: center; transition: transform .15s; }
+  .ix-photo-box:hover { transform: scale(1.03); }
+  .ix-photo-box input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }
+  .ix-photo-box img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ix-photo-ph { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .ix-photo-ph small { font-size: 11px; font-weight: 600; }
+  .ix-photo-badge { position: absolute; right: 6px; bottom: 6px; width: 24px; height: 24px; border-radius: 50%; background: #e8582a; color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(232,88,42,0.4); pointer-events: none; }
+  .ix-photo-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .ix-photo-info strong { font-size: 13.5px; }
+  .ix-photo-info span { font-size: 11.5px; color: #94a3b8; line-height: 1.45; }
+  .ix-photo-info button { align-self: flex-start; background: none; border: none; padding: 0; color: #dc2626; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .ix-photo-info button:hover { text-decoration: underline; }
+  .ix-photo-info em { font-style: normal; font-size: 12px; color: #dc2626; }
+
   /* ───── Progress ───── */
   .ix-minibar { flex: 1; min-width: 90px; height: 8px; border-radius: 99px; background: #f1f5f9; overflow: hidden; }
   .ix-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #f2864f, #e8582a); transition: width .8s cubic-bezier(.2,.8,.2,1); }
@@ -627,6 +734,7 @@ const css = `
   .ix-prog span { font-size: 11.5px; font-weight: 600; color: #64748b; width: 34px; text-align: right; }
 
   /* ───── Avatars ───── */
+  .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
   .ix-av { position: relative; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; }
   .ix-dot { position: absolute; right: -1px; bottom: -1px; width: 13px; height: 13px; border-radius: 50%; border: 2.5px solid #fff; background: #cbd5e1; }
   .ix-dot.on { background: #22c55e; }

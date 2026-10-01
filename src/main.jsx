@@ -18,13 +18,14 @@ function PrivateRoute({ children, roles }) {
 
 const internRoutes = [
   "/intern", "/intern/records", "/intern/hours",
-  "/intern/online", "/intern/movs", "/intern/profile",
+  "/intern/online", "/intern/movs", "/intern/nfc", "/intern/profile",
 ];
 
 const supervisorRoutes = [
   "/supervisor", "/supervisor/pending", "/supervisor/interns",
-  "/supervisor/records", "/supervisor/hours",
+  "/supervisor/records", "/supervisor/hours", "/supervisor/nfc",
 ];
+
 const adminRoutes = [
   "/admin", "/admin/interns", "/admin/records", "/admin/hours",
   "/admin/accounts", "/admin/dtr", "/admin/reports", "/admin/submissions",

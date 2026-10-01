@@ -5,6 +5,7 @@ import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Bar, Avatar, Hero, Icon,
   InternMonitor, todayManila, fmtTime, calcHours, greeting, REQUIRED_HOURS,
 } from "../components/DashKit.jsx";
+import NfcCards from "../components/NfcCards.jsx";
 
 const API = "http://localhost:8000/api";
 const NAV = [
@@ -13,6 +14,7 @@ const NAV = [
   { path: "/supervisor/interns", label: "Monitor Interns",     icon: "users" },
   { path: "/supervisor/records", label: "Attendance Records",  icon: "list" },
   { path: "/supervisor/hours",   label: "Hours Summary",       icon: "clock" },
+  { path: "/supervisor/nfc",     label: "NFC Cards",           icon: "card" },
 ];
 
 export default function SupervisorDashboard() {
@@ -57,6 +59,7 @@ export default function SupervisorDashboard() {
       {path === "/supervisor/interns" && <InternMonitor interns={users} records={records} loading={loading} onRefresh={fetchAll} />}
       {path === "/supervisor/records" && <Records records={records} loading={loading} />}
       {path === "/supervisor/hours" && <Hours records={records} users={users} loading={loading} />}
+      {path === "/supervisor/nfc" && <NfcCards user={user} interns={users} onRefresh={fetchAll} />}
     </Shell>
   );
 }
@@ -156,7 +159,7 @@ function Pending({ pending, user, onRefresh }) {
           {pending.map((sub) => (
             <div key={sub.id} className="ix-sub">
               <div className="ix-sub-top">
-                <Avatar name={sub.intern_name} />
+                <Avatar name={sub.intern_name} photo={sub.intern_photo} />
                 <div className="ix-ic-id">
                   <strong>{sub.intern_name}</strong>
                   <span>{sub.intern_email}</span>
@@ -228,7 +231,7 @@ function Hours({ records, users, loading }) {
     const days = [...new Set(recs.map((r) => r.date))].length;
     const total = calcHours(recs);
     const pct = Math.min(Math.round((total / REQUIRED_HOURS) * 100), 100);
-    return { id: u.id, name: u.name, email: u.email, days, total, pct };
+    return { id: u.id, name: u.name, email: u.email, photo: u.photo, days, total, pct };
   });
 
   return (
@@ -241,7 +244,7 @@ function Hours({ records, users, loading }) {
           {internHours.map((intern) => (
             <div key={intern.id} className="ix-hc">
               <div className="ix-hc-top">
-                <Avatar name={intern.name} />
+                <Avatar name={intern.name} photo={intern.photo} />
                 <div className="ix-ic-id">
                   <strong>{intern.name}</strong>
                   <span>{intern.days} days present</span>

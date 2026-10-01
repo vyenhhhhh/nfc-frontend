@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import Shell, {
-  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Hero, Icon,
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Hero, Icon, PhotoPicker,
   InternMonitor, todayManila, fmtTime, calcHours, greeting, esc, REQUIRED_HOURS,
 } from "../components/DashKit.jsx";
 
@@ -241,7 +241,7 @@ function Submissions({ movs, user, onRefresh }) {
           {movs.map((m) => (
             <div key={m.id} className="ix-sub">
               <div className="ix-sub-top">
-                <Avatar name={m.intern_name} />
+                <Avatar name={m.intern_name} photo={m.intern_photo} />
                 <div className="ix-ic-id">
                   <strong>{m.intern_name}</strong>
                   <span>{m.intern_email}</span>
@@ -283,7 +283,7 @@ function Submissions({ movs, user, onRefresh }) {
 /* ───────────────────────── Manage Accounts ───────────────────────── */
 const BLANK_FORM = {
   name: "", email: "", password: "password123", role: "intern",
-  uid: "", work_mode: "onsite", tracking_type: "hours",
+  uid: "", work_mode: "onsite", tracking_type: "hours", photo: null,
 };
 const ROLE_NAME = { intern: "Intern", supervisor: "Supervisor", admin: "Admin", ojt_coordinator: "OJT Coordinator" };
 
@@ -294,6 +294,7 @@ function Accounts({ users, onRefresh }) {
   const [msg, setMsg] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [uploading, setUploading] = useState(null);
   const uidBuffer = useRef("");
 
   // Listens for the NFC reader (it "types" the UID and presses Enter)
@@ -335,10 +336,16 @@ function Accounts({ users, onRefresh }) {
   const handleAdd = async (e) => {
     e.preventDefault(); setAdding(true); setMsg(null);
     try {
+      // multipart form, so the profile photo can travel with the other fields
+      const fd = new FormData();
+      Object.entries(form).forEach(([k, v]) => {
+        if (k !== "photo" && v !== null && v !== undefined) fd.append(k, v);
+      });
+      if (form.photo) fd.append("photo", form.photo);
       const res = await fetch(`${API}/admin/users`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        headers: { Accept: "application/json" },
+        body: fd,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
@@ -364,6 +371,31 @@ function Accounts({ users, onRefresh }) {
     } finally { setDeleting(null); }
   };
 
+  const changePhoto = async (u, file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 2 * 1024 * 1024) {
+      setMsg({ type: "error", text: "Please choose an image under 2 MB." });
+      return;
+    }
+    setUploading(u.id); setMsg(null);
+    try {
+      const fd = new FormData();
+      fd.append("photo", file);
+      const res = await fetch(`${API}/admin/users/${u.id}/photo`, {
+        method: "POST", headers: { Accept: "application/json" }, body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Upload failed.");
+      setMsg({ type: "success", text: data.message || "Photo updated." });
+      // if this is my own account, refresh my sidebar photo too
+      const me = JSON.parse(sessionStorage.getItem("user") || "{}");
+      if (me.id === u.id && data.photo) sessionStorage.setItem("user", JSON.stringify({ ...me, photo: data.photo }));
+      onRefresh();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof SyntaxError ? "Photo upload isn't set up on the server yet." : err.message });
+    } finally { setUploading(null); }
+  };
+
   return (
     <>
       <PageHeader title="Manage Accounts" sub="Add or remove users from the system.">
@@ -374,17 +406,29 @@ function Accounts({ users, onRefresh }) {
 
       <div className="ix-card flush">
         <Table
-          headers={["Name", "Email", "Role", "Setup", "Action"]}
+          headers={["User", "Email", "Role", "Setup", "Action"]}
           rows={users.map((u) => [
-            <strong>{u.name}</strong>,
+            <div className="ix-actions">
+              <Avatar name={u.name} photo={u.photo} size={36} />
+              <strong>{u.name}</strong>
+            </div>,
             u.email,
             <Badge label={ROLE_NAME[u.role] || u.role} type={`r-${u.role}`} />,
             u.role === "intern"
               ? <span className="ix-muted">{u.work_mode === "offsite" ? "WFH" : "Onsite"} · {u.tracking_type === "output" ? "Output" : "Hours"}</span>
               : <span className="ix-muted">—</span>,
-            <button className="ix-b danger sm" onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}>
-              <Icon name="trash" size={14} /> {deleting === u.id ? "..." : "Delete"}
-            </button>,
+            <div className="ix-actions">
+              <label className="ix-b ghost sm" style={{ opacity: uploading === u.id ? 0.6 : 1 }}>
+                <input
+                  type="file" accept="image/*" hidden disabled={uploading === u.id}
+                  onChange={(e) => { changePhoto(u, e.target.files?.[0]); e.target.value = ""; }}
+                />
+                <Icon name="camera" size={14} /> {uploading === u.id ? "Uploading..." : "Photo"}
+              </label>
+              <button className="ix-b danger sm" onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}>
+                <Icon name="trash" size={14} /> {deleting === u.id ? "..." : "Delete"}
+              </button>
+            </div>,
           ])}
           empty="No users yet."
         />
@@ -394,6 +438,7 @@ function Accounts({ users, onRefresh }) {
         <Modal title="Add New User" sub="Fill in the details below." onClose={closeModal}>
           <Msg msg={msg} />
           <form onSubmit={handleAdd} className="ix-form">
+            <PhotoPicker file={form.photo} onChange={(f) => setForm((st) => ({ ...st, photo: f }))} />
             <div className="ix-field">
               <label htmlFor="acc-name">Full name</label>
               <input id="acc-name" type="text" required placeholder="e.g. Juan Dela Cruz" value={form.name}
