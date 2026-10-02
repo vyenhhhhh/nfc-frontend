@@ -15,6 +15,7 @@ const NAV = [
   { path: "/admin/accounts", label: "Manage Accounts",     icon: "settings" },
   { path: "/admin/dtr",      label: "Generate DTR",        icon: "file" },
   { path: "/admin/reports",  label: "Consolidated Report", icon: "chart" },
+  { path: "/admin/calendar", label: "Calendar", icon: "calendar" },
 ];
 
 export default function AdminDashboard() {
@@ -63,6 +64,7 @@ export default function AdminDashboard() {
       {path === "/admin/records" && <Records records={records} loading={loading} />}
       {path === "/admin/hours" && <Hours records={records} interns={interns} loading={loading} />}
       {path === "/admin/accounts" && <Accounts users={users} onRefresh={fetchAll} />}
+      {path === "/admin/calendar" && <Calendar />}
       {path === "/admin/dtr" && <DTR interns={interns} records={records} />}
       {path === "/admin/reports" && <Reports interns={interns} records={records} />}
       {path === "/admin/submissions" && <Submissions movs={movs} user={user} onRefresh={fetchAll} />}
@@ -99,20 +101,44 @@ function Home({ user, records, interns, supervisors, loading }) {
         <StatCard label="Today's Records" value={todayRecs.length} icon="list" tone="purple" />
       </div>
 
-      <Section icon="clock" title="Today's Live Attendance" count={todayRecs.length} live>
-        {loading ? <Spinner /> : (
-          <Table
-            headers={["Intern", "Type", "Action", "Time"]}
-            rows={todayRecs.map((r) => [
-              <strong>{r.name}</strong>,
-              <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
-              <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-              fmtTime(r.checked_in_at),
-            ])}
-            empty="No activity today yet."
-          />
-        )}
-      </Section>
+      <div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 380px",
+    gap: "20px",
+    alignItems: "start",
+  }}
+>
+  <Section
+    icon="clock"
+    title="Today's Live Attendance"
+    count={todayRecs.length}
+    live
+  >
+    {loading ? (
+      <Spinner />
+    ) : (
+      <Table
+        headers={["Intern", "Type", "Action", "Time"]}
+        rows={todayRecs.map((r) => [
+          <strong>{r.name}</strong>,
+          <Badge
+            label={r.uid === "ONLINE" ? "Online" : "Onsite"}
+            type={r.uid === "ONLINE" ? "online" : "onsite"}
+          />,
+          <Badge
+            label={r.action === "CHECK_IN" ? "IN" : "OUT"}
+            type={r.action === "CHECK_IN" ? "in" : "out"}
+          />,
+          fmtTime(r.checked_in_at),
+        ])}
+        empty="No activity today yet."
+      />
+    )}
+  </Section>
+
+  <HomeCalendar />
+</div>
     </>
   );
 }
@@ -742,6 +768,551 @@ function Reports({ interns, records }) {
           empty="No records for this month."
         />
       </Section>
+    </>
+  );
+}
+
+/* ───────────────────────── Home Calendar ───────────────────────── */
+function HomeCalendar() {
+  const [events, setEvents] = useState([]);
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  useEffect(() => {
+    fetch(`${API}/calendar`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setEvents(data);
+        }
+      })
+      .catch((err) => {
+        console.error("Calendar error:", err);
+      });
+  }, []);
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+
+  const monthName = currentDate.toLocaleDateString("en-PH", {
+    month: "long",
+    year: "numeric",
+  });
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const previousMonth = () => {
+    setCurrentDate(new Date(year, month - 1, 1));
+  };
+
+  const nextMonth = () => {
+    setCurrentDate(new Date(year, month + 1, 1));
+  };
+
+  const goToday = () => {
+    setCurrentDate(new Date());
+  };
+
+  const getEvent = (day) => {
+    const date =
+      `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+    return events.find((event) => event.date === date);
+  };
+
+  const cells = [];
+
+  // Empty spaces before the first day
+  for (let i = 0; i < firstDay; i++) {
+    cells.push(
+      <div key={`empty-${i}`} style={{ minHeight: 42 }} />
+    );
+  }
+
+  // Days
+  for (let day = 1; day <= daysInMonth; day++) {
+    const event = getEvent(day);
+
+    const today = new Date();
+    const isToday =
+      day === today.getDate() &&
+      month === today.getMonth() &&
+      year === today.getFullYear();
+
+    cells.push(
+      <div
+        key={day}
+        title={event ? event.title : ""}
+        style={{
+          minHeight: 42,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          position: "relative",
+          borderRadius: "8px",
+          background: isToday
+            ? "#e8f0ff"
+            : event
+            ? "#fff4e5"
+            : "transparent",
+          fontWeight: isToday || event ? 700 : 400,
+          color: event
+            ? "#b45309"
+            : isToday
+            ? "#2563eb"
+            : "#334155",
+          cursor: event ? "help" : "default",
+        }}
+      >
+        {day}
+
+        {event && (
+          <span
+            style={{
+              position: "absolute",
+              bottom: "4px",
+              width: "5px",
+              height: "5px",
+              borderRadius: "50%",
+              background: "#f59e0b",
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="ix-card"
+      style={{
+        padding: "20px",
+        margin: 0,
+      }}
+    >
+      {/* Calendar Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "16px",
+        }}
+      >
+        <button
+          className="ix-b ghost sm"
+          onClick={previousMonth}
+        >
+          ‹
+        </button>
+
+        <strong style={{ fontSize: "16px" }}>
+          {monthName}
+        </strong>
+
+        <button
+          className="ix-b ghost sm"
+          onClick={nextMonth}
+        >
+          ›
+        </button>
+      </div>
+
+      <div
+        style={{
+          textAlign: "center",
+          marginBottom: "14px",
+        }}
+      >
+        <button
+          className="ix-b ghost sm"
+          onClick={goToday}
+        >
+          Today
+        </button>
+      </div>
+
+      {/* Weekdays */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          textAlign: "center",
+          fontSize: "12px",
+          fontWeight: 700,
+          color: "#64748b",
+          marginBottom: "6px",
+        }}
+      >
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+          (day) => (
+            <div key={day}>{day}</div>
+          )
+        )}
+      </div>
+
+      {/* Calendar Days */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: "3px",
+          textAlign: "center",
+        }}
+      >
+        {cells}
+      </div>
+
+      {/* Legend */}
+      <div
+        style={{
+          display: "flex",
+          gap: "14px",
+          marginTop: "16px",
+          paddingTop: "12px",
+          borderTop: "1px solid #e5e7eb",
+          fontSize: "12px",
+          color: "#64748b",
+        }}
+      >
+        <span>
+          <span style={{ color: "#2563eb" }}>●</span> Today
+        </span>
+
+        <span>
+          <span style={{ color: "#f59e0b" }}>●</span> Holiday / Non-working
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Calendar Management ───────────────────────── */
+function Calendar() {
+  const [events, setEvents] = useState([]);
+  const [date, setDate] = useState("");
+  const [type, setType] = useState("holiday");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+
+  const [editingId, setEditingId] = useState(null);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const fetchEvents = async () => {
+    try {
+      const res = await fetch(`${API}/calendar`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to load calendar.");
+      }
+
+      setEvents(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setMsg({
+        type: "error",
+        text: err.message,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  // EDIT
+  const handleEdit = (event) => {
+    setEditingId(event.id);
+    setDate(event.date);
+    setType(event.type);
+    setTitle(event.title);
+    setDescription(event.description || "");
+    setMsg(null);
+  };
+
+  // CANCEL EDIT
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDate("");
+    setType("holiday");
+    setTitle("");
+    setDescription("");
+    setMsg(null);
+  };
+
+  // ADD OR UPDATE
+  const handleSave = async (e) => {
+    e.preventDefault();
+
+    if (!date || !title) {
+      setMsg({
+        type: "error",
+        text: "Please enter a date and title.",
+      });
+      return;
+    }
+
+    setSaving(true);
+    setMsg(null);
+
+    try {
+      const url = editingId
+        ? `${API}/calendar/${editingId}`
+        : `${API}/calendar`;
+
+      const method = editingId ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          date,
+          type,
+          title,
+          description,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(
+          data.message || "Failed to save calendar event."
+        );
+      }
+
+      setMsg({
+        type: "success",
+        text: data.message,
+      });
+
+      setEditingId(null);
+      setDate("");
+      setTitle("");
+      setDescription("");
+      setType("holiday");
+
+      fetchEvents();
+    } catch (err) {
+      setMsg({
+        type: "error",
+        text: err.message,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // DELETE
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this calendar event?")) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API}/calendar/${id}`, {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(
+          data.message || "Failed to delete event."
+        );
+      }
+
+      setMsg({
+        type: "success",
+        text: data.message,
+      });
+
+      fetchEvents();
+    } catch (err) {
+      setMsg({
+        type: "error",
+        text: err.message,
+      });
+    }
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Calendar Management"
+        sub="Manage holidays and non-working days."
+      />
+
+      <Msg msg={msg} />
+
+      <div className="ix-card">
+        <h3 style={{ marginTop: 0 }}>
+          {editingId
+            ? "Edit Calendar Event"
+            : "Add Calendar Event"}
+        </h3>
+
+        <form onSubmit={handleSave} className="ix-form">
+
+          <div className="ix-field">
+            <label>Date</label>
+            <input
+              type="date"
+              required
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+
+          <div className="ix-field">
+            <label>Type</label>
+
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+            >
+              <option value="holiday">
+                Holiday
+              </option>
+
+              <option value="non_working">
+                Non-working Day
+              </option>
+            </select>
+          </div>
+
+          <div className="ix-field">
+            <label>Title</label>
+
+            <input
+              type="text"
+              required
+              placeholder="e.g. Independence Day"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+
+          <div className="ix-field">
+            <label>Description</label>
+
+            <input
+              type="text"
+              placeholder="Optional description"
+              value={description}
+              onChange={(e) =>
+                setDescription(e.target.value)
+              }
+            />
+          </div>
+
+          <div className="ix-form-actions">
+
+            <button
+              type="submit"
+              className="ix-b primary"
+              disabled={saving}
+            >
+              {saving
+                ? editingId
+                  ? "Updating..."
+                  : "Adding..."
+                : editingId
+                ? "Update Event"
+                : "Add Event"}
+            </button>
+
+            {editingId && (
+              <button
+                type="button"
+                className="ix-b ghost"
+                onClick={cancelEdit}
+              >
+                Cancel
+              </button>
+            )}
+
+          </div>
+        </form>
+      </div>
+
+      <div className="ix-card flush">
+
+        <PageHeader
+          title="Calendar Events"
+          sub="Holidays and non-working days registered in the system."
+        />
+
+        {loading ? (
+          <Spinner />
+        ) : events.length === 0 ? (
+          <Empty
+            icon="calendar"
+            title="No calendar events"
+            sub="No holidays or non-working days have been added yet."
+          />
+        ) : (
+          <Table
+            headers={[
+              "Date",
+              "Type",
+              "Title",
+              "Description",
+              "Action",
+            ]}
+            rows={events.map((event) => [
+              event.date,
+
+              <Badge
+                label={
+                  event.type === "holiday"
+                    ? "Holiday"
+                    : "Non-working"
+                }
+                type={
+                  event.type === "holiday"
+                    ? "approved"
+                    : "pending"
+                }
+              />,
+
+              <strong>{event.title}</strong>,
+
+              event.description || "—",
+
+              <div className="ix-actions">
+
+                <button
+                  className="ix-b ghost sm"
+                  onClick={() => handleEdit(event)}
+                >
+                  Edit
+                </button>
+
+                <button
+                  className="ix-b danger sm"
+                  onClick={() => handleDelete(event.id)}
+                >
+                  Delete
+                </button>
+
+              </div>,
+            ])}
+            empty="No calendar events."
+          />
+        )}
+      </div>
     </>
   );
 }

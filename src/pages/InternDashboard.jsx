@@ -9,7 +9,7 @@ import Shell, {
 const API = "http://localhost:8000/api";
 
 const NAV = [
-  { path: "/intern",         label: "Home",          icon: "home" },
+  { path: "/intern",         label: "Dashboard",          icon: "home" },
   { path: "/intern/records", label: "My Attendance", icon: "list" },
   { path: "/intern/hours",   label: "Total Hours",   icon: "clock" },
   { path: "/intern/online",  label: "Submit Online", icon: "upload" },
@@ -82,73 +82,481 @@ function cheer(pct) {
   return "You did it! Your required hours are complete. 🎉";
 }
 
-function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap, loading, records, onApply }) {
-  const needsCardWarning = user.work_mode !== "offsite" && user.tracking_type !== "output" && !user.has_card;
+function Home({
+  user,
+  firstName,
+  uniqueDays,
+  totalHours,
+  onsite,
+  online,
+  lastTap,
+  loading,
+  records,
+  onApply,
+}) {
+  const needsCardWarning =
+    user.work_mode !== "offsite" &&
+    user.tracking_type !== "output" &&
+    !user.has_card;
+
   const pct = (totalHours / REQUIRED_HOURS) * 100;
-  const left = Math.max(Math.round((REQUIRED_HOURS - totalHours) * 10) / 10, 0);
+
+  const left = Math.max(
+    Math.round((REQUIRED_HOURS - totalHours) * 10) / 10,
+    0
+  );
+
+  // Get name parts
+  const fullName = user.name || firstName || "Intern";
+  const nameParts = fullName.trim().split(" ");
+
+  const first =
+    user.first_name || nameParts[0] || "—";
+
+  const middle =
+    user.middle_name || "—";
+
+  const last =
+    user.last_name ||
+    (nameParts.length > 1
+      ? nameParts[nameParts.length - 1]
+      : "—");
 
   return (
-    <>
-      <Hero
-        tag="OJT Progress"
-        title={`${greeting()}, ${firstName}!`}
-        text={cheer(pct)}
-        facts={[
-          { v: totalHours + "h", l: "completed" },
-          { v: left + "h", l: "to go" },
-          { v: uniqueDays, l: "days present" },
-        ]}
-        ring={{ pct, top: pct.toFixed(0) + "%", bottom: `of ${REQUIRED_HOURS}h` }}
-      />
+    <div className="intern-home-page">
+      {/* TOP SECTION */}
+      <div className="intern-top">
 
+        {/* PROFILE CARD */}
+        <div className="intern-profile-card ix-card">
+
+          <div className="intern-profile-avatar">
+            <Avatar
+              name={user.name}
+              photo={user.photo}
+              size={120}
+            />
+            <Badge label="OJT INTERN" type="onsite" />
+          </div>
+
+          <div className="intern-profile-info">
+
+            <div className="intern-name-line">
+              <div>
+                <div className="intern-info-line">
+                  <strong>First Name:</strong> {first}
+                </div>
+
+                <div className="intern-info-line">
+                  <strong>Middle Name:</strong> {middle}
+                </div>
+
+                <div className="intern-info-line">
+                  <strong>Last Name:</strong> {last}
+                </div>
+              </div>
+
+              
+            </div>
+
+            <div className="intern-contact">
+
+              <div>
+                <strong>OJT Placement:</strong>{" "}
+                {user.ojt_placement || user.placement || "CCIS"}
+              </div>
+
+              <div>
+                <strong>Contact Number:</strong>{" "}
+                {user.contact_number || "—"}
+              </div>
+
+              <div>
+                <strong>Email:</strong>{" "}
+                {user.email || "—"}
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        {/* PROGRESS CARD */}
+        <div className="intern-progress-card ix-card">
+
+          <div className="intern-ring">
+            <Ring
+              pct={Math.min(pct, 100)}
+              size={155}
+              stroke={14}
+              track="#fde3d6"
+              color="#e8582a"
+            >
+              <strong className="dark">
+                {Math.min(pct, 100).toFixed(1)}%
+              </strong>
+
+              <span className="dark">
+                complete
+              </span>
+            </Ring>
+          </div>
+
+          <div className="intern-progress-details">
+
+            <div>
+              <strong>{totalHours}</strong>
+              <span>hrs completed</span>
+            </div>
+
+            <div>
+              <strong>{REQUIRED_HOURS}</strong>
+              <span>hrs required</span>
+            </div>
+
+            <div>
+              <strong>{left}</strong>
+              <span>hrs remaining</span>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      {/* NFC WARNING */}
       {needsCardWarning && (
         <div className="ix-alert">
           <Icon name="warn" size={18} />
           No NFC card linked to your account yet.
-          <button className="ix-b primary sm" onClick={onApply}>Apply for a card</button>
+
+          <button
+            className="ix-b primary sm"
+            onClick={onApply}
+          >
+            Apply for a card
+          </button>
         </div>
       )}
 
-      <div className="ix-stats">
-        <StatCard label="Days Present" value={uniqueDays} icon="calendar" tone="orange" />
-        <StatCard label="Total Hours" value={totalHours + "h"} icon="clock" tone="blue" />
-        <StatCard label="Onsite Taps" value={onsite} icon="tap" tone="green" />
-        <StatCard label="Online Logs" value={online} icon="globe" tone="purple" />
-      </div>
+      {/* BOTTOM SECTION */}
+<div className="intern-bottom">
 
-      <div className="ix-grid-2">
-        <Section icon="clock" title="Last Recorded Tap">
-          {lastTap ? (
-            <div className="ix-last">
+  {/* LEFT SIDE */}
+  <div>
+
+    {/* STATS */}
+    {/* 5 SUMMARY CARDS */}
+<div className="intern-five-stats">
+
+  <StatCard
+    label="Days Present"
+    value={uniqueDays}
+    icon="calendar"
+    tone="orange"
+  />
+
+  <StatCard
+    label="Total Hours"
+    value={totalHours + "h"}
+    icon="clock"
+    tone="blue"
+  />
+
+  <StatCard
+    label="Onsite Taps"
+    value={onsite}
+    icon="tap"
+    tone="green"
+  />
+
+  <StatCard
+    label="Online Logs"
+    value={online}
+    icon="globe"
+    tone="purple"
+  />
+
+  {/* 5TH CARD - LAST RECORDED TAP */}
+  <div className="intern-last-tap ix-card">
+
+    <div className="intern-last-tap-label">
+      <Icon name="clock" size={15} />
+      <span>Last Recorded Tap</span>
+    </div>
+
+    {lastTap ? (
+      <>
+        <Badge
+          label={
+            lastTap.action === "CHECK_IN"
+              ? "CHECK IN"
+              : "CHECK OUT"
+          }
+          type={
+            lastTap.action === "CHECK_IN"
+              ? "in"
+              : "out"
+          }
+        />
+
+        <strong className="intern-last-tap-date">
+          {lastTap.date}
+        </strong>
+
+        <span className="intern-last-tap-time">
+          {fmtTime(lastTap.checked_in_at)}
+        </span>
+      </>
+    ) : (
+      <span className="intern-last-tap-empty">
+        No tap recorded
+      </span>
+    )}
+
+  </div>
+
+</div>
+
+    {/* RECENT ATTENDANCE */}
+    <div style={{ marginTop: "12px" }}>
+      <Section
+        icon="list"
+        title="Recent Attendance"
+        count={records.length}
+      >
+        {loading ? (
+          <Spinner />
+        ) : (
+          <Table
+            headers={[
+              "Date",
+              "Type",
+              "Action",
+              "Time In",
+              "Time Out",
+            ]}
+            rows={records.slice(0, 4).map((r) => [
+              r.date,
+
               <Badge
-                label={lastTap.action === "CHECK_IN" ? "CHECK IN" : "CHECK OUT"}
-                type={lastTap.action === "CHECK_IN" ? "in" : "out"}
-              />
-              <div className="ix-last-date">{lastTap.date}</div>
-              <div className="ix-last-time">{fmtTime(lastTap.checked_in_at)}</div>
-            </div>
-          ) : (
-            <Empty icon="tap" title="No tap recorded yet" sub="Your latest check-in or check-out will appear here." />
-          )}
-        </Section>
+                label={
+                  r.uid === "ONLINE"
+                    ? "Online"
+                    : "Onsite"
+                }
+                type={
+                  r.uid === "ONLINE"
+                    ? "online"
+                    : "onsite"
+                }
+              />,
 
-        <Section icon="list" title="Recent Attendance" count={records.length}>
-          {loading ? <Spinner /> : (
-            <Table
-              headers={["Date", "Type", "Action", "Time In", "Time Out"]}
-              rows={records.slice(0, 5).map((r) => [
-                r.date,
-                <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
-                <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-                fmtTime(r.checked_in_at),
-                fmtTime(r.checked_out_at),
-              ])}
-              empty="When you tap in or out, your records will appear here."
-            />
-          )}
-        </Section>
+              <Badge
+                label={
+                  r.action === "CHECK_IN"
+                    ? "IN"
+                    : "OUT"
+                }
+                type={
+                  r.action === "CHECK_IN"
+                    ? "in"
+                    : "out"
+                }
+              />,
+
+              fmtTime(r.checked_in_at),
+              fmtTime(r.checked_out_at),
+            ])}
+            empty="When you tap in or out, your records will appear here."
+          />
+        )}
+      </Section>
+    </div>
+
+  </div>
+
+  {/* RIGHT SIDE */}
+  <div className="intern-right">
+
+    <HomeCalendar />
+
+    <Section
+      icon="info"
+      title="Announcement"
+    >
+      <div className="intern-announcement">
+        <strong>No announcements yet.</strong>
+        <p>
+          Important OJT announcements will appear here.
+        </p>
       </div>
-    </>
+    </Section>
+
+  </div>
+
+</div>
+    </div>
+  );
+}
+/* ───────────────────────── Home Calendar ───────────────────────── */
+
+function HomeCalendar() {
+  const [events, setEvents] = useState([]);
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  useEffect(() => {
+    fetch(`${API}/calendar`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setEvents(data);
+        }
+      })
+      .catch((err) => {
+        console.error("Calendar error:", err);
+      });
+  }, []);
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const monthName = currentDate.toLocaleString("default", {
+    month: "long",
+  });
+
+  const today = new Date();
+
+  const isToday = (day) => {
+    return (
+      day === today.getDate() &&
+      month === today.getMonth() &&
+      year === today.getFullYear()
+    );
+  };
+
+  const getEvent = (day) => {
+    const dateString =
+      `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+    return events.find((event) => event.date === dateString);
+  };
+
+  return (
+    <div className="ix-card">
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "16px",
+        }}
+      >
+        <button
+          className="ix-b ghost sm"
+          onClick={() =>
+            setCurrentDate(new Date(year, month - 1, 1))
+          }
+        >
+          ←
+        </button>
+
+        <strong>
+          {monthName} {year}
+        </strong>
+
+        <button
+          className="ix-b ghost sm"
+          onClick={() =>
+            setCurrentDate(new Date(year, month + 1, 1))
+          }
+        >
+          →
+        </button>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: "4px",
+        }}
+      >
+        {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => (
+          <div
+            key={i}
+            style={{
+              textAlign: "center",
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "#94a3b8",
+              padding: "5px",
+            }}
+          >
+            {day}
+          </div>
+        ))}
+
+        {Array.from({ length: firstDay }).map((_, i) => (
+          <div key={`empty-${i}`} />
+        ))}
+
+        {Array.from({ length: daysInMonth }, (_, i) => {
+          const day = i + 1;
+          const event = getEvent(day);
+
+          return (
+            <div
+              key={day}
+              title={event ? event.title : ""}
+              style={{
+                minHeight: "34px",
+                padding: "3px",
+                borderRadius: "7px",
+                textAlign: "center",
+                background: event
+                  ? "#fff3cd"
+                  : isToday(day)
+                  ? "#e8f1ff"
+                  : "transparent",
+                border: isToday(day)
+                  ? "1px solid #8ab4f8"
+                  : "1px solid transparent",
+                fontSize: "12px",
+              }}
+            >
+              <strong>{day}</strong>
+
+              {event && (
+                <div
+                  style={{
+                    fontSize: "7px",
+                    marginTop: "3px",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {event.title}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div
+        style={{
+          marginTop: "14px",
+          fontSize: "11px",
+          color: "#64748b",
+        }}
+      >
+        🟡 Holiday / Non-working day
+      </div>
+    </div>
   );
 }
 
@@ -616,6 +1024,230 @@ function Profile({ user, uniqueDays, totalHours }) {
 
 /* ───────────────────────── intern-only styles ───────────────────────── */
 const internCss = `
+.intern-five-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 12px;
+  align-items: stretch;
+}
+
+.intern-five-stats > * {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+} 
+
+.intern-last-tap {
+  min-height: 100%;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.intern-last-tap-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.intern-last-tap-date {
+  font-size: 12px;
+  color: #1e293b;
+}
+
+.intern-last-tap-time {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.intern-last-tap-empty {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.intern-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+
+  .intern-profile-card {
+  height: 185px;
+  min-height: 185px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 22px;
+  box-sizing: border-box;
+}
+
+  .intern-profile-avatar {
+    width: 125px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .intern-profile-avatar .ix-av {
+    box-shadow: 0 10px 25px rgba(232, 88, 42, 0.18);
+  }
+
+  .intern-profile-info {
+    flex: 1;
+  }
+
+  .intern-name-line {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+  }
+
+  .intern-info-line {
+    font-size: 14px;
+    line-height: 1.35;
+    color: #1e293b;
+  }
+
+  .intern-info-line strong {
+    font-weight: 500;
+  }
+
+
+
+  .intern-contact {
+    margin-top: 14px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #334155;
+  }
+
+  .intern-contact strong {
+    font-weight: 500;
+  }
+
+  .intern-progress-card {
+  height: 185px;
+  min-height: 185px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px;
+  box-sizing: border-box;
+}
+
+  .intern-ring {
+    flex-shrink: 0;
+  }
+
+  .intern-progress-details {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .intern-progress-details div {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .intern-progress-details strong {
+    font-size: 17px;
+    color: #0b1220;
+  }
+
+  .intern-progress-details span {
+    font-size: 13px;
+    color: #64748b;
+  }
+
+  .intern-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    gap: 20px;
+    align-items: start;
+  }
+
+  .intern-bottom .ix-card {
+    margin-bottom: 0;
+  }
+
+  .intern-bottom > div:first-child .ix-stats {
+    margin-bottom: 20px;
+  }
+    .intern-right {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.intern-login {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.intern-login strong {
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.intern-login span {
+  font-size: 13px;
+  color: #64748b;
+}
+.intern-announcement {
+  padding: 20px;
+  min-height: 130px;
+}
+
+.intern-announcement strong {
+  font-size: 16px;
+  color: #1e293b;
+}
+
+.intern-announcement p {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.intern-home-page {
+  height: calc(100vh - 110px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.intern-home-page .intern-top {
+  flex-shrink: 0;
+}
+
+.intern-home-page .intern-bottom {
+  flex: 1;
+}
+
+.intern-home-page .intern-bottom > div:first-child,
+.intern-home-page .intern-right {
+  min-height: 0;
+}
+
+  
   .ix-grid-2 { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
   .ix-stack { display: flex; flex-direction: column; gap: 20px; }
   .ix-card.narrow { max-width: 580px; width: 100%; }
@@ -679,6 +1311,59 @@ const internCss = `
   .ix-profile-ring-text strong { color: #0b1220; font-size: 18px; }
   .ix-ring-center .dark { color: #0b1220; opacity: 1; }
   .ix-ring-center span.dark { color: #64748b; }
+  .intern-home-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    gap: 20px;
+    align-items: start;
+  }
 
-  @media (max-width: 1000px) { .ix-grid-2, .ix-profile { grid-template-columns: 1fr; } }
+.intern-last-tap-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.3px;
+}
+
+.intern-last-tap-date {
+  font-size: 12px;
+  color: #1e293b;
+}
+
+.intern-last-tap-time {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.intern-last-tap-empty {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+@media (max-width: 1200px) {
+  .intern-five-stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .intern-five-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 1000px) {
+  .intern-top,
+  .intern-bottom {
+    grid-template-columns: 1fr;
+  }
+  .intern-profile-card,
+  .intern-progress-card {
+    height: auto;
+    min-height: 185px;
+  }
+}
 `;

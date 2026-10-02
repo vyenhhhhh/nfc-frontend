@@ -1,3 +1,4 @@
+//main.jsx
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -17,8 +18,14 @@ function PrivateRoute({ children, roles }) {
 
 
 const internRoutes = [
-  "/intern", "/intern/records", "/intern/hours",
-  "/intern/online", "/intern/movs", "/intern/nfc", "/intern/profile",
+  "/intern",
+  "/intern/records",
+  "/intern/hours",
+  "/intern/online",
+  "/intern/movs",
+  "/intern/nfc",
+  "/intern/calendar",
+  "/intern/profile",
 ];
 
 const supervisorRoutes = [
@@ -27,8 +34,15 @@ const supervisorRoutes = [
 ];
 
 const adminRoutes = [
-  "/admin", "/admin/interns", "/admin/records", "/admin/hours",
-  "/admin/accounts", "/admin/dtr", "/admin/reports", "/admin/submissions",
+  "/admin",
+  "/admin/interns",
+  "/admin/records",
+  "/admin/hours",
+  "/admin/accounts",
+  "/admin/calendar",
+  "/admin/dtr",
+  "/admin/reports",
+  "/admin/submissions",
 ];
 
 createRoot(document.getElementById("root")).render(
