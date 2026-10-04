@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
-// 👇 your university photo (change the filename/extension if yours is different)
 import campus from "../assets/campus.jpg";
 
 const API = "http://localhost:8000/api";
@@ -9,20 +8,51 @@ const REMEMBER_KEY = "ojt_remember";
 const REMEMBER_DAYS = 7;
 
 const SLIDES = [
-  { title: "One tap, one record", text: "Touch your NFC card to the reader. Your check-in or check-out is logged before you've put your card away." },
-  { title: "Every tap has a fingerprint", text: "Each log gets its own unique UUID, so no record can be swapped, edited, or quietly forgotten." },
-  { title: "Watch the hours add up", text: "See your OJT progress climb in real time, down to the last hour you've rendered." },
-  { title: "Onsite, WFH, or output-based", text: "However you work, your hours are counted the way your setup needs them to be." },
-  { title: "Goodbye, paper MOVs", text: "Upload your certificates and requirements once. Your coordinator reviews them online." },
+  {
+    title: "Simple and secure access",
+    text: "Log in securely to access the features and information available for your account."
+  },
+  {
+    title: "Everything in one place",
+    text: "Access attendance records, submissions, notifications, and other tools through one system."
+  },
+  {
+    title: "Real-time attendance tracking",
+    text: "Attendance records are captured and updated in the system for easier monitoring and management."
+  },
+  {
+    title: "Stay updated",
+    text: "Receive important notifications and updates about attendance, submissions, requests, and other activities."
+  },
+  {
+    title: "Less paperwork, easier management",
+    text: "Submit and review documents online, making attendance and OJT-related processes more convenient."
+  },
 ];
 
 const FAQS = [
-  { q: "How do I check in and out?", a: "Tap your registered NFC card on the reader at your workplace. The time is recorded instantly with its own unique ID." },
-  { q: "I forgot my password. What now?", a: "Reach out to your OJT coordinator. They can reset your account so you can get back in." },
-  { q: "Can I log hours if I work from home?", a: "Yes. Onsite, Offsite/WFH, and Output-based interns are all supported. Your coordinator sets the work type that fits you." },
-  { q: "What are MOVs?", a: "Means of Verification: the certificates and requirements you submit so your coordinator can confirm your OJT progress." },
-  { q: "Who can see my attendance?", a: "You, your assigned supervisor, and your OJT coordinator." },
+{
+q: "What can I do in the system?",
+a: "You can access the features available to your account, such as attendance records, submissions, notifications, and other OJT-related activities."
+},
+{
+q: "I forgot my password. What should I do?",
+a: "Contact your assigned administrator or coordinator to reset your account and regain access."
+},
+{
+q: "How is attendance recorded?",
+a: "Attendance can be recorded through the available attendance features, such as NFC check-in and check-out for registered users."
+},
+{
+q: "What are MOVs?",
+a: "MOVs, or Means of Verification, are documents and requirements submitted to support and verify OJT-related activities."
+},
+{
+q: "Who can access my information?",
+a: "Access depends on your account role and assigned permissions. Only authorized users can view or manage specific information."
+},
 ];
+
 
 /* ── small icons ── */
 const Icon = ({ d, size = 20, children }) => (
@@ -31,10 +61,15 @@ const Icon = ({ d, size = 20, children }) => (
   </svg>
 );
 const HomeIcon = () => <Icon d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10" />;
-const InfoIcon = () => <Icon><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></Icon>;
-const HelpIcon = () => <Icon><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8M12 17h.01" /></Icon>;
 const UserIcon = () => <Icon><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></Icon>;
 const StaffIcon = () => <Icon><rect x="3" y="7" width="18" height="13" rx="2" /><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18" /></Icon>;
+const MailIcon = () => <Icon><rect x="3" y="5" width="18" height="14" rx="3" /><path d="m4 8 8 6 8-6" /></Icon>;
+const LockIcon = () => <Icon><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></Icon>;
+const WaveIcon = ({ size = 22 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+    <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />
+  </svg>
+);
 
 export default function LoginForm({ variant = "student" }) {
   const [email, setEmail] = useState("");
@@ -43,12 +78,12 @@ export default function LoginForm({ variant = "student" }) {
   const [error, setError] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [slide, setSlide] = useState(0);
-  const [othersOpen, setOthersOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [panel, setPanel] = useState(null); // null | "about" | "faqs"
+  const [panel, setPanel] = useState(null); // null | "about" | "faqs" | "forgot"
   const [faqOpen, setFaqOpen] = useState(0);
   const [isFull, setIsFull] = useState(false);
   const [remember, setRemember] = useState(false);
+  const [now, setNow] = useState(() => new Date());
   const navigate = useNavigate();
 
   // Which role the person picked on the form: "intern" or "employee"
@@ -64,11 +99,11 @@ export default function LoginForm({ variant = "student" }) {
   };
 
   const goByRole = (data) => {
-    if (data.role === "intern") navigate("/intern");
-    else if (data.role === "supervisor") navigate("/supervisor");
-    else if (data.role === "admin" || data.role === "ojt_coordinator") navigate("/admin");
-    else setError("Unknown role. Contact administrator.");
-  };
+  if (data.role === "intern") navigate("/intern");
+  else if (data.role === "admin") navigate("/admin");
+  else if (data.role === "ojt_coordinator") navigate("/coordinator");
+  else setError("Unknown role. Contact administrator.");
+};
 
   // If "Remember me" was ticked within the last 7 days, skip the login screen
   useEffect(() => {
@@ -91,12 +126,17 @@ export default function LoginForm({ variant = "student" }) {
     return () => clearInterval(iv);
   }, []);
 
+  // Live clock for the little "checked in" demo in the hero
+  useEffect(() => {
+    const iv = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(iv);
+  }, []);
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
         setPanel(null);
         setMenuOpen(false);
-        setOthersOpen(false);
       }
     };
     const onFs = () => setIsFull(!!document.fullscreenElement);
@@ -110,13 +150,11 @@ export default function LoginForm({ variant = "student" }) {
 
   const go = (path) => {
     setMenuOpen(false);
-    setOthersOpen(false);
     setPanel(null);
     navigate(path);
   };
   const openPanel = (name) => {
     setMenuOpen(false);
-    setOthersOpen(false);
     setPanel(name);
   };
   const toggleFullscreen = () => {
@@ -171,6 +209,8 @@ export default function LoginForm({ variant = "student" }) {
     { label: "Home", icon: <HomeIcon />, onClick: () => go(isStudent ? "/login" : "/login/staff"), active: true },
   ];
 
+  const clock = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
   return (
     <div className="lf-page">
       {/* ── Top navbar ── */}
@@ -178,7 +218,7 @@ export default function LoginForm({ variant = "student" }) {
         <button className="lf-logo-btn" onClick={() => go(isStudent ? "/login" : "/login/staff")} aria-label="Home">
           <img src={logo} alt="CSU CCIS" className="lf-nav-logo" />
           <span className={menuOpen ? "lf-brand-name show" : "lf-brand-name"} aria-hidden={!menuOpen}>
-            CARAGA STATE<br />UNIVERSITY
+            CSU CCIS<br />MYTRACK
           </span>
         </button>
 
@@ -202,7 +242,6 @@ export default function LoginForm({ variant = "student" }) {
         <nav className="lf-nav-links">
           <button onClick={() => openPanel("about")}>About</button>
           <button onClick={() => openPanel("faqs")}>FAQs</button>
-          
         </nav>
       </header>
 
@@ -223,32 +262,21 @@ export default function LoginForm({ variant = "student" }) {
               <span className="lf-side-label">{it.label}</span>
             </button>
           ))}
-          <div className="lf-side-foot">CSU CCIS OJT</div>
+          <div className="lf-side-foot">MYTRACK</div>
         </aside>
 
         <div className="lf-main">
-
           <div className="lf-split">
             {/* ── Left: hero with campus photo ── */}
             <section className="lf-hero">
-              <div className="lf-hero-text">
-                <div className="lf-title-row">
-                  <div className="lf-nfc" aria-hidden="true">
-                    <span className="lf-ring r1" />
-                    <span className="lf-ring r2" />
-                    <span className="lf-nfc-core">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round">
-                        <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />
-                      </svg>
-                    </span>
-                  </div>
-                  <h1>Tap in. Clock in.<br />Get on with your day.</h1>
-                </div>
+              <img src={campus} alt="CSU CCIS building" className="lf-campus" />
+              <div className="lf-shade" />
+              <div className="lf-grain" />
 
-                <h2>OJT attendance, minus the paper trail.</h2>
-                <p className="lf-desc">
-                  No sign-in sheets, no lost logbooks. Tap your NFC card at the door and CSU CCIS OJT
-                  records the moment, time-stamped, verified, and ready for your coordinator to see.
+              <div className="lf-hero-text">
+                <h1>Simple. Secure. Connected.</h1> <h2>Manage your OJT activities with ease.</h2> 
+                <p className="lf-desc"> Access attendance, submissions, 
+                  notifications, and other OJT features in one convenient system. 
                 </p>
 
                 <div className="lf-slide" aria-live="polite">
@@ -269,21 +297,51 @@ export default function LoginForm({ variant = "student" }) {
                 </div>
               </div>
 
-              <div className="lf-fade" />
-              <img src={campus} alt="CSU CCIS building" className="lf-campus" />
+              {/* The one big moment: a card taps the reader, the check-in lands */}
+              <div className="lf-scene" aria-hidden="true">
+                <div className="lf-toast">
+                  <span className="lf-toast-ok">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+                  </span>
+                  <span className="lf-toast-body">
+                    <b>Checked in</b>
+                    <small>{clock} · ID 221-02399</small>
+                  </span>
+                </div>
+
+                <div className="lf-reader">
+                  <span className="lf-reader-ring" />
+                  <span className="lf-reader-ring r2" />
+                  <span className="lf-reader-pad"><WaveIcon size={46} /></span>
+                  <span className="lf-reader-led" />
+                </div>
+
+                <div className="lf-tapcard">
+                  <div className="lf-tapcard-top">
+                    <img src={logo} alt="" />
+                    <span className="lf-chip" />
+                  </div>
+                  <div className="lf-tapcard-lines">
+                    <span />
+                    <span />
+                  </div>
+                </div>
+              </div>
             </section>
 
             {/* ── Right: login card ── */}
             <section className="lf-right">
               <span className="lf-orb o1" />
               <span className="lf-orb o2" />
+              <span className="lf-orb o3" />
               <div className="lf-card">
                 <div className="lf-card-head">
                   <img src={logo} alt="" className="lf-card-logo" />
                   <div className="lf-brand">
-                    CSU CCIS <span className="lf-underline">OJT</span>
+                    <span className="lf-underline">MYTRACK</span>
                   </div>
                 </div>
+
                 <div className="lf-roles" role="radiogroup" aria-label="Select your role">
                   <span className={isStudent ? "lf-roles-thumb" : "lf-roles-thumb right"} aria-hidden="true" />
                   <button
@@ -305,6 +363,7 @@ export default function LoginForm({ variant = "student" }) {
                     <StaffIcon /> Employee
                   </button>
                 </div>
+
                 <h3 className="lf-welcome">{isStudent ? "Welcome back!" : "Good to see you again."}</h3>
                 <p className="lf-welcome-sub">
                   {isStudent
@@ -320,9 +379,9 @@ export default function LoginForm({ variant = "student" }) {
 
                 <form onSubmit={handleLogin} className="lf-form">
                   <div className="lf-field">
-                    <span className="lf-field-icon"><UserIcon /></span>
+                    <span className="lf-field-icon"><MailIcon /></span>
                     <div className="lf-field-body">
-                      <label htmlFor="lf-email">Username</label>
+                      <label htmlFor="lf-email">Email</label>
                       <input
                         id="lf-email"
                         type="email"
@@ -336,9 +395,7 @@ export default function LoginForm({ variant = "student" }) {
                   </div>
 
                   <div className="lf-field">
-                    <span className="lf-field-icon">
-                      <Icon><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></Icon>
-                    </span>
+                    <span className="lf-field-icon"><LockIcon /></span>
                     <div className="lf-field-body">
                       <label htmlFor="lf-pass">Password</label>
                       <input
@@ -387,7 +444,15 @@ export default function LoginForm({ variant = "student" }) {
                   </div>
 
                   <button type="submit" disabled={loading} className="lf-login-btn">
-                    {loading ? "Signing in..." : "LOGIN"}
+                    {loading ? (
+                      <>
+                        <span className="lf-spinner" aria-hidden="true" /> Signing in...
+                      </>
+                    ) : (
+                      <>
+                        <WaveIcon size={18} /> Sign in
+                      </>
+                    )}
                   </button>
                 </form>
 
@@ -405,7 +470,7 @@ export default function LoginForm({ variant = "student" }) {
 
                 <div className="lf-switch">
                   {isStudent
-                    ? "Employee? Supervisors and coordinators, pick Employee above."
+                    ? "Employee? Admins and OJT coordinators, pick Employee above."
                     : "Intern? Students on OJT, pick Intern above."}
                 </div>
               </div>
@@ -414,7 +479,7 @@ export default function LoginForm({ variant = "student" }) {
         </div>
       </div>
 
-      {/* ── About / FAQ panel ── */}
+      {/* ── About / FAQ / Forgot panel ── */}
       {panel && (
         <div className="lf-modal-wrap" onClick={() => setPanel(null)}>
           <div className="lf-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
@@ -426,7 +491,7 @@ export default function LoginForm({ variant = "student" }) {
                 <p className="lf-modal-lead">Attendance tracking built for the way interns actually work.</p>
                 <p>
                   This system replaces paper logbooks with a single NFC tap. Interns check in and out in
-                  a second, supervisors see who is on duty, and coordinators can follow every intern's
+                  a second, admins see who is on duty, and coordinators can follow every intern's
                   progress toward their required hours without chasing signatures.
                 </p>
                 <p>
@@ -478,166 +543,215 @@ export default function LoginForm({ variant = "student" }) {
 }
 
 const css = `
+  @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body, #root { height: 100%; width: 100%; }
-  body { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #0f172a; }
+  body { font-family: 'Figtree', 'Segoe UI', sans-serif; color: #1b1410; }
   button { font-family: inherit; }
 
-  .lf-page { height: 100vh; min-height: 680px; display: flex; flex-direction: column; background: #fff; position: relative; }
+  .lf-page {
+    --o: #e8582a; --o2: #f2733a; --o-soft: #fdeee7; --o-glow: rgba(232,88,42,0.35);
+    --ink: #1b1410; --mut: #6f625b; --line: #eadfd8; --field: #f6f2ef;
+    --display: 'Bricolage Grotesque', 'Figtree', 'Segoe UI', sans-serif;
+    height: 100vh; min-height: 680px; display: flex; flex-direction: column; background: #fff; position: relative;
+    font-family: 'Figtree', 'Segoe UI', sans-serif;
+  }
 
   /* ───── Navbar ───── */
   .lf-nav {
     height: 75px; flex-shrink: 0; background: #fff;
     display: flex; align-items: center; gap: 10px;
     padding: 0 18px 0 15px; position: relative; z-index: 30;
-    box-shadow: 0 4px 14px rgba(15,23,42,0.12);
+    box-shadow: 0 4px 14px rgba(27,20,16,0.10);
   }
-  .lf-logo-btn { background: none; border: none; cursor: pointer; display: flex; margin-right: 14px; }
-  .lf-logo-btn { align-items: center; text-align: left; }
+  .lf-logo-btn { background: none; border: none; cursor: pointer; display: flex; margin-right: 14px; align-items: center; text-align: left; }
   .lf-nav-logo { height: 60px; width: auto; flex-shrink: 0; }
   .lf-brand-name {
     display: block; overflow: hidden; white-space: nowrap;
     max-width: 0; opacity: 0; margin-left: 0;
-    font-size: 11.5px; font-weight: 800; line-height: 1.2; letter-spacing: .8px; color: #0b1220;
+    font-family: var(--display); font-size: 11.5px; font-weight: 800; line-height: 1.2; letter-spacing: .6px; color: var(--ink);
     transition: max-width .35s cubic-bezier(.2,.8,.2,1), opacity .25s, margin-left .35s;
   }
   .lf-brand-name.show { max-width: 170px; opacity: 1; margin-left: 10px; }
   .lf-icon-btn {
-    background: none; border: none; cursor: pointer; padding: 8px; border-radius: 8px;
+    background: none; border: none; cursor: pointer; padding: 8px; border-radius: 10px;
     display: flex; transition: background .15s;
   }
-  .lf-icon-btn:hover { background: #fdeee7; }
+  .lf-icon-btn:hover { background: var(--o-soft); }
   .lf-nav-links { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
-  .lf-nav-links > button, .lf-dropdown > button {
-    color: #334155; font-size: 14px; background: none; border: none; cursor: pointer;
-    display: flex; align-items: center; gap: 5px; padding: 8px 10px; border-radius: 8px;
-    transition: color .15s, background .15s;
+  .lf-nav-links > button {
+    color: #3d322c; font-size: 14px; font-weight: 500; background: none; border: none; cursor: pointer;
+    padding: 8px 12px; border-radius: 10px; transition: color .15s, background .15s;
   }
-  .lf-nav-links > button:hover, .lf-dropdown > button:hover { color: #e8582a; background: #fdeee7; }
-  .lf-caret { border: 4px solid transparent; border-top-color: currentColor; margin-top: 4px; transition: transform .2s; }
-  .lf-caret.up { transform: rotate(180deg); margin-top: -4px; }
-  .lf-dropdown { position: relative; }
-  .lf-click-away { position: fixed; inset: 0; z-index: 40; }
-  .lf-menu {
-    position: absolute; top: 40px; left: 0; background: #fff; min-width: 170px; z-index: 50;
-    border-radius: 12px; box-shadow: 0 14px 40px rgba(15,23,42,0.16); padding: 6px;
-    animation: lf-pop .16s ease-out;
-  }
-  .lf-menu button {
-    display: block; width: 100%; text-align: left; background: none; border: none; cursor: pointer;
-    padding: 9px 12px; border-radius: 8px; font-size: 13px; color: #1e293b;
-  }
-  .lf-menu button:hover { background: #fdeee7; color: #e8582a; }
+  .lf-nav-links > button:hover { color: var(--o); background: var(--o-soft); }
 
   /* ───── Frame + sidebar ───── */
   .lf-body { flex: 1; display: flex; min-height: 0; position: relative; }
-  /* the strip reserves the sidebar's space, so the page (and photo) shrink instead of being covered */
   .lf-strip { width: 65px; flex-shrink: 0; transition: width .3s cubic-bezier(.2,.8,.2,1); }
   .lf-strip.open { width: 236px; }
-  .lf-backdrop { display: none; position: absolute; inset: 0; background: rgba(15,23,42,0.35); z-index: 18; animation: lf-fadein .2s; }
+  .lf-backdrop { display: none; position: absolute; inset: 0; background: rgba(27,20,16,0.4); z-index: 18; animation: lf-fadein .2s; }
   .lf-side {
     position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow: hidden;
-    background: #fff; box-shadow: 4px 0 18px rgba(15,23,42,0.10);
+    background: #fff; box-shadow: 4px 0 18px rgba(27,20,16,0.08);
     display: flex; flex-direction: column; padding-top: 14px;
     transition: width .3s cubic-bezier(.2,.8,.2,1), box-shadow .3s;
   }
   .lf-side.open { width: 236px; }
   .lf-side-item {
     display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px;
-    padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #334155;
+    padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #3d322c;
     border-radius: 12px; white-space: nowrap; text-align: left; transition: background .15s;
   }
-  .lf-side-item:hover { background: #fdeee7; color: #e8582a; }
-  .lf-side-item.active { background: #fdeee7; color: #e8582a; }
-  .lf-side-item:focus-visible { outline: 2px solid #e8582a; outline-offset: 1px; }
+  .lf-side-item:hover, .lf-side-item.active { background: var(--o-soft); color: var(--o); }
+  .lf-side-item:focus-visible { outline: 2px solid var(--o); outline-offset: 1px; }
   .lf-side-icon { display: flex; flex-shrink: 0; }
   .lf-side-label { font-size: 14px; font-weight: 600; opacity: 0; transform: translateX(-6px); transition: opacity .2s, transform .25s; }
   .lf-side.open .lf-side-label { opacity: 1; transform: none; transition-delay: .1s; }
   .lf-side-foot {
-    margin-top: auto; padding: 18px 22px; font-size: 11px; letter-spacing: .5px; color: #94a3b8;
+    margin-top: auto; padding: 18px 22px; font-size: 11px; letter-spacing: .5px; color: #a89b93;
     white-space: nowrap; opacity: 0; transition: opacity .2s;
   }
   .lf-side.open .lf-side-foot { opacity: 1; transition-delay: .15s; }
 
-  .lf-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #eef2f3; }
+  .lf-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #f7f3f0; }
   .lf-split { flex: 1; display: flex; min-height: 0; }
 
-  /* ───── Hero ───── */
-  .lf-hero { position: relative; flex: 1 1 0; min-width: 0; background: #fff; overflow: hidden; }
-  .lf-hero-text { position: relative; z-index: 3; padding: 22px 44px 0; max-width: 780px; }
-  .lf-title-row { display: flex; align-items: center; gap: 18px; }
-  .lf-hero h1 { font-size: 30px; font-weight: 800; line-height: 1.15; letter-spacing: -0.4px; color: #0b1220; }
-  .lf-hero h2 { font-size: 15px; font-weight: 600; margin-top: 14px; color: #e8582a; }
-  .lf-desc { font-size: 13px; line-height: 1.6; color: #334155; margin-top: 6px; max-width: 560px; }
-
-  /* NFC pulse badge: the one memorable moment */
-  .lf-nfc { position: relative; width: 54px; height: 54px; flex-shrink: 0; }
-  .lf-nfc-core {
-    position: absolute; inset: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    background: linear-gradient(135deg, #f2864f, #e8582a); box-shadow: 0 8px 20px rgba(232,88,42,0.4);
+  /* ───── Hero: photo with a warm colour grade ───── */
+  .lf-hero { position: relative; flex: 1 1 0; min-width: 0; background: #2a120a; overflow: hidden; color: #fff; }
+  .lf-campus { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 35%; }
+  .lf-shade {
+    position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(circle at 76% 48%, rgba(242,115,58,0.55), rgba(242,115,58,0) 42%),
+      linear-gradient(105deg, rgba(26,11,5,0.90) 0%, rgba(26,11,5,0.66) 45%, rgba(150,52,20,0.42) 100%),
+      linear-gradient(0deg, rgba(26,11,5,0.75) 0%, rgba(26,11,5,0) 45%);
   }
-  .lf-ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid #e8582a; opacity: 0; animation: lf-pulse 2.6s ease-out infinite; }
-  .lf-ring.r2 { animation-delay: 1.3s; }
-
-  .lf-slide { margin-top: 20px; max-width: 470px; padding: 14px 16px 12px; background: rgba(255,255,255,0.82); backdrop-filter: blur(6px); border-radius: 14px; border: 1px solid #fde1d5; }
-  .lf-slide-inner { animation: lf-slidein .5s ease-out; min-height: 66px; }
-  .lf-slide-title { font-size: 14px; font-weight: 700; color: #0b1220; }
-  .lf-slide-text { font-size: 12.5px; line-height: 1.55; color: #475569; margin-top: 2px; }
-  .lf-dots { display: flex; gap: 6px; margin-top: 10px; }
-  .lf-dot { width: 7px; height: 7px; border-radius: 99px; border: none; padding: 0; cursor: pointer; background: #f3c3b0; transition: width .3s, background .3s; }
-  .lf-dot.active { width: 24px; background: #e8582a; }
-  .lf-dot:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
-
-  /* Photo position: change these two numbers to nudge the picture.
-     --campus-lift  = gap under the photo (bigger = photo sits higher)
-     --campus-height = how tall the photo box is */
-  .lf-hero { --campus-lift: 3%; --campus-height: 90%; }
-  .lf-fade { position: absolute; left: 0; right: 0; top: 0; height: 46%; z-index: 2; pointer-events: none;
-    background: linear-gradient(180deg, #ffede2 50%, rgba(255,255,255,0) 100%); }
-  .lf-campus {
-    position: absolute; left: 0; right: 0; bottom: var(--campus-lift);
-    width: 100%; height: var(--campus-height);
-    object-fit: cover; object-position: center 30%; z-index: 1;
+  .lf-grain {
+    position: absolute; inset: 0; pointer-events: none; opacity: .14; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.6'/></svg>");
   }
+
+  .lf-hero-text {
+    position: relative; z-index: 3; height: 100%; max-width: 540px;
+    padding: 40px 48px 34px; display: flex; flex-direction: column;
+  }
+  .lf-hero h1 { font-family: var(--display); font-size: clamp(32px, 3.4vw, 48px); font-weight: 800; line-height: 1.06; letter-spacing: -0.8px; text-shadow: 0 2px 24px rgba(0,0,0,0.35); }
+  .lf-hero h2 { font-size: 16px; font-weight: 600; margin-top: 16px; color: #ffb48f; }
+  .lf-desc { font-size: 13.5px; line-height: 1.65; color: rgba(255,255,255,0.84); margin-top: 8px; max-width: 440px; }
+
+  .lf-slide {
+    margin-top: auto; max-width: 460px; padding: 16px 18px 14px;
+    background: rgba(255,255,255,0.12); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border-radius: 18px; border: 1px solid rgba(255,255,255,0.26);
+    box-shadow: 0 18px 40px rgba(0,0,0,0.25);
+  }
+  .lf-slide-inner { animation: lf-slidein .5s ease-out; min-height: 70px; }
+  .lf-slide-title { font-family: var(--display); font-size: 15.5px; font-weight: 700; }
+  .lf-slide-text { font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.82); margin-top: 3px; }
+  .lf-dots { display: flex; gap: 6px; margin-top: 12px; }
+  .lf-dot { width: 7px; height: 7px; border-radius: 99px; border: none; padding: 0; cursor: pointer; background: rgba(255,255,255,0.4); transition: width .3s, background .3s; }
+  .lf-dot.active { width: 26px; background: #fff; }
+  .lf-dot:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+  /* ── The tap scene ── */
+  .lf-scene {
+    position: absolute; z-index: 3; right: clamp(24px, 5vw, 68px); top: 50%;
+    width: 300px; height: 330px; margin-top: -165px;
+  }
+  .lf-reader { position: absolute; left: 75px; top: 160px; width: 150px; height: 150px; }
+  .lf-reader-pad {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff;
+    border-radius: 40px;
+    background: linear-gradient(150deg, rgba(255,255,255,0.28), rgba(255,255,255,0.08));
+    border: 1px solid rgba(255,255,255,0.42);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 24px 50px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.5);
+  }
+  .lf-reader-led {
+    position: absolute; right: 16px; bottom: 16px; width: 9px; height: 9px; border-radius: 50%;
+    background: #ffb48f; box-shadow: 0 0 12px #ffb48f; animation: lf-led 6s ease-in-out infinite;
+  }
+  .lf-reader-ring {
+    position: absolute; inset: 0; border-radius: 40px; border: 2px solid rgba(255,255,255,0.8);
+    opacity: 0; animation: lf-ring 6s ease-out infinite;
+  }
+  .lf-reader-ring.r2 { animation-delay: .35s; }
+
+  .lf-tapcard {
+    position: absolute; left: 50px; top: 78px; width: 200px; height: 124px; z-index: 2;
+    border-radius: 18px; padding: 14px 16px;
+    background: linear-gradient(135deg, #fff 0%, #ffe6d9 100%);
+    box-shadow: 0 28px 50px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.7);
+    display: flex; flex-direction: column; justify-content: space-between;
+    transform: translate(70px,-90px) rotate(10deg); opacity: 0;
+    animation: lf-card 6s cubic-bezier(.4,0,.2,1) infinite;
+  }
+  .lf-tapcard-top { display: flex; align-items: center; justify-content: space-between; }
+  .lf-tapcard-top img { height: 34px; width: auto; object-fit: contain; }
+  .lf-chip { width: 32px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #f9c46b, #e3902b); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
+  .lf-tapcard-lines span { display: block; height: 7px; border-radius: 99px; background: rgba(232,88,42,0.28); }
+  .lf-tapcard-lines span + span { width: 55%; margin-top: 7px; background: rgba(27,20,16,0.12); }
+
+  .lf-toast {
+    position: absolute; left: 20px; right: 20px; top: 0; z-index: 3;
+    display: flex; align-items: center; gap: 11px; padding: 11px 14px;
+    background: #fff; color: var(--ink); border-radius: 16px; box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+    opacity: 0; animation: lf-toast 6s ease-out infinite;
+  }
+  .lf-toast-ok { width: 28px; height: 28px; border-radius: 50%; background: #22a06b; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .lf-toast-body { display: flex; flex-direction: column; line-height: 1.25; }
+  .lf-toast-body b { font-size: 13.5px; font-weight: 700; }
+  .lf-toast-body small { font-size: 11.5px; color: var(--mut); }
 
   /* ───── Right side ───── */
-  .lf-right { position: relative; flex: 0 0 440px; display: flex; align-items: center; justify-content: center; padding: 16px 24px; overflow: hidden; }
+  .lf-right { position: relative; flex: 0 0 460px; display: flex; align-items: center; justify-content: center; padding: 16px 24px; overflow: hidden; background: linear-gradient(160deg, #fffaf7 0%, #ffeee4 100%); }
   .lf-orb { position: absolute; border-radius: 50%; pointer-events: none; }
-  .lf-orb.o1 { width: 260px; height: 260px; top: -90px; right: -70px; background: radial-gradient(circle, rgba(242,134,79,0.35), rgba(242,134,79,0)); }
-  .lf-orb.o2 { width: 300px; height: 300px; bottom: -120px; left: -90px; background: radial-gradient(circle, rgba(232,88,42,0.22), rgba(232,88,42,0)); }
+  .lf-orb.o1 { width: 300px; height: 300px; top: -110px; right: -80px; background: radial-gradient(circle, rgba(242,134,79,0.45), rgba(242,134,79,0)); }
+  .lf-orb.o2 { width: 340px; height: 340px; bottom: -140px; left: -110px; background: radial-gradient(circle, rgba(232,88,42,0.28), rgba(232,88,42,0)); }
+  .lf-orb.o3 { width: 160px; height: 160px; bottom: 90px; right: -50px; background: radial-gradient(circle, rgba(255,190,150,0.5), rgba(255,190,150,0)); }
 
   .lf-card {
-    position: relative; margin: auto; background: #fff; width: 100%; max-width: 384px; border-radius: 24px;
-    padding: 22px 28px 20px; box-shadow: 0 24px 60px rgba(15,23,42,0.10), 0 2px 6px rgba(15,23,42,0.05);
+    position: relative; margin: auto; background: rgba(255,255,255,0.92); width: 100%; max-width: 400px; border-radius: 28px;
+    padding: 24px 30px 22px; border: 1px solid rgba(255,255,255,0.9);
+    box-shadow: 0 30px 70px rgba(150,52,20,0.16), 0 2px 8px rgba(27,20,16,0.05);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     animation: lf-rise .6s cubic-bezier(.2,.8,.2,1) both;
   }
   .lf-card-head { display: flex; align-items: center; justify-content: center; gap: 8px; }
-  .lf-card-logo { width: 28px; height: 28px; object-fit: contain; }
-  .lf-brand { font-size: 14px; font-weight: 700; }
-  .lf-underline { border-bottom: 2px solid #e8582a; }
-  .lf-roles { position: relative; display: grid; grid-template-columns: 1fr 1fr; margin-top: 12px; padding: 4px; background: #f1f5f9; border-radius: 14px; }
-  .lf-roles-thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 11px; background: linear-gradient(135deg, #f2733a, #e04a1a); box-shadow: 0 6px 14px rgba(232,88,42,0.35); transition: transform .3s cubic-bezier(.2,.8,.2,1); }
-  .lf-roles-thumb.right { transform: translateX(100%); }
-  .lf-role { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px; border: none; background: none; cursor: pointer; font-size: 13px; font-weight: 600; color: #64748b; border-radius: 11px; transition: color .25s; }
-  .lf-role svg { width: 17px; height: 17px; }
-  .lf-role:hover { color: #e8582a; }
-  .lf-role.active, .lf-role.active:hover { color: #fff; }
-  .lf-role:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
-  .lf-welcome { text-align: center; font-size: 20px; font-weight: 800; margin-top: 12px; letter-spacing: -0.3px; }
-  .lf-welcome-sub { text-align: center; font-size: 12.5px; line-height: 1.5; color: #64748b; margin: 2px auto 14px; max-width: 320px; }
+  .lf-card-logo { width: 30px; height: 30px; object-fit: contain; }
+  .lf-brand { font-family: var(--display); font-size: 15px; font-weight: 800; letter-spacing: -0.1px; }
+  .lf-underline { border-bottom: 2.5px solid var(--o); }
 
-  .lf-error { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; border-radius: 10px; padding: 9px 12px; font-size: 12px; display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .lf-roles { position: relative; display: grid; grid-template-columns: 1fr 1fr; margin-top: 14px; padding: 4px; background: var(--field); border-radius: 16px; }
+  .lf-roles-thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 12px; background: linear-gradient(135deg, var(--o2), #e04a1a); box-shadow: 0 8px 16px var(--o-glow); transition: transform .3s cubic-bezier(.2,.8,.2,1); }
+  .lf-roles-thumb.right { transform: translateX(100%); }
+  .lf-role { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px; border: none; background: none; cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--mut); border-radius: 12px; transition: color .25s; }
+  .lf-role svg { width: 17px; height: 17px; }
+  .lf-role:hover { color: var(--o); }
+  .lf-role.active, .lf-role.active:hover { color: #fff; }
+  .lf-role:focus-visible { outline: 2px solid var(--o); outline-offset: 2px; }
+
+  .lf-welcome { text-align: center; font-family: var(--display); font-size: 25px; font-weight: 800; margin-top: 16px; letter-spacing: -0.5px; }
+  .lf-welcome-sub { text-align: center; font-size: 13px; line-height: 1.5; color: var(--mut); margin: 3px auto 16px; max-width: 320px; }
+
+  .lf-error { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; border-radius: 12px; padding: 10px 12px; font-size: 12.5px; display: flex; align-items: center; gap: 8px; margin-bottom: 14px; animation: lf-pop .2s ease-out; }
   .lf-error-dot { width: 16px; height: 16px; border-radius: 50%; background: #dc2626; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
 
-  .lf-form { display: flex; flex-direction: column; gap: 16px; }
-  .lf-field { display: flex; align-items: flex-end; gap: 12px; color: #1e293b; }
-  .lf-field-icon { flex-shrink: 0; padding-bottom: 5px; display: flex; transition: color .15s; }
-  .lf-field:focus-within .lf-field-icon { color: #e8582a; }
-  .lf-field-body { flex: 1; }
-  .lf-field label { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; margin-bottom: 2px; }
-  .lf-field input { width: 100%; border: none; border-bottom: 1.5px solid #cbd5e1; background: transparent; padding: 6px 2px; font-size: 14px; font-family: inherit; color: #1e293b; transition: border-color .2s; }
-  .lf-field input::placeholder { color: #b6c0cc; }
-  .lf-field input:focus { outline: none; border-bottom-color: #e8582a; }
+  .lf-form { display: flex; flex-direction: column; gap: 12px; }
+  .lf-field {
+    display: flex; align-items: center; gap: 12px; color: #8a7d75;
+    background: var(--field); border: 1.5px solid transparent; border-radius: 16px; padding: 0 8px 0 16px;
+    transition: background .2s, border-color .2s, box-shadow .2s, color .2s;
+  }
+  .lf-field:hover { border-color: var(--line); }
+  .lf-field:focus-within { background: #fff; border-color: var(--o); color: var(--o); box-shadow: 0 0 0 4px rgba(232,88,42,0.14); }
+  .lf-field-icon { flex-shrink: 0; display: flex; }
+  .lf-field-body { flex: 1; padding: 9px 0 8px; min-width: 0; }
+  .lf-field label { display: block; font-size: 11.5px; font-weight: 600; color: var(--mut); margin-bottom: 1px; }
+  .lf-field input { width: 100%; border: none; background: transparent; padding: 2px 0; font-size: 14.5px; font-family: inherit; color: var(--ink); }
+  .lf-field input::placeholder { color: #b9aea7; }
+  .lf-field input:focus { outline: none; }
 
   /* Stop the browser's blue/gray autofill background */
   .lf-field input:-webkit-autofill,
@@ -645,75 +759,115 @@ const css = `
   .lf-field input:-webkit-autofill:focus,
   .lf-field input:-webkit-autofill:active {
     -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
-    -webkit-text-fill-color: #1e293b !important;
-    caret-color: #1e293b;
+    -webkit-text-fill-color: #1b1410 !important;
+    caret-color: #1b1410;
     transition: background-color 9999s ease-in-out 0s;
   }
-  .lf-field input:autofill {
-    box-shadow: 0 0 0 1000px #fff inset !important;
-    -webkit-text-fill-color: #1e293b !important;
-  }
-  .lf-eye { background: none; border: none; cursor: pointer; color: #64748b; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-bottom: 0; border-radius: 8px; transition: color .15s, background .15s; }
-  .lf-eye:hover { color: #e8582a; background: #fdeee7; }
-  .lf-eye:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+  .lf-field input:autofill { box-shadow: 0 0 0 1000px #fff inset !important; -webkit-text-fill-color: #1b1410 !important; }
+  .lf-eye { background: none; border: none; cursor: pointer; color: #8a7d75; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; transition: color .15s, background .15s; flex-shrink: 0; }
+  .lf-eye:hover { color: var(--o); background: var(--o-soft); }
+  .lf-eye:focus-visible { outline: 2px solid var(--o); outline-offset: 2px; }
 
-  .lf-options { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: -4px; }
-  .lf-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #475569; cursor: pointer; user-select: none; }
-  .lf-check input { width: 16px; height: 16px; accent-color: #e8582a; cursor: pointer; flex-shrink: 0; }
-  .lf-link { background: none; border: none; cursor: pointer; font-size: 12px; font-weight: 600; color: #e8582a; padding: 2px 0; white-space: nowrap; }
+  .lf-options { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 2px 0; }
+  .lf-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--mut); cursor: pointer; user-select: none; }
+  .lf-check input { width: 16px; height: 16px; accent-color: var(--o); cursor: pointer; flex-shrink: 0; }
+  .lf-link { background: none; border: none; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--o); padding: 2px 0; white-space: nowrap; }
   .lf-link:hover { text-decoration: underline; }
-  .lf-or { display: flex; align-items: center; gap: 12px; margin: 12px 0 10px; font-size: 11.5px; color: #94a3b8; }
-  .lf-or::before, .lf-or::after { content: ""; flex: 1; height: 1px; background: #e2e8f0; }
-  .lf-google {
-    width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 11px;
-    background: #fff; border: 1.5px solid #e2e8f0; border-radius: 12px; font-size: 13.5px; font-weight: 600;
-    color: #1e293b; cursor: pointer; transition: background .15s, border-color .15s, box-shadow .15s;
-  }
-  .lf-google:hover { background: #f8fafc; border-color: #cbd5e1; box-shadow: 0 4px 12px rgba(15,23,42,0.08); }
-  .lf-google:focus-visible, .lf-link:focus-visible, .lf-check input:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
 
   .lf-login-btn {
-    margin-top: 4px; padding: 12px; background: linear-gradient(135deg, #f2733a, #e04a1a); color: #fff; border: none;
-    border-radius: 12px; font-size: 14px; font-weight: 700; letter-spacing: 1.2px; cursor: pointer;
-    box-shadow: 0 10px 22px rgba(232,88,42,0.35); transition: transform .15s, box-shadow .15s;
+    position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 9px;
+    margin-top: 2px; padding: 14px; background: linear-gradient(135deg, var(--o2), #e04a1a); color: #fff; border: none;
+    border-radius: 16px; font-size: 15px; font-weight: 700; letter-spacing: .2px; cursor: pointer;
+    box-shadow: 0 14px 28px var(--o-glow); transition: transform .15s, box-shadow .15s;
   }
-  .lf-login-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(232,88,42,0.42); }
+  .lf-login-btn::after {
+    content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%;
+    background: linear-gradient(100deg, transparent, rgba(255,255,255,0.35), transparent);
+    transform: skewX(-20deg); transition: left .6s ease;
+  }
+  .lf-login-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 18px 34px rgba(232,88,42,0.45); }
+  .lf-login-btn:hover:not(:disabled)::after { left: 120%; }
   .lf-login-btn:active:not(:disabled) { transform: translateY(0); }
-  .lf-login-btn:disabled { opacity: .7; cursor: default; }
-  .lf-login-btn:focus-visible, .lf-icon-btn:focus-visible, .lf-nav-links button:focus-visible, .lf-switch button:focus-visible, .lf-logo-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+  .lf-login-btn:disabled { opacity: .75; cursor: default; }
+  .lf-spinner { width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,0.4); border-top-color: #fff; animation: lf-spin .7s linear infinite; }
 
-  .lf-switch { margin-top: 16px; text-align: center; font-size: 12px; line-height: 1.5; color: #94a3b8; }
-  .lf-switch button { background: none; border: none; cursor: pointer; color: #e8582a; font-weight: 600; font-size: inherit; }
-  .lf-switch button:hover { text-decoration: underline; }
+  .lf-or { display: flex; align-items: center; gap: 12px; margin: 14px 0 12px; font-size: 12px; color: #a89b93; }
+  .lf-or::before, .lf-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .lf-google {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px;
+    background: #fff; border: 1.5px solid var(--line); border-radius: 16px; font-size: 14px; font-weight: 600;
+    color: var(--ink); cursor: pointer; transition: background .15s, border-color .15s, box-shadow .15s, transform .15s;
+  }
+  .lf-google:hover { background: #fffaf7; border-color: #f2c7b3; box-shadow: 0 8px 18px rgba(150,52,20,0.10); transform: translateY(-1px); }
+  .lf-google:focus-visible, .lf-link:focus-visible, .lf-check input:focus-visible,
+  .lf-login-btn:focus-visible, .lf-icon-btn:focus-visible, .lf-nav-links button:focus-visible, .lf-logo-btn:focus-visible { outline: 2px solid var(--o); outline-offset: 2px; }
+
+  .lf-switch { margin-top: 16px; text-align: center; font-size: 12.5px; line-height: 1.5; color: #a89b93; }
 
   /* ───── About / FAQ modal ───── */
-  .lf-modal-wrap { position: fixed; inset: 0; z-index: 100; background: rgba(15,23,42,0.5); display: flex; align-items: center; justify-content: center; padding: 20px; animation: lf-fadein .2s; }
-  .lf-modal { position: relative; background: #fff; border-radius: 20px; max-width: 520px; width: 100%; max-height: 85vh; overflow: auto; padding: 30px 30px 26px; box-shadow: 0 30px 80px rgba(0,0,0,0.3); animation: lf-pop .25s ease-out; border-top: 5px solid #e8582a; }
-  .lf-modal h3 { font-size: 20px; font-weight: 800; letter-spacing: -0.2px; }
-  .lf-modal-lead { color: #e8582a; font-weight: 600; font-size: 13.5px; margin: 4px 0 14px; }
-  .lf-modal p { font-size: 13.5px; line-height: 1.65; color: #475569; margin-bottom: 10px; }
-  .lf-modal p.lf-modal-lead { color: #e8582a; }
-  .lf-modal-note { font-size: 12px !important; color: #94a3b8 !important; margin-top: 14px; }
-  .lf-modal-x { position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; border-radius: 50%; border: none; background: #f1f5f9; font-size: 20px; line-height: 1; cursor: pointer; color: #475569; }
-  .lf-modal-x:hover { background: #fdeee7; color: #e8582a; }
+  .lf-modal-wrap { position: fixed; inset: 0; z-index: 100; background: rgba(27,20,16,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; animation: lf-fadein .2s; }
+  .lf-modal { position: relative; background: #fff; border-radius: 24px; max-width: 520px; width: 100%; max-height: 85vh; overflow: auto; padding: 32px 32px 28px; box-shadow: 0 30px 80px rgba(0,0,0,0.3); animation: lf-pop .25s ease-out; border-top: 5px solid var(--o); }
+  .lf-modal h3 { font-family: var(--display); font-size: 22px; font-weight: 800; letter-spacing: -0.3px; }
+  .lf-modal-lead { color: var(--o); font-weight: 600; font-size: 14px; margin: 4px 0 14px; }
+  .lf-modal p { font-size: 14px; line-height: 1.65; color: #5a4e47; margin-bottom: 10px; }
+  .lf-modal p.lf-modal-lead { color: var(--o); }
+  .lf-modal-note { font-size: 12.5px !important; color: #a89b93 !important; margin-top: 14px; }
+  .lf-modal-x { position: absolute; top: 14px; right: 16px; width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--field); font-size: 20px; line-height: 1; cursor: pointer; color: #5a4e47; }
+  .lf-modal-x:hover { background: var(--o-soft); color: var(--o); }
 
   .lf-faq { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-  .lf-faq-item { border: 1px solid #e8edf2; border-radius: 12px; overflow: hidden; transition: border-color .2s, background .2s; }
+  .lf-faq-item { border: 1px solid #efe6e0; border-radius: 14px; overflow: hidden; transition: border-color .2s, background .2s; }
   .lf-faq-item.open { border-color: #f5b79f; background: #fffaf7; }
-  .lf-faq-item button { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; background: none; border: none; cursor: pointer; text-align: left; font-size: 13.5px; font-weight: 600; color: #0f172a; }
-  .lf-faq-plus { color: #e8582a; font-size: 18px; transition: transform .2s; }
+  .lf-faq-item button { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; background: none; border: none; cursor: pointer; text-align: left; font-size: 14px; font-weight: 600; color: var(--ink); }
+  .lf-faq-plus { color: var(--o); font-size: 18px; transition: transform .2s; }
   .lf-faq-item.open .lf-faq-plus { transform: rotate(45deg); }
-  .lf-faq-item p { padding: 0 14px 12px; margin: 0; }
+  .lf-faq-item p { padding: 0 15px 12px; margin: 0; }
 
   /* ───── Motion ───── */
-  @keyframes lf-pulse { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(2.1); opacity: 0; } }
   @keyframes lf-slidein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes lf-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
   @keyframes lf-pop { from { opacity: 0; transform: translateY(-6px) scale(.98); } to { opacity: 1; transform: none; } }
   @keyframes lf-fadein { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes lf-spin { to { transform: rotate(360deg); } }
+
+  /* 6s loop: card glides in, taps the reader, check-in confirms, card leaves */
+  @keyframes lf-card {
+    0%   { transform: translate(70px,-90px) rotate(10deg); opacity: 0; }
+    14%  { opacity: 1; }
+    30%  { transform: translate(0,-8px) rotate(-5deg); opacity: 1; }
+    37%  { transform: translate(0,12px) rotate(-5deg); opacity: 1; }
+    45%  { transform: translate(0,-2px) rotate(-5deg); opacity: 1; }
+    78%  { transform: translate(0,-2px) rotate(-5deg); opacity: 1; }
+    92%, 100% { transform: translate(-70px,-80px) rotate(-14deg); opacity: 0; }
+  }
+  @keyframes lf-ring {
+    0%, 36% { transform: scale(1); opacity: 0; }
+    38%     { transform: scale(1); opacity: .8; }
+    62%, 100% { transform: scale(1.7); opacity: 0; }
+  }
+  @keyframes lf-led {
+    0%, 36% { background: #ffb48f; box-shadow: 0 0 12px #ffb48f; }
+    40%, 82% { background: #3ddc97; box-shadow: 0 0 14px #3ddc97; }
+    92%, 100% { background: #ffb48f; box-shadow: 0 0 12px #ffb48f; }
+  }
+  @keyframes lf-toast {
+    0%, 37% { opacity: 0; transform: translateY(14px) scale(.96); }
+    43%     { opacity: 1; transform: translateY(0) scale(1); }
+    80%     { opacity: 1; transform: translateY(0) scale(1); }
+    90%, 100% { opacity: 0; transform: translateY(-8px) scale(.98); }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .lf-ring, .lf-card, .lf-slide-inner, .lf-modal, .lf-menu { animation: none !important; }
-    .lf-side, .lf-side-label, .lf-brand-name { transition: none !important; }
+    .lf-card, .lf-slide-inner, .lf-modal, .lf-error, .lf-reader-ring, .lf-reader-led { animation: none !important; }
+    .lf-tapcard { animation: none !important; opacity: 1; transform: translate(0,-2px) rotate(-5deg); }
+    .lf-toast { animation: none !important; opacity: 1; }
+    .lf-reader-led { background: #3ddc97; box-shadow: 0 0 14px #3ddc97; }
+    .lf-side, .lf-side-label, .lf-brand-name, .lf-login-btn, .lf-login-btn::after { transition: none !important; }
+  }
+
+  /* ───── Medium screens: no room for the tap scene beside the text ───── */
+  @media (min-width: 901px) and (max-width: 1240px) {
+    .lf-scene { display: none; }
   }
 
   /* ───── Tablet / mobile ───── */
@@ -724,28 +878,33 @@ const css = `
     .lf-side.open { width: 236px; box-shadow: 10px 0 40px rgba(0,0,0,0.25); }
     .lf-backdrop { display: block; }
     .lf-split { flex-direction: column; }
-    .lf-hero { flex: none; height: 560px; }
+    .lf-hero { flex: none; height: 580px; }
     .lf-right { flex: none; }
     .lf-fs-btn { display: none; }
   }
+  @media (max-width: 700px) {
+    .lf-scene { display: none; }
+  }
   @media (max-width: 520px) {
-    .lf-hero { height: 540px; }
-    .lf-hero-text { padding: 18px 20px 0; }
-    .lf-hero h1 { font-size: 24px; }
+    .lf-hero { height: 560px; }
+    .lf-hero-text { padding: 26px 22px 24px; }
     .lf-nav-links > button { padding: 8px 6px; }
-    .lf-brand-name { font-size: 9.5px; letter-spacing: .4px; }
+    .lf-brand-name { font-size: 9.5px; letter-spacing: .3px; }
     .lf-brand-name.show { max-width: 110px; margin-left: 6px; }
+    .lf-right { padding: 20px 14px; }
+    .lf-card { padding: 22px 20px 20px; }
   }
 
   /* Short screens: tighten up so the card never needs to scroll */
   @media (max-height: 900px) and (min-width: 901px) {
     .lf-switch { display: none; }
-    .lf-card { padding: 18px 26px; }
-    .lf-form { gap: 14px; }
+    .lf-card { padding: 20px 26px; }
+    .lf-form { gap: 10px; }
   }
   @media (max-height: 780px) and (min-width: 901px) {
     .lf-welcome-sub { display: none; }
     .lf-welcome { margin-bottom: 12px; }
     .lf-roles { margin-top: 10px; }
+    .lf-field-body { padding: 7px 0 6px; }
   }
 `;

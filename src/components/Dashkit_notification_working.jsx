@@ -1,5 +1,5 @@
 // components/DashKit.jsx
-// Shared shell (navbar + sidebar) and UI pieces for the Admin, Supervisor and Intern dashboards.
+// Shared shell (navbar + sidebar) and UI pieces for the Admin and Supervisor dashboards.
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -53,6 +53,7 @@ const PATHS = {
   chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
   inbox: <><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z" /></>,
   logout: <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />,
+  bell: <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>,
   nfc: <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />,
   globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>,
@@ -73,7 +74,6 @@ const PATHS = {
   card: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20M6 15h4" /></>,
   send: <path d="M22 2 11 13M22 2l-7 20-4-9-9-4z" />,
   clip: <path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" />,
-  bell: <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />,
 };
 export const Icon = ({ name, size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -231,6 +231,20 @@ export function Avatar({ name, photo, status, size = 44 }) {
     <div className="ix-av" style={{ width: size, height: size, fontSize: size * 0.4 }}>
       {src && !bad ? <img src={src} alt="" onError={() => setBad(true)} /> : (name?.charAt(0).toUpperCase() || "?")}
       {status && <i className={`ix-dot ${status}`} />}
+    </div>
+  );
+}
+
+// Square profile photo for the sidebar
+function SquarePhoto({ name, photo }) {
+  const [bad, setBad] = useState(false);
+  const src = photoUrl(photo);
+  useEffect(() => setBad(false), [photo]);
+  return (
+    <div className="ix-side-photo">
+      {src && !bad
+        ? <img src={src} alt={name || "Profile photo"} onError={() => setBad(true)} />
+        : <span>{name?.charAt(0).toUpperCase() || "?"}</span>}
     </div>
   );
 }
@@ -409,22 +423,60 @@ const ROLE_LABEL = {
   ojt_coordinator: "OJT Coordinator",
 };
 
-// Sample notifications (swap for a real API call when it's ready)
-const NOTIFICATIONS = [
-  { id: 1, title: "NFC Card Request", message: "Your NFC card request has been approved.", time: "5 minutes ago", read: false },
-  { id: 2, title: "Online Attendance", message: "Your online attendance submission was approved.", time: "2 hours ago", read: false },
-  { id: 3, title: "OJT Announcement", message: "A new OJT announcement has been posted.", time: "Yesterday", read: true },
-];
-
 export default function Shell({ navItems, user, children }) {
   const navigate = useNavigate();
   const { pathname: path } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [isFull, setIsFull] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [readNotificationIds, setReadNotificationIds] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`read_notifications_${user?.id || "guest"}`) || "[]");
+    } catch {
+      return [];
+    }
+  });
 
-  const notifications = NOTIFICATIONS;
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const notifications = [
+    {
+      id: 1,
+      title: "NFC Card Request",
+      message: "Your NFC card request has been approved.",
+      time: "5 minutes ago",
+    },
+    {
+      id: 2,
+      title: "Online Attendance",
+      message: "Your online attendance submission was approved.",
+      time: "2 hours ago",
+    },
+    {
+      id: 3,
+      title: "OJT Announcement",
+      message: "A new OJT announcement has been posted.",
+      time: "Yesterday",
+    },
+  ];
+
+  const markNotificationRead = (id) => {
+    setReadNotificationIds((prev) => {
+      if (prev.includes(id)) return prev;
+      const next = [...prev, id];
+      try {
+        localStorage.setItem(
+          `read_notifications_${user?.id || "guest"}`,
+          JSON.stringify(next)
+        );
+      } catch {
+        /* ignore storage errors */
+      }
+      return next;
+    });
+  };
+
+  const unreadCount = notifications.filter(
+    (n) => !readNotificationIds.includes(n.id)
+  ).length;
 
   // One login page for everyone (it has the Intern / Employee picker)
   const loginPath = "/login";
@@ -450,7 +502,10 @@ export default function Shell({ navItems, user, children }) {
     };
   }, []);
 
-  useEffect(() => setMenuOpen(false), [path]);
+  useEffect(() => {
+    setMenuOpen(false);
+    setNotifOpen(false);
+  }, [path]);
 
   const logout = () => {
     sessionStorage.removeItem("user");
@@ -498,9 +553,12 @@ export default function Shell({ navItems, user, children }) {
               className="ix-notification-btn"
               onClick={() => setNotifOpen((o) => !o)}
               aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
+              aria-expanded={notifOpen}
             >
               <Icon name="bell" size={19} />
-              {unreadCount > 0 && <span className="ix-notification-count">{unreadCount}</span>}
+              {unreadCount > 0 && (
+                <span className="ix-notification-count">{unreadCount}</span>
+              )}
             </button>
 
             {notifOpen && (
@@ -511,26 +569,35 @@ export default function Shell({ navItems, user, children }) {
                 </div>
 
                 {notifications.length === 0 ? (
-                  <div className="ix-no-notifications">No notifications yet.</div>
+                  <div className="ix-no-notifications">
+                    No notifications yet.
+                  </div>
                 ) : (
-                  notifications.map((n) => (
-                    <div key={n.id} className={`ix-notification-item ${n.read ? "read" : ""}`}>
-                      <span className="ix-notification-dot" />
-                      <div>
-                        <strong>{n.title}</strong>
-                        <p>{n.message}</p>
-                        <small>{n.time}</small>
-                      </div>
-                    </div>
-                  ))
+                  notifications.map((n) => {
+                    const isRead = readNotificationIds.includes(n.id);
+                    return (
+                      <button
+                        key={n.id}
+                        type="button"
+                        className={`ix-notification-item ${isRead ? "read" : ""}`}
+                        onClick={() => markNotificationRead(n.id)}
+                      >
+                        <span className="ix-notification-dot" />
+                        <span className="ix-notification-content">
+                          <strong>{n.title}</strong>
+                          <span>{n.message}</span>
+                          <small>{n.time}</small>
+                        </span>
+                      </button>
+                    );
+                  })
                 )}
               </div>
             )}
           </div>
 
           <button className="ix-logout" onClick={logout}>
-            <Icon name="logout" size={17} />
-            <span>Logout</span>
+            <Icon name="logout" size={17} /> <span>Logout</span>
           </button>
         </div>
       </header>
@@ -539,6 +606,13 @@ export default function Shell({ navItems, user, children }) {
         <div className={menuOpen ? "ix-strip open" : "ix-strip"} />
         {menuOpen && <div className="ix-backdrop" onClick={() => setMenuOpen(false)} />}
         <aside className={menuOpen ? "ix-side open" : "ix-side"} aria-label="Main navigation">
+          <div className="ix-side-profile">
+            <SquarePhoto name={user?.name} photo={user?.photo} />
+            <div className="ix-side-who">
+              <strong>{user?.name || "User"}</strong>
+              <span>{ROLE_LABEL[user?.role] || "Staff"}</span>
+            </div>
+          </div>
           {navItems.map((it) => (
             <button
               key={it.path}
@@ -582,26 +656,26 @@ const css = `
   .ix-icon-btn { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 8px; display: flex; color: #1e293b; transition: background .15s, color .15s; }
   .ix-icon-btn:hover { background: #fdeee7; color: #e8582a; }
   .ix-nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-
-  /* notifications */
+  .ix-user { display: flex; align-items: center; gap: 10px; }
   .ix-notification-wrap { position: relative; }
   .ix-notification-btn { position: relative; width: 40px; height: 40px; border: 1.5px solid #e2e8f0; border-radius: 10px; background: #fff; color: #334155; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s; }
   .ix-notification-btn:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
+  .ix-notification-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
   .ix-notification-count { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 99px; background: #e8582a; color: #fff; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; }
   .ix-notification-dropdown { position: absolute; top: calc(100% + 10px); right: 0; width: 340px; background: #fff; border-radius: 16px; box-shadow: 0 16px 40px rgba(15,23,42,0.15); border: 1px solid #e2e8f0; overflow: hidden; z-index: 100; }
   .ix-notification-header { display: flex; align-items: center; justify-content: space-between; padding: 15px 16px; border-bottom: 1px solid #f1f5f9; }
   .ix-notification-header strong { font-size: 14px; }
   .ix-notification-header span { font-size: 11px; color: #94a3b8; }
-  .ix-notification-item { display: flex; gap: 10px; padding: 13px 16px; border-bottom: 1px solid #f1f5f9; background: #fffaf7; }
+  .ix-notification-item { width: 100%; display: flex; align-items: flex-start; gap: 10px; padding: 13px 16px; border: none; border-bottom: 1px solid #f1f5f9; background: #fffaf7; text-align: left; cursor: pointer; font: inherit; transition: background .15s; }
+  .ix-notification-item:hover { background: #fff5ef; }
   .ix-notification-item.read { background: #fff; }
   .ix-notification-dot { width: 7px; height: 7px; border-radius: 50%; background: #e8582a; margin-top: 6px; flex-shrink: 0; }
   .ix-notification-item.read .ix-notification-dot { background: #cbd5e1; }
-  .ix-notification-item strong { display: block; font-size: 12.5px; color: #1e293b; }
-  .ix-notification-item p { margin: 3px 0; font-size: 11.5px; line-height: 1.4; color: #64748b; }
-  .ix-notification-item small { font-size: 10px; color: #94a3b8; }
+  .ix-notification-content { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+  .ix-notification-content strong { display: block; font-size: 12.5px; color: #1e293b; }
+  .ix-notification-content > span { display: block; font-size: 11.5px; line-height: 1.4; color: #64748b; }
+  .ix-notification-content small { font-size: 10px; color: #94a3b8; }
   .ix-no-notifications { padding: 30px 16px; text-align: center; font-size: 12px; color: #94a3b8; }
-
-  .ix-user { display: flex; align-items: center; gap: 10px; }
   .ix-avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 6px 14px rgba(232,88,42,0.35); }
   .ix-user-text { display: flex; flex-direction: column; line-height: 1.25; }
   .ix-user-text strong { font-size: 13px; font-weight: 700; }
@@ -618,6 +692,14 @@ const css = `
   .ix-side { position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: #fff; box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px; transition: width .3s cubic-bezier(.2,.8,.2,1); }
   .ix-side::-webkit-scrollbar { display: none; }
   .ix-side.open { width: 236px; }
+  .ix-side-profile { margin: 0 10px 10px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+  .ix-side-photo { width: 45px; height: 45px; border-radius: 12px; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 18px rgba(232,88,42,0.28); transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1), border-radius .3s, font-size .3s; }
+  .ix-side.open .ix-side-photo { width: 120px; height: 120px; border-radius: 22px; font-size: 46px; }
+  .ix-side-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ix-side-who { text-align: center; max-height: 0; max-width: 200px; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-height .3s, opacity .2s, margin .3s; }
+  .ix-side-who strong { display: block; font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
+  .ix-side-who span { font-size: 11.5px; color: #94a3b8; }
+  .ix-side.open .ix-side-who { max-height: 56px; opacity: 1; margin-top: 12px; transition-delay: .1s; }
   .ix-side-item { position: relative; display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px; padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #334155; border-radius: 12px; white-space: nowrap; text-align: left; transition: background .15s, color .15s; }
   .ix-side-item:hover { background: #fdeee7; color: #e8582a; }
   .ix-side-item.active { background: #fdeee7; color: #e8582a; }

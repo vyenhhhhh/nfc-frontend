@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import Shell, {
-  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Hero, Icon, PhotoPicker,
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker,
   InternMonitor, todayManila, fmtTime, calcHours, greeting, esc, REQUIRED_HOURS,
 } from "../components/DashKit.jsx";
 
@@ -15,7 +15,7 @@ const NAV = [
   { path: "/admin/accounts", label: "Manage Accounts",     icon: "settings" },
   { path: "/admin/dtr",      label: "Generate DTR",        icon: "file" },
   { path: "/admin/reports",  label: "Consolidated Report", icon: "chart" },
-  { path: "/admin/calendar", label: "Calendar", icon: "calendar" },
+  { path: "/admin/calendar", label: "Calendar",            icon: "calendar" },
 ];
 
 export default function AdminDashboard() {
@@ -23,13 +23,7 @@ export default function AdminDashboard() {
   const { pathname: path } = useLocation();
   const [records, setRecords] = useState([]);
   const [users, setUsers] = useState([]);
-  const [movs, setMovs] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  const isCoordinator = user.role === "ojt_coordinator";
-  const navItems = isCoordinator
-    ? [...NAV, { path: "/admin/submissions", label: "MOV Submissions", icon: "inbox" }]
-    : NAV;
 
   useEffect(() => {
     fetchAll();
@@ -39,14 +33,12 @@ export default function AdminDashboard() {
 
   const fetchAll = async () => {
     try {
-      const [r, u, m] = await Promise.all([
+      const [r, u] = await Promise.all([
         fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
         fetch(`${API}/admin/users`).then((r) => r.json()),
-        fetch(`${API}/coordinator/movs`).then((r) => r.json()),
       ]);
       if (Array.isArray(r)) setRecords([...r]);
       if (Array.isArray(u)) setUsers([...u]);
-      if (Array.isArray(m)) setMovs([...m]);
     } catch (err) {
       console.error("Poll error:", err);
     } finally {
@@ -55,11 +47,12 @@ export default function AdminDashboard() {
   };
 
   const interns = users.filter((u) => u.role === "intern");
-  const supervisors = users.filter((u) => u.role === "supervisor");
+  const coordinators = users.filter((u) => u.role === "ojt_coordinator");
 
   return (
-    <Shell navItems={navItems} user={user}>
-      {path === "/admin" && <Home user={user} records={records} interns={interns} supervisors={supervisors} loading={loading} />}
+    <Shell navItems={NAV} user={user}>
+      <style>{adminCss}</style>
+      {path === "/admin" && <Home user={user} records={records} interns={interns} coordinators={coordinators} loading={loading} />}
       {path === "/admin/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} />}
       {path === "/admin/records" && <Records records={records} loading={loading} />}
       {path === "/admin/hours" && <Hours records={records} interns={interns} loading={loading} />}
@@ -67,84 +60,220 @@ export default function AdminDashboard() {
       {path === "/admin/calendar" && <Calendar />}
       {path === "/admin/dtr" && <DTR interns={interns} records={records} />}
       {path === "/admin/reports" && <Reports interns={interns} records={records} />}
-      {path === "/admin/submissions" && <Submissions movs={movs} user={user} onRefresh={fetchAll} />}
     </Shell>
   );
 }
 
 /* ───────────────────────── Home ───────────────────────── */
-function Home({ user, records, interns, supervisors, loading }) {
+
+// One of the four summary cards
+export function MiniStat({ icon, tone, label, value, hint, bar, live }) {
+  return (
+    <div className={`adm-mini ${tone}`}>
+      <div className="adm-mini-top">
+        <span className="adm-mini-icon"><Icon name={icon} size={16} /></span>
+        <span className="adm-mini-label">{label}</span>
+      </div>
+      <div className="adm-mini-value">{value}</div>
+      {bar !== undefined && (
+        <div className="adm-mini-bar" aria-hidden="true"><i style={{ width: `${Math.min(bar, 100)}%` }} /></div>
+      )}
+      {hint && <div className="adm-mini-hint">{live && <i className="adm-live-dot" />}{hint}</div>}
+    </div>
+  );
+}
+
+function Home({ user, records, interns, coordinators, loading }) {
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
-  const checkedIn = todayRecs.filter((r) => r.action === "CHECK_IN" && !r.checked_out_at).length;
+  const inNowAll = todayRecs.filter((r) => r.action === "CHECK_IN" && !r.checked_out_at);
+  // one entry per person, in case someone has more than one open check-in
+  const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
+  const checkedIn = inNow.length;
   const pct = interns.length ? (checkedIn / interns.length) * 100 : 0;
   const first = user.name?.split(" ")[0] || "there";
+  const dateLabel = new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" });
 
   return (
-    <>
-      <Hero
-        tag="Admin overview"
-        title={`${greeting()}, ${first}!`}
-        text="Here's what's happening across the OJT program today."
-        facts={[
-          { v: checkedIn, l: "checked in now" },
-          { v: todayRecs.length, l: "records today" },
-          { v: interns.length, l: "interns" },
-        ]}
-        ring={{ pct, top: `${checkedIn}/${interns.length}`, bottom: "interns in" }}
-      />
+    <div className="adm-home">
+      {/* ───── LEFT: hero, stats, live attendance ───── */}
+      <div className="adm-col">
+        <div className="ix-card adm-hero">
+          <span className="adm-hero-glow" aria-hidden="true" />
+          <div className="adm-hero-text">
+            <span className="adm-hero-tag">Admin overview · {dateLabel}</span>
+            <h1>{greeting()}, {first} 👋</h1>
+            <p>Here's what's happening across the OJT program today.</p>
+            <div className="adm-hero-facts">
+              <div><strong>{checkedIn}</strong><span>checked in now</span></div>
+              <div><strong>{todayRecs.length}</strong><span>records today</span></div>
+              <div><strong>{interns.length}</strong><span>interns</span></div>
+            </div>
+          </div>
+          <Ring pct={pct} size={150} stroke={14} track="rgba(255,255,255,0.18)" color="#ffb48f">
+            <strong>{checkedIn}/{interns.length}</strong>
+            <span>interns in</span>
+          </Ring>
+        </div>
 
-      <div className="ix-stats">
-        <StatCard label="Total Interns" value={interns.length} icon="users" tone="orange" />
-        <StatCard label="Supervisors" value={supervisors.length} icon="user" tone="blue" />
-        <StatCard label="Checked In Today" value={checkedIn} icon="tap" tone="green" />
-        <StatCard label="Today's Records" value={todayRecs.length} icon="list" tone="purple" />
+        <div className="adm-stats">
+          <MiniStat icon="users" tone="orange" label="Total interns" value={interns.length} hint="registered" />
+          <MiniStat icon="user" tone="blue" label="OJT coordinators" value={coordinators.length} hint="on the program" />
+          <MiniStat icon="tap" tone="green" label="Checked in today" value={checkedIn} hint={`of ${interns.length} interns`} bar={pct} live={checkedIn > 0} />
+          <MiniStat icon="list" tone="purple" label="Today's records" value={todayRecs.length} hint="taps and logs" />
+        </div>
+
+        <div className="adm-live">
+          <Section icon="clock" title="Today's Live Attendance" count={todayRecs.length} live>
+            {loading ? (
+              <Spinner />
+            ) : (
+              <Table
+                headers={["Intern", "Type", "Action", "Time"]}
+                rows={todayRecs.map((r) => [
+                  <div className="ix-actions">
+                    <Avatar name={r.name} photo={r.photo} size={32} />
+                    <strong>{r.name}</strong>
+                  </div>,
+                  <Badge
+                    label={r.uid === "ONLINE" ? "Online" : "Onsite"}
+                    type={r.uid === "ONLINE" ? "online" : "onsite"}
+                  />,
+                  <Badge
+                    label={r.action === "CHECK_IN" ? "IN" : "OUT"}
+                    type={r.action === "CHECK_IN" ? "in" : "out"}
+                  />,
+                  <span className="adm-time">{fmtTime(r.checked_in_at)}</span>,
+                ])}
+                empty="No activity today yet."
+              />
+            )}
+          </Section>
+        </div>
       </div>
 
-      <div
-  style={{
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) 380px",
-    gap: "20px",
-    alignItems: "start",
-  }}
->
-  <Section
-    icon="clock"
-    title="Today's Live Attendance"
-    count={todayRecs.length}
-    live
-  >
-    {loading ? (
-      <Spinner />
-    ) : (
-      <Table
-        headers={["Intern", "Type", "Action", "Time"]}
-        rows={todayRecs.map((r) => [
-          <strong>{r.name}</strong>,
-          <Badge
-            label={r.uid === "ONLINE" ? "Online" : "Onsite"}
-            type={r.uid === "ONLINE" ? "online" : "onsite"}
-          />,
-          <Badge
-            label={r.action === "CHECK_IN" ? "IN" : "OUT"}
-            type={r.action === "CHECK_IN" ? "in" : "out"}
-          />,
-          fmtTime(r.checked_in_at),
-        ])}
-        empty="No activity today yet."
-      />
-    )}
-  </Section>
+      {/* ───── RIGHT: calendar + who's on duty ───── */}
+      <div className="adm-col">
+        <HomeCalendar />
 
-  <HomeCalendar />
-</div>
-    </>
+        <div className="ix-card adm-duty">
+          <div className="adm-duty-head">
+            <span className="adm-duty-icon"><Icon name="tap" size={18} /></span>
+            <h2>On duty now</h2>
+            <span className="ix-count">{checkedIn}</span>
+          </div>
+          {inNow.length === 0 ? (
+            <div className="adm-duty-empty">
+              <strong>Nobody is checked in.</strong>
+              <p>Interns who tap in will show up here.</p>
+            </div>
+          ) : (
+            <ul className="adm-duty-list">
+              {inNow.slice(0, 6).map((r) => (
+                <li key={r.user_id ?? r.name}>
+                  <Avatar name={r.name} photo={r.photo} size={34} status="on" />
+                  <span className="adm-duty-name">{r.name}</span>
+                  <span className="adm-duty-time">since {fmtTime(r.checked_in_at)}</span>
+                </li>
+              ))}
+              {inNow.length > 6 && <li className="adm-duty-more">+{inNow.length - 6} more</li>}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Home Calendar ───────────────────────── */
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+export function HomeCalendar() {
+  const [events, setEvents] = useState([]);
+  const [viewDate, setViewDate] = useState(new Date());
+
+  useEffect(() => {
+    const load = () =>
+      fetch(`${API}/calendar`, { headers: { Accept: "application/json" } })
+        .then((res) => res.json())
+        .then((data) => { if (Array.isArray(data)) setEvents(data); })
+        .catch((err) => console.error("Calendar error:", err));
+    load();
+    const iv = setInterval(load, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthName = viewDate.toLocaleString("en-US", { month: "long" });
+
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const isToday = (d) => d === now.getDate() && month === now.getMonth() && year === now.getFullYear();
+  const keyOf = (d) => `${year}-${pad(month + 1)}-${pad(d)}`;
+  // slice(0, 10) so both "2026-10-15" and "2026-10-15T00:00:00Z" work
+  const eventOf = (d) => events.find((e) => String(e.date).slice(0, 10) === keyOf(d));
+
+  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const upcoming = events
+    .map((e) => ({ ...e, k: String(e.date).slice(0, 10) }))
+    .filter((e) => e.k >= todayKey)
+    .sort((a, b) => a.k.localeCompare(b.k))[0];
+  const upcomingLabel = upcoming
+    ? new Date(upcoming.k + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : "";
+
+  return (
+    <div className="ix-card adm-cal">
+      <div className="adm-cal-head">
+        <button className="adm-cal-nav" onClick={() => setViewDate(new Date(year, month - 1, 1))} aria-label="Previous month">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
+        </button>
+        <strong>{monthName} {year}</strong>
+        <button className="adm-cal-nav" onClick={() => setViewDate(new Date(year, month + 1, 1))} aria-label="Next month">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+        </button>
+      </div>
+
+      <button className="adm-cal-today" onClick={() => setViewDate(new Date())}>Jump to today</button>
+
+      <div className="adm-cal-grid">
+        {DOW.map((d) => <div key={d} className="adm-cal-dow">{d}</div>)}
+        {Array.from({ length: firstDay }, (_, i) => <div key={`blank-${i}`} />)}
+        {Array.from({ length: daysInMonth }, (_, i) => {
+          const d = i + 1;
+          const ev = eventOf(d);
+          const cls = ["adm-cal-day", isToday(d) && "today", ev && "event"].filter(Boolean).join(" ");
+          return (
+            <div
+              key={d} className={cls} title={ev ? ev.title : undefined}
+              aria-label={`${monthName} ${d}${ev ? ", " + ev.title : ""}`}
+            >
+              {d}
+              {ev && <i className="adm-cal-dot" />}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="adm-cal-legend">
+        <span><i className="dot orange" /> Today</span>
+        <span><i className="dot amber" /> Holiday / Non-working</span>
+      </div>
+      {upcoming && (
+        <div className="adm-cal-next">
+          <Icon name="calendar" size={15} />
+          <span>Next break: <strong>{upcoming.title}</strong> on {upcomingLabel}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
 /* ───────────────────────── Records ───────────────────────── */
-function Records({ records, loading }) {
+export function Records({ records, loading }) {
   const [dateFilter, setDateFilter] = useState("");
   const [search, setSearch] = useState("");
   const filtered = records
@@ -185,7 +314,7 @@ function Records({ records, loading }) {
 }
 
 /* ───────────────────────── Hours ───────────────────────── */
-function Hours({ records, interns, loading }) {
+export function Hours({ records, interns, loading }) {
   const hoursBased = interns.filter((u) => (u.tracking_type || "hours") === "hours");
   const outputBased = interns.filter((u) => u.tracking_type === "output");
 
@@ -232,7 +361,7 @@ function Hours({ records, interns, loading }) {
 }
 
 /* ───────────────────────── MOV Submissions ───────────────────────── */
-function Submissions({ movs, user, onRefresh }) {
+export function Submissions({ movs, user, onRefresh }) {
   const [processing, setProcessing] = useState(null);
   const [remarks, setRemarks] = useState({});
   const [msg, setMsg] = useState(null);
@@ -413,7 +542,7 @@ function Accounts({ users, onRefresh }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Upload failed.");
       setMsg({ type: "success", text: data.message || "Photo updated." });
-      // if this is my own account, refresh my sidebar photo too
+      // if this is my own account, refresh my navbar photo too
       const me = JSON.parse(sessionStorage.getItem("user") || "{}");
       if (me.id === u.id && data.photo) sessionStorage.setItem("user", JSON.stringify({ ...me, photo: data.photo }));
       onRefresh();
@@ -484,7 +613,6 @@ function Accounts({ users, onRefresh }) {
               <label htmlFor="acc-role">Role</label>
               <select id="acc-role" value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
                 <option value="intern">Intern</option>
-                <option value="supervisor">Supervisor</option>
                 <option value="ojt_coordinator">OJT Coordinator</option>
                 <option value="admin">Admin</option>
               </select>
@@ -554,7 +682,7 @@ function Accounts({ users, onRefresh }) {
 }
 
 /* ───────────────────────── DTR ───────────────────────── */
-function DTR({ interns, records }) {
+export function DTR({ interns, records }) {
   const [selectedId, setSelectedId] = useState("");
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
 
@@ -655,7 +783,7 @@ function DTR({ interns, records }) {
             <div><span>Email: </span>{intern.email}</div>
             <div><span>Month: </span><strong>{monthLabel}</strong></div>
           </div>
-          <div className="ix-card flush" style={{ boxShadow: "none", border: "1px solid #f1f5f9" }}>
+          <div className="ix-card flush" style={{ boxShadow: "none", border: "1px solid #f3e3da" }}>
             <Table
               headers={["Date", "Day", "Time In", "Time Out", "Hours Worked", "Remarks"]}
               rows={Object.entries(byDate).sort().map(([date, t]) => {
@@ -689,7 +817,7 @@ function DTR({ interns, records }) {
 }
 
 /* ───────────────────────── Reports ───────────────────────── */
-function Reports({ interns, records }) {
+export function Reports({ interns, records }) {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
 
   const data = interns.map((u) => {
@@ -772,221 +900,6 @@ function Reports({ interns, records }) {
   );
 }
 
-/* ───────────────────────── Home Calendar ───────────────────────── */
-function HomeCalendar() {
-  const [events, setEvents] = useState([]);
-  const [currentDate, setCurrentDate] = useState(new Date());
-
-  useEffect(() => {
-    fetch(`${API}/calendar`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setEvents(data);
-        }
-      })
-      .catch((err) => {
-        console.error("Calendar error:", err);
-      });
-  }, []);
-
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-
-  const monthName = currentDate.toLocaleDateString("en-PH", {
-    month: "long",
-    year: "numeric",
-  });
-
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const previousMonth = () => {
-    setCurrentDate(new Date(year, month - 1, 1));
-  };
-
-  const nextMonth = () => {
-    setCurrentDate(new Date(year, month + 1, 1));
-  };
-
-  const goToday = () => {
-    setCurrentDate(new Date());
-  };
-
-  const getEvent = (day) => {
-    const date =
-      `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-
-    return events.find((event) => event.date === date);
-  };
-
-  const cells = [];
-
-  // Empty spaces before the first day
-  for (let i = 0; i < firstDay; i++) {
-    cells.push(
-      <div key={`empty-${i}`} style={{ minHeight: 42 }} />
-    );
-  }
-
-  // Days
-  for (let day = 1; day <= daysInMonth; day++) {
-    const event = getEvent(day);
-
-    const today = new Date();
-    const isToday =
-      day === today.getDate() &&
-      month === today.getMonth() &&
-      year === today.getFullYear();
-
-    cells.push(
-      <div
-        key={day}
-        title={event ? event.title : ""}
-        style={{
-          minHeight: 42,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          position: "relative",
-          borderRadius: "8px",
-          background: isToday
-            ? "#e8f0ff"
-            : event
-            ? "#fff4e5"
-            : "transparent",
-          fontWeight: isToday || event ? 700 : 400,
-          color: event
-            ? "#b45309"
-            : isToday
-            ? "#2563eb"
-            : "#334155",
-          cursor: event ? "help" : "default",
-        }}
-      >
-        {day}
-
-        {event && (
-          <span
-            style={{
-              position: "absolute",
-              bottom: "4px",
-              width: "5px",
-              height: "5px",
-              borderRadius: "50%",
-              background: "#f59e0b",
-            }}
-          />
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="ix-card"
-      style={{
-        padding: "20px",
-        margin: 0,
-      }}
-    >
-      {/* Calendar Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "16px",
-        }}
-      >
-        <button
-          className="ix-b ghost sm"
-          onClick={previousMonth}
-        >
-          ‹
-        </button>
-
-        <strong style={{ fontSize: "16px" }}>
-          {monthName}
-        </strong>
-
-        <button
-          className="ix-b ghost sm"
-          onClick={nextMonth}
-        >
-          ›
-        </button>
-      </div>
-
-      <div
-        style={{
-          textAlign: "center",
-          marginBottom: "14px",
-        }}
-      >
-        <button
-          className="ix-b ghost sm"
-          onClick={goToday}
-        >
-          Today
-        </button>
-      </div>
-
-      {/* Weekdays */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          textAlign: "center",
-          fontSize: "12px",
-          fontWeight: 700,
-          color: "#64748b",
-          marginBottom: "6px",
-        }}
-      >
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-          (day) => (
-            <div key={day}>{day}</div>
-          )
-        )}
-      </div>
-
-      {/* Calendar Days */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: "3px",
-          textAlign: "center",
-        }}
-      >
-        {cells}
-      </div>
-
-      {/* Legend */}
-      <div
-        style={{
-          display: "flex",
-          gap: "14px",
-          marginTop: "16px",
-          paddingTop: "12px",
-          borderTop: "1px solid #e5e7eb",
-          fontSize: "12px",
-          color: "#64748b",
-        }}
-      >
-        <span>
-          <span style={{ color: "#2563eb" }}>●</span> Today
-        </span>
-
-        <span>
-          <span style={{ color: "#f59e0b" }}>●</span> Holiday / Non-working
-        </span>
-      </div>
-    </div>
-  );
-}
-
 /* ───────────────────────── Calendar Management ───────────────────────── */
 function Calendar() {
   const [events, setEvents] = useState([]);
@@ -994,9 +907,7 @@ function Calendar() {
   const [type, setType] = useState("holiday");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-
   const [editingId, setEditingId] = useState(null);
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -1005,17 +916,10 @@ function Calendar() {
     try {
       const res = await fetch(`${API}/calendar`);
       const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to load calendar.");
-      }
-
+      if (!res.ok) throw new Error(data.message || "Failed to load calendar.");
       setEvents(Array.isArray(data) ? data : []);
     } catch (err) {
-      setMsg({
-        type: "error",
-        text: err.message,
-      });
+      setMsg({ type: "error", text: err.message });
     } finally {
       setLoading(false);
     }
@@ -1025,17 +929,15 @@ function Calendar() {
     fetchEvents();
   }, []);
 
-  // EDIT
   const handleEdit = (event) => {
     setEditingId(event.id);
-    setDate(event.date);
+    setDate(String(event.date).slice(0, 10));
     setType(event.type);
     setTitle(event.title);
     setDescription(event.description || "");
     setMsg(null);
   };
 
-  // CANCEL EDIT
   const cancelEdit = () => {
     setEditingId(null);
     setDate("");
@@ -1045,15 +947,11 @@ function Calendar() {
     setMsg(null);
   };
 
-  // ADD OR UPDATE
   const handleSave = async (e) => {
     e.preventDefault();
 
     if (!date || !title) {
-      setMsg({
-        type: "error",
-        text: "Please enter a date and title.",
-      });
+      setMsg({ type: "error", text: "Please enter a date and title." });
       return;
     }
 
@@ -1061,194 +959,102 @@ function Calendar() {
     setMsg(null);
 
     try {
-      const url = editingId
-        ? `${API}/calendar/${editingId}`
-        : `${API}/calendar`;
-
+      const url = editingId ? `${API}/calendar/${editingId}` : `${API}/calendar`;
       const method = editingId ? "PUT" : "POST";
 
       const res = await fetch(url, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          date,
-          type,
-          title,
-          description,
-        }),
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ date, type, title, description }),
       });
 
       const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to save calendar event.");
 
-      if (!res.ok) {
-        throw new Error(
-          data.message || "Failed to save calendar event."
-        );
-      }
-
-      setMsg({
-        type: "success",
-        text: data.message,
-      });
-
+      setMsg({ type: "success", text: data.message });
       setEditingId(null);
       setDate("");
       setTitle("");
       setDescription("");
       setType("holiday");
-
       fetchEvents();
     } catch (err) {
-      setMsg({
-        type: "error",
-        text: err.message,
-      });
+      setMsg({ type: "error", text: err.message });
     } finally {
       setSaving(false);
     }
   };
 
-  // DELETE
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this calendar event?")) {
-      return;
-    }
+    if (!window.confirm("Delete this calendar event?")) return;
 
     try {
       const res = await fetch(`${API}/calendar/${id}`, {
         method: "DELETE",
-        headers: {
-          Accept: "application/json",
-        },
+        headers: { Accept: "application/json" },
       });
-
       const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to delete event.");
 
-      if (!res.ok) {
-        throw new Error(
-          data.message || "Failed to delete event."
-        );
-      }
-
-      setMsg({
-        type: "success",
-        text: data.message,
-      });
-
+      setMsg({ type: "success", text: data.message });
       fetchEvents();
     } catch (err) {
-      setMsg({
-        type: "error",
-        text: err.message,
-      });
+      setMsg({ type: "error", text: err.message });
     }
   };
 
   return (
     <>
-      <PageHeader
-        title="Calendar Management"
-        sub="Manage holidays and non-working days."
-      />
+      <PageHeader title="Calendar Management" sub="Manage holidays and non-working days." />
 
       <Msg msg={msg} />
 
-      <div className="ix-card">
-        <h3 style={{ marginTop: 0 }}>
-          {editingId
-            ? "Edit Calendar Event"
-            : "Add Calendar Event"}
-        </h3>
+      <div className="ix-card adm-cal-form">
+        <h3>{editingId ? "Edit Calendar Event" : "Add Calendar Event"}</h3>
 
         <form onSubmit={handleSave} className="ix-form">
+          <div className="ix-row-gap">
+            <div className="ix-field">
+              <label htmlFor="cal-date">Date</label>
+              <input id="cal-date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="cal-type">Type</label>
+              <select id="cal-type" value={type} onChange={(e) => setType(e.target.value)}>
+                <option value="holiday">Holiday</option>
+                <option value="non_working">Non-working Day</option>
+              </select>
+            </div>
+          </div>
 
           <div className="ix-field">
-            <label>Date</label>
+            <label htmlFor="cal-title">Title</label>
             <input
-              type="date"
-              required
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
+              id="cal-title" type="text" required placeholder="e.g. Independence Day"
+              value={title} onChange={(e) => setTitle(e.target.value)}
             />
           </div>
 
           <div className="ix-field">
-            <label>Type</label>
-
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-            >
-              <option value="holiday">
-                Holiday
-              </option>
-
-              <option value="non_working">
-                Non-working Day
-              </option>
-            </select>
-          </div>
-
-          <div className="ix-field">
-            <label>Title</label>
-
+            <label htmlFor="cal-desc">Description</label>
             <input
-              type="text"
-              required
-              placeholder="e.g. Independence Day"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              id="cal-desc" type="text" placeholder="Optional description"
+              value={description} onChange={(e) => setDescription(e.target.value)}
             />
           </div>
 
-          <div className="ix-field">
-            <label>Description</label>
-
-            <input
-              type="text"
-              placeholder="Optional description"
-              value={description}
-              onChange={(e) =>
-                setDescription(e.target.value)
-              }
-            />
-          </div>
-
-          <div className="ix-form-actions">
-
-            <button
-              type="submit"
-              className="ix-b primary"
-              disabled={saving}
-            >
-              {saving
-                ? editingId
-                  ? "Updating..."
-                  : "Adding..."
-                : editingId
-                ? "Update Event"
-                : "Add Event"}
+          <div className="ix-form-actions adm-cal-actions">
+            <button type="submit" className="ix-b primary" disabled={saving}>
+              {saving ? (editingId ? "Updating..." : "Adding...") : editingId ? "Update Event" : "Add Event"}
             </button>
-
             {editingId && (
-              <button
-                type="button"
-                className="ix-b ghost"
-                onClick={cancelEdit}
-              >
-                Cancel
-              </button>
+              <button type="button" className="ix-b ghost" onClick={cancelEdit}>Cancel</button>
             )}
-
           </div>
         </form>
       </div>
 
-      <div className="ix-card flush">
-
+      <div className="ix-card flush adm-cal-list">
         <PageHeader
           title="Calendar Events"
           sub="Holidays and non-working days registered in the system."
@@ -1264,49 +1070,18 @@ function Calendar() {
           />
         ) : (
           <Table
-            headers={[
-              "Date",
-              "Type",
-              "Title",
-              "Description",
-              "Action",
-            ]}
+            headers={["Date", "Type", "Title", "Description", "Action"]}
             rows={events.map((event) => [
-              event.date,
-
+              String(event.date).slice(0, 10),
               <Badge
-                label={
-                  event.type === "holiday"
-                    ? "Holiday"
-                    : "Non-working"
-                }
-                type={
-                  event.type === "holiday"
-                    ? "approved"
-                    : "pending"
-                }
+                label={event.type === "holiday" ? "Holiday" : "Non-working"}
+                type={event.type === "holiday" ? "approved" : "pending"}
               />,
-
               <strong>{event.title}</strong>,
-
               event.description || "—",
-
               <div className="ix-actions">
-
-                <button
-                  className="ix-b ghost sm"
-                  onClick={() => handleEdit(event)}
-                >
-                  Edit
-                </button>
-
-                <button
-                  className="ix-b danger sm"
-                  onClick={() => handleDelete(event.id)}
-                >
-                  Delete
-                </button>
-
+                <button className="ix-b ghost sm" onClick={() => handleEdit(event)}>Edit</button>
+                <button className="ix-b danger sm" onClick={() => handleDelete(event.id)}>Delete</button>
               </div>,
             ])}
             empty="No calendar events."
@@ -1316,3 +1091,243 @@ function Calendar() {
     </>
   );
 }
+
+/* ───────────────────────── admin styles ───────────────────────── */
+export const adminCss = `
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
+
+/* ═════════ SHARED LOOK (all admin pages) ═════════ */
+.ix-main {
+  --o: #e8582a; --o2: #f2733a; --ink: #1b1410; --mut: #7a6c64; --line: #f3e3da;
+  --display: 'Bricolage Grotesque', 'Figtree', 'Segoe UI', sans-serif;
+  background:
+    radial-gradient(560px 380px at 94% -4%, rgba(242,115,58,0.22), transparent 70%),
+    radial-gradient(520px 400px at -4% 104%, rgba(255,181,140,0.38), transparent 70%),
+    #fdeee6;
+}
+.ix-content { font-family: 'Figtree', 'Segoe UI', sans-serif; }
+.ix-content h1, .ix-content h2 { font-family: var(--display); }
+.ix-content .ix-ph h1 { letter-spacing: -0.6px; }
+
+/* cards: rounder, warmer shadow */
+.ix-content .ix-card,
+.ix-content .ix-section,
+.ix-content .ix-sub,
+.ix-content .ix-ic,
+.ix-content .ix-hc,
+.ix-content .ix-stat,
+.ix-content .ix-doc {
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 12px 32px rgba(150,52,20,0.08), 0 1px 2px rgba(27,20,16,0.04);
+}
+.ix-content .ix-card.flush,
+.ix-content .ix-section { overflow: hidden; }
+.ix-content .ix-ic:hover,
+.ix-content .ix-stat:hover { box-shadow: 0 20px 38px rgba(150,52,20,0.14); }
+
+/* stat cards on Reports: gradient icon tiles, friendlier labels */
+.ix-content .ix-stat-icon { color: #fff; }
+.ix-content .ix-stat-icon.orange { background: linear-gradient(135deg, #f2864f, #e8582a); box-shadow: 0 8px 16px rgba(232,88,42,0.3); }
+.ix-content .ix-stat-icon.blue   { background: linear-gradient(135deg, #5b8def, #2563eb); box-shadow: 0 8px 16px rgba(37,99,235,0.28); }
+.ix-content .ix-stat-icon.green  { background: linear-gradient(135deg, #3ecf7d, #16a34a); box-shadow: 0 8px 16px rgba(22,163,74,0.28); }
+.ix-content .ix-stat-icon.purple { background: linear-gradient(135deg, #a07af2, #7c3aed); box-shadow: 0 8px 16px rgba(124,58,237,0.28); }
+.ix-content .ix-stat-label { text-transform: none; letter-spacing: 0; font-size: 12.5px; color: var(--mut); }
+.ix-content .ix-stat-value { font-family: var(--display); }
+
+/* tables: soft header, airy rows, warm hover */
+.ix-content table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.ix-content thead th {
+  background: #fff6f1; color: #8a6a5c; font-size: 12.5px; font-weight: 600; text-align: left;
+  letter-spacing: 0; text-transform: none; padding: 14px 20px; border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.ix-content tbody td {
+  padding: 14px 20px; font-size: 13.5px; color: #3a2e28; border-bottom: 1px solid #f8eee8;
+  border-top: none; vertical-align: middle;
+}
+.ix-content tbody tr { transition: background .15s; }
+.ix-content tbody tr:hover td { background: #fffaf6; }
+.ix-content tbody tr:last-child td { border-bottom: none; }
+.ix-content .ix-badge { border-radius: 99px; font-weight: 700; }
+
+/* toolbar, inputs, pills, buttons */
+.ix-content .ix-search, .ix-content .ix-input, .ix-content .ix-select { border-radius: 14px; border-color: #f1e2d9; background: #fff; }
+.ix-content .ix-search:focus-within, .ix-content .ix-input:focus, .ix-content .ix-select:focus { border-color: var(--o); }
+.ix-content .ix-chip { border-radius: 99px; background: #fff; border: 1px solid #f1e2d9; }
+.ix-content .ix-chip.green { background: #ecfdf3; border-color: #c9f0d9; }
+.ix-content .ix-b { border-radius: 12px; }
+.ix-content .ix-b.ghost { border-color: #f1e2d9; background: #fffaf7; }
+.ix-content .ix-b.ghost:hover:not(:disabled) { border-color: var(--o); background: #fdeee7; }
+.ix-content .ix-field input, .ix-content .ix-field select, .ix-content .ix-field textarea { border-radius: 14px; border-color: #f1e2d9; background: #fffaf7; }
+.ix-content .ix-field input:focus, .ix-content .ix-field select:focus, .ix-content .ix-field textarea:focus { background: #fff; border-color: var(--o); }
+.ix-content .ix-note { border-radius: 14px; }
+.ix-modal-wrap .ix-field input, .ix-modal-wrap .ix-field select { border-radius: 14px; border-color: #f1e2d9; background: #fffaf7; }
+.ix-modal-wrap .ix-modal { border-radius: 26px; }
+.ix-modal-wrap .ix-modal header h2 { font-family: 'Bricolage Grotesque', 'Segoe UI', sans-serif; }
+
+/* calendar management page */
+.adm-cal-form { margin-bottom: 20px; max-width: 640px; }
+.adm-cal-form h3 { margin: 0 0 14px; font-family: var(--display); font-size: 18px; font-weight: 800; letter-spacing: -0.3px; }
+.adm-cal-actions .ix-b { flex: 0 0 auto; min-width: 140px; }
+.ix-content .adm-cal-list > .ix-ph { padding: 20px 22px 0; margin-bottom: 14px; }
+.ix-content .adm-cal-list > .ix-ph h1 { font-size: 19px; }
+
+/* ═════════ HOME PAGE ═════════ */
+.ix-content:has(.adm-home) { max-width: 1320px; }
+
+.adm-home {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 28vw, 440px);
+  gap: 18px;
+  align-items: start;
+}
+.adm-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.adm-col .ix-section, .adm-col .ix-card { margin: 0; }
+
+/* ── hero: the one bold card ── */
+.ix-content .ix-card.adm-hero {
+  position: relative; overflow: hidden; color: #fff;
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 22px 30px;
+  padding: 28px 32px;
+  background: linear-gradient(125deg, #2a120a 0%, #7a2a12 52%, #e8582a 135%);
+  border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 18px 40px rgba(150,52,20,0.22);
+}
+.adm-hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .13; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.6'/></svg>");
+}
+.adm-home .adm-hero .adm-hero-glow {
+  position: absolute; right: -90px; top: -120px; width: 380px; height: 380px; border-radius: 50%; pointer-events: none; z-index: 0;
+  background: radial-gradient(circle, rgba(255,160,110,0.5), rgba(255,160,110,0) 65%);
+}
+.adm-hero > *:not(.adm-hero-glow) { position: relative; z-index: 1; }
+.adm-hero-text { min-width: 0; max-width: 560px; }
+.adm-hero-tag {
+  display: inline-block; padding: 5px 13px; border-radius: 99px; font-size: 12.5px; font-weight: 600;
+  background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.3);
+}
+.ix-content .adm-hero h1 { font-size: clamp(26px, 2.4vw, 36px); font-weight: 800; letter-spacing: -0.8px; line-height: 1.1; margin-top: 14px; color: #fff; text-shadow: 0 2px 20px rgba(0,0,0,0.3); }
+.adm-hero p { font-size: 14px; line-height: 1.6; margin-top: 8px; color: rgba(255,255,255,0.82); }
+.adm-hero-facts { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+.adm-hero-facts > div {
+  display: flex; flex-direction: column; min-width: 104px; padding: 10px 16px; border-radius: 16px;
+  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+}
+.adm-hero-facts strong { font-family: var(--display); font-size: 24px; font-weight: 800; line-height: 1.1; }
+.adm-hero-facts span { font-size: 12px; color: rgba(255,255,255,0.72); margin-top: 2px; }
+.adm-hero .ix-ring-center strong { font-family: var(--display); font-size: 28px; }
+
+/* ── summary cards ── */
+.adm-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.adm-mini {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  padding: 16px 18px; background: #fff; border-radius: 22px; border: 1px solid rgba(255,255,255,0.85);
+  box-shadow: 0 14px 34px rgba(150,52,20,0.09), 0 1px 2px rgba(27,20,16,0.04);
+  transition: transform .2s, box-shadow .2s;
+}
+.adm-mini::after {
+  content: ""; position: absolute; right: -28px; top: -28px; width: 96px; height: 96px; border-radius: 50%;
+  background: var(--tint); opacity: .75; pointer-events: none;
+}
+.adm-mini:hover { transform: translateY(-3px); box-shadow: 0 20px 38px rgba(150,52,20,0.14); }
+.adm-mini.orange { --tint: #fdeee7; --fg: #e8582a; --grad: linear-gradient(135deg, #f2864f, #e8582a); }
+.adm-mini.blue   { --tint: #e8f1fd; --fg: #2563eb; --grad: linear-gradient(135deg, #5b8def, #2563eb); }
+.adm-mini.green  { --tint: #e6f7ee; --fg: #16a34a; --grad: linear-gradient(135deg, #3ecf7d, #16a34a); }
+.adm-mini.purple { --tint: #f0eafd; --fg: #7c3aed; --grad: linear-gradient(135deg, #a07af2, #7c3aed); }
+.adm-mini-top { position: relative; z-index: 1; display: flex; align-items: center; gap: 9px; min-width: 0; }
+.adm-mini-icon {
+  width: 32px; height: 32px; flex-shrink: 0; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+  background: var(--grad); color: #fff; box-shadow: 0 8px 16px color-mix(in srgb, var(--fg) 32%, transparent);
+}
+.adm-mini-label { font-size: 12.5px; font-weight: 600; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adm-mini-value { position: relative; z-index: 1; font-family: var(--display); font-size: 32px; font-weight: 800; letter-spacing: -.6px; line-height: 1.1; color: var(--ink); }
+.adm-mini-hint { position: relative; z-index: 1; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #9a8c84; line-height: 1.35; }
+.adm-mini-bar { position: relative; z-index: 1; height: 5px; border-radius: 99px; background: var(--tint); overflow: hidden; }
+.adm-mini-bar i { display: block; height: 100%; border-radius: 99px; background: var(--grad); transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.adm-live-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex-shrink: 0; animation: adm-live 2s ease-out infinite; }
+@keyframes adm-live { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); } 100% { box-shadow: 0 0 0 9px rgba(34,197,94,0); } }
+
+/* ── live attendance: scrolls inside its card ── */
+.adm-live .ix-table-wrap { max-height: 420px; overflow: auto; }
+.adm-live thead th { position: sticky; top: 0; z-index: 1; }
+.adm-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.adm-live .ix-actions { gap: 10px; }
+
+/* ── calendar ── */
+.ix-content .ix-card.adm-cal { padding: 20px 22px 18px; background: #fff; }
+.adm-cal-head { display: flex; align-items: center; justify-content: space-between; }
+.adm-cal-head strong { font-family: var(--display); font-size: 22px; font-weight: 800; letter-spacing: -.4px; }
+.adm-cal-nav {
+  width: 40px; height: 40px; border-radius: 14px; border: 1.5px solid #f1e2d9; background: #fffaf7;
+  color: #6b5a50; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s;
+}
+.adm-cal-nav:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
+.adm-cal-today {
+  display: block; margin: 12px auto 6px; padding: 7px 20px; border-radius: 99px;
+  border: 1.5px solid #f1e2d9; background: #fffaf7; font-size: 14px; font-weight: 600; color: #3a2e28;
+  cursor: pointer; transition: all .15s;
+}
+.adm-cal-today:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
+.adm-cal-nav:focus-visible, .adm-cal-today:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+.adm-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 4px; }
+.adm-cal-dow { text-align: center; font-size: 13px; font-weight: 600; color: #a1857a; padding: 9px 0; }
+.adm-cal-day {
+  position: relative; height: 46px; margin: 0 2px; border-radius: 15px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 500; color: #2b211c; transition: background .15s;
+}
+.adm-cal-day:hover { background: #fff3ec; }
+.adm-cal-day.today { background: linear-gradient(135deg, #f2733a, #e04a1a); color: #fff; font-weight: 800; box-shadow: 0 10px 20px rgba(232,88,42,0.35); }
+.adm-cal-day.event { background: #fff4d6; color: #b45309; font-weight: 800; cursor: help; }
+.adm-cal-day.today.event { background: linear-gradient(135deg, #f2733a, #e04a1a); color: #fff; }
+.adm-cal-dot { position: absolute; bottom: 6px; width: 6px; height: 6px; border-radius: 50%; background: #f59e0b; }
+.adm-cal-day.today .adm-cal-dot { background: #fff; }
+.adm-cal-legend {
+  margin-top: 14px; padding-top: 14px; border-top: 1px dashed #f1ddd1;
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap; font-size: 13.5px; color: #7a6c64;
+}
+.adm-cal-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.adm-cal-legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.adm-cal-legend .dot.orange { background: #e8582a; }
+.adm-cal-legend .dot.amber { background: #f59e0b; }
+.adm-cal-next {
+  margin-top: 12px; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 12px;
+  background: #fff8e6; color: #92520b; font-size: 13px; line-height: 1.35;
+}
+.adm-cal-next svg { flex-shrink: 0; }
+
+/* ── on duty now ── */
+.ix-content .ix-card.adm-duty { padding: 20px 22px; background: linear-gradient(160deg, #fff 55%, #fff1e9); }
+.adm-duty-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.adm-duty-head h2 { font-size: 20px; font-weight: 800; letter-spacing: -.3px; color: var(--ink); margin: 0; }
+.adm-duty-head .ix-count { margin-left: auto; }
+.adm-duty-icon {
+  width: 38px; height: 38px; border-radius: 13px; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #3ecf7d, #16a34a); color: #fff; box-shadow: 0 8px 16px rgba(22,163,74,0.3);
+}
+.adm-duty-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.adm-duty-list li { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 14px; background: rgba(255,255,255,0.8); border: 1px solid #f8eee8; }
+.adm-duty-name { font-size: 13.5px; font-weight: 700; color: #3a2e28; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-duty-time { margin-left: auto; font-size: 12px; color: #9a8c84; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.adm-duty-list li.adm-duty-more { justify-content: center; font-size: 12.5px; font-weight: 600; color: #9a8c84; background: transparent; border-style: dashed; }
+.adm-duty-empty { padding: 14px 16px; border-radius: 14px; border: 1.5px dashed #f2cdb9; background: rgba(255,255,255,0.7); }
+.adm-duty-empty strong { font-size: 14.5px; color: #3a2e28; }
+.adm-duty-empty p { margin-top: 4px; font-size: 13px; color: #9a8c84; }
+
+/* ═════════ RESPONSIVE ═════════ */
+@media (max-width: 1100px) {
+  .adm-home { grid-template-columns: 1fr; }
+  .adm-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .ix-content .ix-card.adm-hero { padding: 22px; justify-content: center; text-align: center; }
+  .adm-hero-facts { justify-content: center; }
+  .adm-cal-day { height: 40px; font-size: 16px; margin: 0 1px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .adm-live-dot { animation: none; }
+  .adm-mini, .adm-mini-bar i { transition: none; }
+}
+`;

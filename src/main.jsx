@@ -2,11 +2,11 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import NFCTerminal          from "./App.jsx";
-import Login                from "./pages/login.jsx";
-import InternDashboard      from "./pages/InternDashboard.jsx";
-import SupervisorDashboard  from "./pages/SupervisorDashboard.jsx";
-import AdminDashboard       from "./pages/AdminDashboard.jsx";
+import NFCTerminal             from "./App.jsx";
+import Login                   from "./pages/login.jsx";
+import InternDashboard         from "./pages/InternDashboard.jsx";
+import OjtCoordinatorDashboard from "./pages/OjtCoordinatorDashboard.jsx";
+import AdminDashboard          from "./pages/AdminDashboard.jsx";
 import "./index.css";
 
 function PrivateRoute({ children, roles }) {
@@ -15,7 +15,6 @@ function PrivateRoute({ children, roles }) {
   if (roles && !roles.includes(user.role)) return <Navigate to="/login" replace />;
   return children;
 }
-
 
 const internRoutes = [
   "/intern",
@@ -26,11 +25,19 @@ const internRoutes = [
   "/intern/nfc",
   "/intern/calendar",
   "/intern/profile",
+  "/intern/notifications",
 ];
 
-const supervisorRoutes = [
-  "/supervisor", "/supervisor/pending", "/supervisor/interns",
-  "/supervisor/records", "/supervisor/hours", "/supervisor/nfc",
+const coordinatorRoutes = [
+  "/coordinator",
+  "/coordinator/pending",
+  "/coordinator/submissions",
+  "/coordinator/interns",
+  "/coordinator/records",
+  "/coordinator/hours",
+  "/coordinator/nfc",
+  "/coordinator/dtr",
+  "/coordinator/reports",
 ];
 
 const adminRoutes = [
@@ -42,7 +49,6 @@ const adminRoutes = [
   "/admin/calendar",
   "/admin/dtr",
   "/admin/reports",
-  "/admin/submissions",
 ];
 
 createRoot(document.getElementById("root")).render(
@@ -52,7 +58,7 @@ createRoot(document.getElementById("root")).render(
         <Route path="/"      element={<NFCTerminal />} />
         <Route path="/login" element={<Login />} />
 
-        {internRoutes.map(p => (
+        {internRoutes.map((p) => (
           <Route key={p} path={p} element={
             <PrivateRoute roles={["intern"]}>
               <InternDashboard />
@@ -60,21 +66,24 @@ createRoot(document.getElementById("root")).render(
           } />
         ))}
 
-        {supervisorRoutes.map(p => (
+        {coordinatorRoutes.map((p) => (
           <Route key={p} path={p} element={
-            <PrivateRoute roles={["supervisor"]}>
-              <SupervisorDashboard />
+            <PrivateRoute roles={["ojt_coordinator"]}>
+              <OjtCoordinatorDashboard />
             </PrivateRoute>
           } />
         ))}
 
-        {adminRoutes.map(p => (
+        {adminRoutes.map((p) => (
           <Route key={p} path={p} element={
-            <PrivateRoute roles={["admin","ojt_coordinator"]}>
+            <PrivateRoute roles={["admin"]}>
               <AdminDashboard />
             </PrivateRoute>
           } />
         ))}
+
+        {/* anything else goes back to login */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>
