@@ -1,6 +1,6 @@
 // components/DashKit.jsx
-// Shared shell (navbar + sidebar) and UI pieces for the Admin, Supervisor and Intern dashboards.
-import { useState, useEffect } from "react";
+// Shared shell (navbar + sidebar) and UI pieces for the Admin, Coordinator and Intern dashboards.
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../assets/logo.png";
@@ -8,6 +8,9 @@ import logo from "../assets/logo.png";
 const API = "http://localhost:8000/api";
 export const REQUIRED_HOURS = 486;
 const STORAGE = "http://localhost:8000/storage/";
+
+// Two lines shown next to the logo when the sidebar is open
+const BRAND_LINES = ["CSU CCIS", "MYTRACK"]; // e.g. ["CARAGA STATE", "UNIVERSITY"]
 
 // Turns a stored photo path (e.g. "profiles/abc.jpg") into a full URL
 export const photoUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
@@ -38,6 +41,22 @@ export function calcHours(recs) {
     if (i && o) total += (new Date(o) - new Date(i)) / 3600000;
   });
   return Math.round(total * 10) / 10;
+}
+
+// "5 minutes ago", "2 hours ago", "Yesterday" ...
+function timeAgo(v) {
+  const d = new Date(v);
+  if (!v || isNaN(d)) return "";
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return "Just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} minute${m > 1 ? "s" : ""} ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h > 1 ? "s" : ""} ago`;
+  const days = Math.floor(h / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric" });
 }
 
 /* ───────────────────────── icons ───────────────────────── */
@@ -235,6 +254,20 @@ export function Avatar({ name, photo, status, size = 44 }) {
   );
 }
 
+// Square profile photo for the sidebar
+function SquarePhoto({ name, photo }) {
+  const [bad, setBad] = useState(false);
+  const src = photoUrl(photo);
+  useEffect(() => setBad(false), [photo]);
+  return (
+    <div className="ix-side-photo">
+      {src && !bad
+        ? <img src={src} alt={name || "Profile photo"} onError={() => setBad(true)} />
+        : <span>{name?.charAt(0).toUpperCase() || "?"}</span>}
+    </div>
+  );
+}
+
 // Click-to-choose square photo picker (used when adding a user)
 export function PhotoPicker({ file, onChange }) {
   const [preview, setPreview] = useState(null);
@@ -300,7 +333,7 @@ export function Modal({ title, sub, onClose, children }) {
   );
 }
 
-/* Shared "Monitor Interns" page (same for admin and supervisor) */
+/* Shared "Monitor Interns" page (same for admin and coordinator) */
 export function InternMonitor({ interns, records, loading, onRefresh }) {
   const today = todayManila();
   const [saving, setSaving] = useState(null);
@@ -409,22 +442,59 @@ const ROLE_LABEL = {
   ojt_coordinator: "OJT Coordinator",
 };
 
-// Sample notifications (swap for a real API call when it's ready)
-const NOTIFICATIONS = [
-  { id: 1, title: "NFC Card Request", message: "Your NFC card request has been approved.", time: "5 minutes ago", read: false },
-  { id: 2, title: "Online Attendance", message: "Your online attendance submission was approved.", time: "2 hours ago", read: false },
-  { id: 3, title: "OJT Announcement", message: "A new OJT announcement has been posted.", time: "Yesterday", read: true },
-];
+// The sidebar remembers whether it was left open, so it stays put when you change pages
+const SIDEBAR_KEY = "ix_sidebar_open";
+const isMobile = () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches;
+
+// Real notifications from the backend (GET /notifications?user_id=…).
+// If the server can't be reached the bell simply keeps what it already has.
+function useNotifications(userId) {
+  const [items, setItems] = useState([]);
+
+  const load = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`${API}/notifications?user_id=${userId}`, { headers: { Accept: "application/json" } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)) setItems(data);
+    } catch {
+      /* keep the previous list */
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 30000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const markRead = async (id) => {
+    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));   // instant
+    try {
+      await fetch(`${API}/notifications/${id}/read`, { method: "PATCH", headers: { Accept: "application/json" } });
+    } catch {
+      /* it will sync on the next refresh */
+    }
+  };
+
+  const markAllRead = () => items.filter((n) => !n.is_read).forEach((n) => markRead(n.id));
+
+  return { items, markRead, markAllRead };
+}
 
 export default function Shell({ navItems, user, children }) {
   const navigate = useNavigate();
   const { pathname: path } = useLocation();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(() => {
+    try { return !isMobile() && localStorage.getItem(SIDEBAR_KEY) === "1"; } catch { return false; }
+  });
   const [isFull, setIsFull] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef(null);
 
-  const notifications = NOTIFICATIONS;
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const { items: notifications, markRead, markAllRead } = useNotifications(user?.id);
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   // One login page for everyone (it has the Intern / Employee picker)
   const loginPath = "/login";
@@ -437,20 +507,35 @@ export default function Shell({ navItems, user, children }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
-        setMenuOpen(false);
+        if (isMobile()) setMenuOpen(false);   // on phones the menu is an overlay
         setNotifOpen(false);
       }
     };
+    const onClick = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
+    };
     const onFs = () => setIsFull(!!document.fullscreenElement);
     window.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
     document.addEventListener("fullscreenchange", onFs);
     return () => {
       window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
       document.removeEventListener("fullscreenchange", onFs);
     };
   }, []);
 
-  useEffect(() => setMenuOpen(false), [path]);
+  // Remember the choice (desktop only)
+  useEffect(() => {
+    if (isMobile()) return;
+    try { localStorage.setItem(SIDEBAR_KEY, menuOpen ? "1" : "0"); } catch { /* ignore */ }
+  }, [menuOpen]);
+
+  // On phones the sidebar covers the page, so close it after picking a page
+  useEffect(() => {
+    if (isMobile()) setMenuOpen(false);
+    setNotifOpen(false);
+  }, [path]);
 
   const logout = () => {
     sessionStorage.removeItem("user");
@@ -468,7 +553,7 @@ export default function Shell({ navItems, user, children }) {
         <button className="ix-logo-btn" onClick={() => navigate(navItems[0].path)} aria-label="Home">
           <img src={logo} alt="CSU CCIS" className="ix-nav-logo" />
           <span className={menuOpen ? "ix-brand-name show" : "ix-brand-name"} aria-hidden={!menuOpen}>
-            CARAGA STATE<br />UNIVERSITY
+            {BRAND_LINES[0]}<br />{BRAND_LINES[1]}
           </span>
         </button>
 
@@ -493,37 +578,47 @@ export default function Shell({ navItems, user, children }) {
             </div>
           </div>
 
-          <div className="ix-notification-wrap">
+          <div className="ix-notification-wrap" ref={notifRef}>
             <button
               className="ix-notification-btn"
               onClick={() => setNotifOpen((o) => !o)}
               aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
+              aria-expanded={notifOpen}
             >
               <Icon name="bell" size={19} />
-              {unreadCount > 0 && <span className="ix-notification-count">{unreadCount}</span>}
+              {unreadCount > 0 && <span className="ix-notification-count">{unreadCount > 9 ? "9+" : unreadCount}</span>}
             </button>
 
             {notifOpen && (
               <div className="ix-notification-dropdown">
                 <div className="ix-notification-header">
                   <strong>Notifications</strong>
-                  <span>{unreadCount} unread</span>
+                  {unreadCount > 0
+                    ? <button type="button" className="ix-notification-all" onClick={markAllRead}>Mark all read</button>
+                    : <span>All caught up</span>}
                 </div>
 
-                {notifications.length === 0 ? (
-                  <div className="ix-no-notifications">No notifications yet.</div>
-                ) : (
-                  notifications.map((n) => (
-                    <div key={n.id} className={`ix-notification-item ${n.read ? "read" : ""}`}>
-                      <span className="ix-notification-dot" />
-                      <div>
-                        <strong>{n.title}</strong>
-                        <p>{n.message}</p>
-                        <small>{n.time}</small>
-                      </div>
-                    </div>
-                  ))
-                )}
+                <div className="ix-notification-list">
+                  {notifications.length === 0 ? (
+                    <div className="ix-no-notifications">No notifications yet.</div>
+                  ) : (
+                    notifications.map((n) => (
+                      <button
+                        key={n.id}
+                        type="button"
+                        className={`ix-notification-item ${n.is_read ? "read" : ""}`}
+                        onClick={() => !n.is_read && markRead(n.id)}
+                      >
+                        <span className="ix-notification-dot" />
+                        <span className="ix-notification-content">
+                          <strong>{n.title}</strong>
+                          <span>{n.message}</span>
+                          <small>{timeAgo(n.created_at)}</small>
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -539,6 +634,13 @@ export default function Shell({ navItems, user, children }) {
         <div className={menuOpen ? "ix-strip open" : "ix-strip"} />
         {menuOpen && <div className="ix-backdrop" onClick={() => setMenuOpen(false)} />}
         <aside className={menuOpen ? "ix-side open" : "ix-side"} aria-label="Main navigation">
+          <div className="ix-side-profile">
+            <SquarePhoto name={user?.name} photo={user?.photo} />
+            <div className="ix-side-who">
+              <strong>{user?.name || "User"}</strong>
+              <span>{ROLE_LABEL[user?.role] || "Staff"}</span>
+            </div>
+          </div>
           {navItems.map((it) => (
             <button
               key={it.path}
@@ -575,6 +677,7 @@ const css = `
 
   /* ───── Navbar ───── */
   .ix-nav { height: 75px; flex-shrink: 0; background: #fff; display: flex; align-items: center; gap: 10px; padding: 0 22px 0 15px; position: relative; z-index: 30; box-shadow: 0 4px 14px rgba(15,23,42,0.12); }
+  .ix-nav::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; pointer-events: none; background: linear-gradient(90deg, #f2733a, #ffb48f, #f59e0b, #f2733a); background-size: 200% 100%; animation: ix-slide 6s linear infinite; }
   .ix-logo-btn { background: none; border: none; cursor: pointer; display: flex; align-items: center; text-align: left; margin-right: 14px; }
   .ix-nav-logo { height: 42px; width: auto; flex-shrink: 0; }
   .ix-brand-name { display: block; overflow: hidden; white-space: nowrap; max-width: 0; opacity: 0; margin-left: 0; font-size: 11.5px; font-weight: 800; line-height: 1.2; letter-spacing: .8px; color: #0b1220; transition: max-width .35s cubic-bezier(.2,.8,.2,1), opacity .25s, margin-left .35s; }
@@ -587,27 +690,35 @@ const css = `
   .ix-notification-wrap { position: relative; }
   .ix-notification-btn { position: relative; width: 40px; height: 40px; border: 1.5px solid #e2e8f0; border-radius: 10px; background: #fff; color: #334155; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s; }
   .ix-notification-btn:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
-  .ix-notification-count { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 99px; background: #e8582a; color: #fff; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; }
-  .ix-notification-dropdown { position: absolute; top: calc(100% + 10px); right: 0; width: 340px; background: #fff; border-radius: 16px; box-shadow: 0 16px 40px rgba(15,23,42,0.15); border: 1px solid #e2e8f0; overflow: hidden; z-index: 100; }
+  .ix-notification-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+  .ix-notification-btn:has(.ix-notification-count) svg { animation: ix-ring 3.2s ease-in-out infinite; transform-origin: 50% 10%; }
+  .ix-notification-count { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 99px; background: #e8582a; color: #fff; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; animation: ix-pulse 2s ease-out infinite; }
+  .ix-notification-dropdown { position: absolute; top: calc(100% + 10px); right: 0; width: 340px; background: #fff; border-radius: 16px; box-shadow: 0 16px 40px rgba(15,23,42,0.15); border: 1px solid #e2e8f0; overflow: hidden; z-index: 100; animation: ix-pop .2s ease-out; }
   .ix-notification-header { display: flex; align-items: center; justify-content: space-between; padding: 15px 16px; border-bottom: 1px solid #f1f5f9; }
   .ix-notification-header strong { font-size: 14px; }
   .ix-notification-header span { font-size: 11px; color: #94a3b8; }
-  .ix-notification-item { display: flex; gap: 10px; padding: 13px 16px; border-bottom: 1px solid #f1f5f9; background: #fffaf7; }
-  .ix-notification-item.read { background: #fff; }
+  .ix-notification-all { background: none; border: none; padding: 0; cursor: pointer; font-size: 11.5px; font-weight: 700; color: #e8582a; }
+  .ix-notification-all:hover { text-decoration: underline; }
+  .ix-notification-list { max-height: 380px; overflow-y: auto; }
+  .ix-notification-item { width: 100%; display: flex; align-items: flex-start; gap: 10px; padding: 13px 16px; border: none; border-bottom: 1px solid #f1f5f9; background: #fffaf7; text-align: left; cursor: pointer; font: inherit; transition: background .15s; }
+  .ix-notification-item:hover { background: #fff5ef; }
+  .ix-notification-item.read { background: #fff; cursor: default; }
   .ix-notification-dot { width: 7px; height: 7px; border-radius: 50%; background: #e8582a; margin-top: 6px; flex-shrink: 0; }
   .ix-notification-item.read .ix-notification-dot { background: #cbd5e1; }
-  .ix-notification-item strong { display: block; font-size: 12.5px; color: #1e293b; }
-  .ix-notification-item p { margin: 3px 0; font-size: 11.5px; line-height: 1.4; color: #64748b; }
-  .ix-notification-item small { font-size: 10px; color: #94a3b8; }
+  .ix-notification-content { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+  .ix-notification-content strong { display: block; font-size: 12.5px; color: #1e293b; }
+  .ix-notification-content > span { display: block; font-size: 11.5px; line-height: 1.4; color: #64748b; }
+  .ix-notification-content small { font-size: 10px; color: #94a3b8; }
   .ix-no-notifications { padding: 30px 16px; text-align: center; font-size: 12px; color: #94a3b8; }
 
   .ix-user { display: flex; align-items: center; gap: 10px; }
+  .ix-user .ix-av { box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(232,88,42,0.45); }
   .ix-avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 6px 14px rgba(232,88,42,0.35); }
   .ix-user-text { display: flex; flex-direction: column; line-height: 1.25; }
   .ix-user-text strong { font-size: 13px; font-weight: 700; }
   .ix-user-text span { font-size: 11px; color: #94a3b8; }
   .ix-logout { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 10px; cursor: pointer; background: #fff; border: 1.5px solid #e2e8f0; color: #334155; font-size: 13px; font-weight: 600; transition: all .15s; }
-  .ix-logout:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
+  .ix-logout:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; transform: translateY(-1px); box-shadow: 0 8px 16px rgba(232,88,42,0.2); }
   .ix-icon-btn:focus-visible, .ix-logout:focus-visible, .ix-logo-btn:focus-visible, .ix-side-item:focus-visible, .ix-b:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
 
   /* ───── Sidebar (white, pushes the page) ───── */
@@ -615,17 +726,30 @@ const css = `
   .ix-strip { width: 65px; flex-shrink: 0; transition: width .3s cubic-bezier(.2,.8,.2,1); }
   .ix-strip.open { width: 236px; }
   .ix-backdrop { display: none; position: absolute; inset: 0; background: rgba(15,23,42,0.35); z-index: 18; animation: ix-fade .2s; }
-  .ix-side { position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: #fff; box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px; transition: width .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-side { position: absolute; top: 0; bottom: 0; left: 0; width: 65px; z-index: 20; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: linear-gradient(180deg, #ffffff 0%, #fff6f1 100%); box-shadow: 4px 0 18px rgba(15,23,42,0.10); display: flex; flex-direction: column; padding-top: 14px; transition: width .3s cubic-bezier(.2,.8,.2,1); }
   .ix-side::-webkit-scrollbar { display: none; }
   .ix-side.open { width: 236px; }
-  .ix-side-item { position: relative; display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px; padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #334155; border-radius: 12px; white-space: nowrap; text-align: left; transition: background .15s, color .15s; }
-  .ix-side-item:hover { background: #fdeee7; color: #e8582a; }
-  .ix-side-item.active { background: #fdeee7; color: #e8582a; }
-  .ix-side-item.active::before { content: ""; position: absolute; left: -10px; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: #e8582a; }
+
+  /* profile photo at the top of the sidebar */
+  .ix-side-profile { margin: 0 10px 10px; padding-bottom: 12px; border-bottom: 1px solid #f1e2d9; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+  .ix-side-photo { width: 45px; height: 45px; border-radius: 12px; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 18px rgba(232,88,42,0.28); transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1), border-radius .3s, font-size .3s; }
+  .ix-side.open .ix-side-photo { width: 120px; height: 120px; border-radius: 22px; font-size: 46px; }
+  .ix-side-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ix-side-who { text-align: center; max-height: 0; max-width: 200px; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-height .3s, opacity .2s, margin .3s; }
+  .ix-side-who strong { display: block; font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
+  .ix-side-who span { font-size: 11.5px; color: #94a3b8; }
+  .ix-side.open .ix-side-who { max-height: 56px; opacity: 1; margin-top: 12px; transition-delay: .1s; }
+
+  .ix-side-item { position: relative; display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px; padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #334155; border-radius: 12px; white-space: nowrap; text-align: left; transition: background .2s, color .2s, transform .2s, box-shadow .2s; }
+  .ix-side-item:hover { background: #fff0e8; color: #e8582a; transform: translateX(4px); }
+  .ix-side-item:hover .ix-side-icon { animation: ix-wiggle .6s; }
+  .ix-side-item.active { color: #fff; background: linear-gradient(135deg, #f2733a, #e04a1a); box-shadow: 0 10px 22px rgba(232,88,42,0.38); }
+  .ix-side-item.active:hover { transform: translateX(2px); }
+  .ix-side-item.active::before { content: ""; position: absolute; left: -10px; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: #ffb48f; }
   .ix-side-icon { display: flex; flex-shrink: 0; }
   .ix-side-label { font-size: 14px; font-weight: 600; opacity: 0; transform: translateX(-6px); transition: opacity .2s, transform .25s; }
   .ix-side.open .ix-side-label { opacity: 1; transform: none; transition-delay: .1s; }
-  .ix-side-foot { margin-top: auto; padding: 18px 22px; font-size: 11px; letter-spacing: .5px; color: #94a3b8; white-space: nowrap; opacity: 0; transition: opacity .2s; }
+  .ix-side-foot { margin-top: auto; padding: 18px 22px; font-size: 11px; font-weight: 700; letter-spacing: .5px; color: #e8582a; white-space: nowrap; opacity: 0; transition: opacity .2s; }
   .ix-side.open .ix-side-foot { opacity: 1; transition-delay: .15s; }
 
   /* ───── Main ───── */
@@ -844,7 +968,7 @@ const css = `
   .ix-allgood { padding: 48px 20px; text-align: center; }
   .ix-allgood .ix-empty-icon { width: 64px; height: 64px; background: #e6f7ee; color: #16a34a; }
 
-  /* ───── Hours cards (supervisor) ───── */
+  /* ───── Hours cards ───── */
   .ix-hours-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   .ix-hc { background: #fff; border-radius: 20px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); }
   .ix-hc-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
@@ -873,9 +997,13 @@ const css = `
   @keyframes ix-pop { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
   @keyframes ix-spin { to { transform: rotate(360deg); } }
   @keyframes ix-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes ix-slide { from { background-position: 0% 0; } to { background-position: 200% 0; } }
+  @keyframes ix-wiggle { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-14deg) scale(1.1); } 75% { transform: rotate(12deg) scale(1.1); } }
+  @keyframes ix-ring { 0%, 86%, 100% { transform: rotate(0); } 88% { transform: rotate(16deg); } 91% { transform: rotate(-14deg); } 94% { transform: rotate(10deg); } 97% { transform: rotate(-6deg); } }
+  @keyframes ix-pulse { 0% { box-shadow: 0 0 0 0 rgba(232,88,42,0.5); } 100% { box-shadow: 0 0 0 9px rgba(232,88,42,0); } }
   @media (prefers-reduced-motion: reduce) {
-    .ix-content, .ix-live i, .ix-spin, .ix-modal { animation: none !important; }
-    .ix-side, .ix-strip, .ix-side-label, .ix-brand-name { transition: none !important; }
+    .ix-content, .ix-live i, .ix-spin, .ix-modal, .ix-nav::after, .ix-notification-count, .ix-notification-btn svg, .ix-notification-dropdown { animation: none !important; }
+    .ix-side, .ix-strip, .ix-side-label, .ix-brand-name, .ix-side-photo, .ix-side-who { transition: none !important; }
   }
 
   /* ───── Responsive ───── */
@@ -890,6 +1018,7 @@ const css = `
   @media (max-width: 600px) {
     .ix-user-text, .ix-logout span { display: none; }
     .ix-logout { padding: 9px; }
+    .ix-notification-dropdown { position: fixed; top: 80px; left: 12px; right: 12px; width: auto; }
     .ix-hero { padding: 22px; }
     .ix-hero h1 { font-size: 22px; }
     .ix-brand-name { font-size: 9.5px; letter-spacing: .4px; }

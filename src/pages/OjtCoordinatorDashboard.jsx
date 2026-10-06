@@ -11,6 +11,7 @@ import NfcCards from "../components/NfcCards.jsx";
 import {
   MiniStat, HomeCalendar, Records, Hours, Submissions, DTR, Reports, adminCss,
 } from "./AdminDashboard.jsx";
+import { formalLayout } from "../components/formalLayout.js";
 
 const API = "http://localhost:8000/api";
 const NAV = [
@@ -66,6 +67,7 @@ export default function OjtCoordinatorDashboard() {
     <Shell navItems={NAV} user={user}>
       <style>{adminCss}</style>
       <style>{coordCss}</style>
+      <style>{formalLayout}</style>
       {path === "/coordinator" && (
         <Home
           user={user} pending={pending} pendingMovs={pendingMovs} records={records}
@@ -278,6 +280,8 @@ function Pending({ pending, user, onRefresh }) {
     </>
   );
 }
+
+
 
 /* ───────────────────────── coordinator-only styles ───────────────────────── */
 const coordCss = `

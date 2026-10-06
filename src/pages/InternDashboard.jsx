@@ -1,10 +1,13 @@
 // InternDashboard.jsx
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+
 import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Icon, Ring, Avatar,
   calcHours, fmtTime, photoUrl, REQUIRED_HOURS,
 } from "../components/DashKit.jsx";
+
+import { formalLayout } from "../components/formalLayout.js";
 
 const API = "http://localhost:8000/api";
 
@@ -15,8 +18,6 @@ const NAV = [
   { path: "/intern/online",  label: "Submit Online", icon: "upload" },
   { path: "/intern/movs",    label: "Submit MOV",    icon: "folder" },
   { path: "/intern/nfc",     label: "NFC Card",      icon: "card" },
-  { path: "/intern/profile", label: "My Profile",    icon: "user" },
-  { path: "/intern/notifications", label: "Notifications", icon: "bell" },
 ];
 
 export default function InternDashboard() {
@@ -56,6 +57,7 @@ export default function InternDashboard() {
   return (
     <Shell navItems={NAV} user={user}>
       <style>{internCss}</style>
+      <style>{formalLayout}</style>
       {path === "/intern" && (
         <Home
           user={user} firstName={firstName} uniqueDays={uniqueDays} totalHours={totalHours}
@@ -954,7 +956,7 @@ const internCss = `
   background:
     radial-gradient(560px 380px at 94% -4%, rgba(242,115,58,0.22), transparent 70%),
     radial-gradient(520px 400px at -4% 104%, rgba(255,181,140,0.38), transparent 70%),
-    #fdeee6;
+    #fff6f6;
 }
 .ix-content { font-family: 'Figtree', 'Segoe UI', sans-serif; }
 .ix-content h1, .ix-content h2 { font-family: var(--display); }
@@ -996,10 +998,10 @@ const internCss = `
 .ix-content:has(.intern-home) { max-width: none; }
 
 .intern-home {
-  --card-radius: 22px;
+  --card-radius: 0px;
   --card-border: 1px solid rgba(255,255,255,0.85);
   --card-shadow: 0 14px 34px rgba(150,52,20,0.09), 0 1px 2px rgba(27,20,16,0.04);
-  --home-gap: 14px;
+  --home-gap: 5px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(380px, 29vw, 496px);
   gap: var(--home-gap);

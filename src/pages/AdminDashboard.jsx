@@ -5,6 +5,7 @@ import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker,
   InternMonitor, todayManila, fmtTime, calcHours, greeting, esc, REQUIRED_HOURS,
 } from "../components/DashKit.jsx";
+import { formalLayout } from "../components/formalLayout.js";
 
 const API = "http://localhost:8000/api";
 const NAV = [
@@ -52,6 +53,7 @@ export default function AdminDashboard() {
   return (
     <Shell navItems={NAV} user={user}>
       <style>{adminCss}</style>
+      <style>{formalLayout}</style>
       {path === "/admin" && <Home user={user} records={records} interns={interns} coordinators={coordinators} loading={loading} />}
       {path === "/admin/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} />}
       {path === "/admin/records" && <Records records={records} loading={loading} />}
@@ -465,8 +467,9 @@ function Accounts({ users, onRefresh }) {
           setScanning(false);
         }
       } else if (e.key.length === 1) {
-        uidBuffer.current += e.key;
-      }
+  e.preventDefault();               // keeps the digits out of whatever field has focus
+  uidBuffer.current += e.key;
+}
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -489,7 +492,9 @@ function Accounts({ users, onRefresh }) {
   };
 
   const handleAdd = async (e) => {
-    e.preventDefault(); setAdding(true); setMsg(null);
+    e.preventDefault();
+if (scanning) return;
+setAdding(true); setMsg(null);
     try {
       // multipart form, so the profile photo can travel with the other fields
       const fd = new FormData();
@@ -592,7 +597,11 @@ function Accounts({ users, onRefresh }) {
       {showForm && (
         <Modal title="Add New User" sub="Fill in the details below." onClose={closeModal}>
           <Msg msg={msg} />
-          <form onSubmit={handleAdd} className="ix-form">
+          <form
+  onSubmit={handleAdd}
+  onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
+  className="ix-form"
+>
             <PhotoPicker file={form.photo} onChange={(f) => setForm((st) => ({ ...st, photo: f }))} />
             <div className="ix-field">
               <label htmlFor="acc-name">Full name</label>
