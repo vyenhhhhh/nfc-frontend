@@ -12,11 +12,11 @@ const NAV = [
   { path: "/admin",          label: "Home",                icon: "home" },
   { path: "/admin/interns",  label: "Monitor Interns",     icon: "users" },
   { path: "/admin/records",  label: "Attendance Records",  icon: "list" },
-  { path: "/admin/hours",    label: "Hours Summary",       icon: "clock" },
   { path: "/admin/accounts", label: "Manage Accounts",     icon: "settings" },
   { path: "/admin/dtr",      label: "Generate DTR",        icon: "file" },
   { path: "/admin/reports",  label: "Consolidated Report", icon: "chart" },
   { path: "/admin/calendar", label: "Calendar",            icon: "calendar" },
+  { path: "/admin/profile", label: "My Profile", icon: "user" },
 ];
 
 export default function AdminDashboard() {
@@ -57,7 +57,6 @@ export default function AdminDashboard() {
       {path === "/admin" && <Home user={user} records={records} interns={interns} coordinators={coordinators} loading={loading} />}
       {path === "/admin/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} />}
       {path === "/admin/records" && <Records records={records} loading={loading} />}
-      {path === "/admin/hours" && <Hours records={records} interns={interns} loading={loading} />}
       {path === "/admin/accounts" && <Accounts users={users} onRefresh={fetchAll} />}
       {path === "/admin/calendar" && <Calendar />}
       {path === "/admin/dtr" && <DTR interns={interns} records={records} />}
@@ -104,7 +103,7 @@ function Home({ user, records, interns, coordinators, loading }) {
           <span className="adm-hero-glow" aria-hidden="true" />
           <div className="adm-hero-text">
             <span className="adm-hero-tag">Admin overview · {dateLabel}</span>
-            <h1>{greeting()}, {first} 👋</h1>
+            <h1>{greeting()}, {first} </h1>
             <p>Here's what's happening across the OJT program today.</p>
             <div className="adm-hero-facts">
               <div><strong>{checkedIn}</strong><span>checked in now</span></div>
@@ -315,53 +314,6 @@ export function Records({ records, loading }) {
   );
 }
 
-/* ───────────────────────── Hours ───────────────────────── */
-export function Hours({ records, interns, loading }) {
-  const hoursBased = interns.filter((u) => (u.tracking_type || "hours") === "hours");
-  const outputBased = interns.filter((u) => u.tracking_type === "output");
-
-  const data = hoursBased.map((u) => {
-    const recs = records.filter((r) => r.user_id === u.id);
-    const days = [...new Set(recs.map((r) => r.date))].length;
-    const total = calcHours(recs);
-    return { ...u, days, total, pct: Math.min(Math.round((total / REQUIRED_HOURS) * 100), 100) };
-  });
-
-  return (
-    <>
-      <PageHeader title="Hours Summary" sub="Total OJT hours per intern (hours-based only)." />
-      <div className="ix-card flush">
-        {loading ? <Spinner /> : (
-          <Table
-            headers={["Intern", "Email", "Days Present", "Total Hours", "Progress", "Status"]}
-            rows={data.map((d) => [
-              <strong>{d.name}</strong>,
-              d.email,
-              d.days + " days",
-              <strong>{d.total}h</strong>,
-              <div className="ix-prog"><Bar pct={d.pct} /><span>{d.pct}%</span></div>,
-              <Badge
-                label={d.pct >= 100 ? "Complete" : d.pct >= 50 ? "Halfway" : "In Progress"}
-                type={d.pct >= 100 ? "approved" : d.pct >= 50 ? "pending" : "rejected"}
-              />,
-            ])}
-            empty="No hours-based interns yet."
-          />
-        )}
-      </div>
-      {!loading && outputBased.length > 0 && (
-        <div className="ix-note">
-          <Icon name="info" size={18} />
-          <span>
-            <strong>Output-based interns</strong> are not tracked by hours: {outputBased.map((u) => u.name).join(", ")}.
-            See MOV Submissions for their progress.
-          </span>
-        </div>
-      )}
-    </>
-  );
-}
-
 /* ───────────────────────── MOV Submissions ───────────────────────── */
 export function Submissions({ movs, user, onRefresh }) {
   const [processing, setProcessing] = useState(null);
@@ -439,7 +391,10 @@ export function Submissions({ movs, user, onRefresh }) {
 
 /* ───────────────────────── Manage Accounts ───────────────────────── */
 const BLANK_FORM = {
-  name: "", email: "", password: "password123", role: "intern",
+  first_name: "", middle_name: "", last_name: "",
+  email: "", password: "password123", role: "intern",
+  student_id: "", contact_number: "", address: "",
+  placement: "", semester: "1st Semester", program: "BSIT - 4",
   uid: "", work_mode: "onsite", tracking_type: "hours", photo: null,
 };
 const ROLE_NAME = { intern: "Intern", supervisor: "Supervisor", admin: "Admin", ojt_coordinator: "OJT Coordinator" };
@@ -467,9 +422,9 @@ function Accounts({ users, onRefresh }) {
           setScanning(false);
         }
       } else if (e.key.length === 1) {
-  e.preventDefault();               // keeps the digits out of whatever field has focus
-  uidBuffer.current += e.key;
-}
+        e.preventDefault(); // keeps the digits out of whatever field has focus
+        uidBuffer.current += e.key;
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -493,8 +448,8 @@ function Accounts({ users, onRefresh }) {
 
   const handleAdd = async (e) => {
     e.preventDefault();
-if (scanning) return;
-setAdding(true); setMsg(null);
+    if (scanning) return;
+    setAdding(true); setMsg(null);
     try {
       // multipart form, so the profile photo can travel with the other fields
       const fd = new FormData();
@@ -566,17 +521,13 @@ setAdding(true); setMsg(null);
 
       <div className="ix-card flush">
         <Table
-          headers={["User", "Email", "Role", "Setup", "Action"]}
+          headers={["User", "Email", "Action"]}
           rows={users.map((u) => [
             <div className="ix-actions">
               <Avatar name={u.name} photo={u.photo} size={36} />
               <strong>{u.name}</strong>
             </div>,
             u.email,
-            <Badge label={ROLE_NAME[u.role] || u.role} type={`r-${u.role}`} />,
-            u.role === "intern"
-              ? <span className="ix-muted">{u.work_mode === "offsite" ? "WFH" : "Onsite"} · {u.tracking_type === "output" ? "Output" : "Hours"}</span>
-              : <span className="ix-muted">—</span>,
             <div className="ix-actions">
               <label className="ix-b ghost sm" style={{ opacity: uploading === u.id ? 0.6 : 1 }}>
                 <input
@@ -598,21 +549,54 @@ setAdding(true); setMsg(null);
         <Modal title="Add New User" sub="Fill in the details below." onClose={closeModal}>
           <Msg msg={msg} />
           <form
-  onSubmit={handleAdd}
-  onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
-  className="ix-form"
->
+            onSubmit={handleAdd}
+            onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
+            className="ix-form"
+          >
             <PhotoPicker file={form.photo} onChange={(f) => setForm((st) => ({ ...st, photo: f }))} />
-            <div className="ix-field">
-              <label htmlFor="acc-name">Full name</label>
-              <input id="acc-name" type="text" required placeholder="e.g. Juan Dela Cruz" value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+
+            <div className="ix-row-gap">
+              <div className="ix-field">
+                <label htmlFor="acc-fn">First name</label>
+                <input id="acc-fn" type="text" required value={form.first_name}
+                  onChange={(e) => setForm((f) => ({ ...f, first_name: e.target.value }))} />
+              </div>
+              <div className="ix-field">
+                <label htmlFor="acc-mn">Middle name</label>
+                <input id="acc-mn" type="text" value={form.middle_name}
+                  onChange={(e) => setForm((f) => ({ ...f, middle_name: e.target.value }))} />
+              </div>
             </div>
+            <div className="ix-field">
+              <label htmlFor="acc-ln">Last name</label>
+              <input id="acc-ln" type="text" required value={form.last_name}
+                onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))} />
+            </div>
+
             <div className="ix-field">
               <label htmlFor="acc-email">Email</label>
               <input id="acc-email" type="email" required placeholder="e.g. juan@csu.edu.ph" value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
             </div>
+
+            {form.role === "intern" && (
+              <div className="ix-field">
+                <label htmlFor="acc-sid">Student ID</label>
+                <input id="acc-sid" type="text" required placeholder="e.g. 2021-00123" value={form.student_id}
+                  onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))} />
+              </div>
+            )}
+            <div className="ix-field">
+              <label htmlFor="acc-contact">Contact number</label>
+              <input id="acc-contact" type="tel" placeholder="e.g. 09123456789" value={form.contact_number}
+                onChange={(e) => setForm((f) => ({ ...f, contact_number: e.target.value }))} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="acc-addr">Address</label>
+              <input id="acc-addr" type="text" placeholder="Street, Barangay, City" value={form.address}
+                onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
+            </div>
+
             <div className="ix-field">
               <label htmlFor="acc-pass">Password</label>
               <input id="acc-pass" type="password" required value={form.password}
@@ -629,6 +613,35 @@ setAdding(true); setMsg(null);
 
             {form.role === "intern" && (
               <>
+                <div className="ix-row-gap">
+                  <div className="ix-field">
+                    <label htmlFor="acc-prog">Program</label>
+                    <select id="acc-prog" value={form.program} onChange={(e) => setForm((f) => ({ ...f, program: e.target.value }))}>
+                      <option value="BSIT - 4">BSIT - 4</option>
+                      <option value="BSCS - 4">BSCS - 4</option>
+                      <option value="BSIS - 4">BSIS - 4</option>
+                    </select>
+                  </div>
+                  <div className="ix-field">
+                    <label htmlFor="acc-sem">Semester</label>
+                    <select id="acc-sem" value={form.semester} onChange={(e) => setForm((f) => ({ ...f, semester: e.target.value }))}>
+                      <option value="1st Semester">1st Semester</option>
+                      <option value="2nd Semester">2nd Semester</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="ix-field">
+                  <label htmlFor="acc-college">College</label>
+                  <input id="acc-college" type="text" value="CCIS" readOnly disabled />
+                </div>
+
+                <div className="ix-field">
+                  <label htmlFor="acc-place">Placement</label>
+                  <input id="acc-place" type="text" required placeholder="e.g. Provincial IT Office, Butuan City" value={form.placement}
+                    onChange={(e) => setForm((f) => ({ ...f, placement: e.target.value }))} />
+                </div>
+
                 <div className="ix-row-gap">
                   <div className="ix-field">
                     <label htmlFor="acc-wm">Work mode</label>
@@ -1106,13 +1119,10 @@ export const adminCss = `
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
 
 /* ═════════ SHARED LOOK (all admin pages) ═════════ */
-.ix-main {
-  --o: #e8582a; --o2: #f2733a; --ink: #1b1410; --mut: #7a6c64; --line: #f3e3da;
-  --display: 'Bricolage Grotesque', 'Figtree', 'Segoe UI', sans-serif;
-  background:
-    radial-gradient(560px 380px at 94% -4%, rgba(242,115,58,0.22), transparent 70%),
-    radial-gradient(520px 400px at -4% 104%, rgba(255,181,140,0.38), transparent 70%),
-    #fdeee6;
+.ix-main { background:
+  radial-gradient(560px 380px at 94% -4%, rgba(242,115,58,0.22), transparent 0%),
+  radial-gradient(520px 400px at -4% 104%, rgba(255,181,140,0.38), transparent 0%),
+  #f9f9f9;
 }
 .ix-content { font-family: 'Figtree', 'Segoe UI', sans-serif; }
 .ix-content h1, .ix-content h2 { font-family: var(--display); }

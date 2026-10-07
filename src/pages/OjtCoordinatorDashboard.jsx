@@ -9,7 +9,7 @@ import Shell, {
 } from "../components/DashKit.jsx";
 import NfcCards from "../components/NfcCards.jsx";
 import {
-  MiniStat, HomeCalendar, Records, Hours, Submissions, DTR, Reports, adminCss,
+  MiniStat, HomeCalendar, Records, Submissions, DTR, Reports, adminCss,
 } from "./AdminDashboard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 
@@ -20,10 +20,10 @@ const NAV = [
   { path: "/coordinator/submissions", label: "MOV Submissions",     icon: "folder" },
   { path: "/coordinator/interns",     label: "Monitor Interns",     icon: "users" },
   { path: "/coordinator/records",     label: "Attendance Records",  icon: "list" },
-  { path: "/coordinator/hours",       label: "Hours Summary",       icon: "clock" },
   { path: "/coordinator/nfc",         label: "NFC Cards",           icon: "card" },
   { path: "/coordinator/dtr",         label: "Generate DTR",        icon: "file" },
   { path: "/coordinator/reports",     label: "Consolidated Report", icon: "chart" },
+  { path: "/coordinator/profile",     label: "My Profile", icon: "user" },
 ];
 
 export default function OjtCoordinatorDashboard() {
@@ -78,7 +78,6 @@ export default function OjtCoordinatorDashboard() {
       {path === "/coordinator/submissions" && <Submissions movs={movs} user={user} onRefresh={fetchAll} />}
       {path === "/coordinator/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} />}
       {path === "/coordinator/records" && <Records records={records} loading={loading} />}
-      {path === "/coordinator/hours" && <Hours records={records} interns={interns} loading={loading} />}
       {path === "/coordinator/nfc" && <NfcCards user={user} interns={interns} onRefresh={fetchAll} />}
       {path === "/coordinator/dtr" && <DTR interns={interns} records={records} />}
       {path === "/coordinator/reports" && <Reports interns={interns} records={records} />}
@@ -107,7 +106,7 @@ function Home({ user, pending, pendingMovs, records, interns, loading, go }) {
           <span className="adm-hero-glow" aria-hidden="true" />
           <div className="adm-hero-text">
             <span className="adm-hero-tag">OJT coordinator · {dateLabel}</span>
-            <h1>{greeting()}, {first} 👋</h1>
+            <h1>{greeting()}, {first} </h1>
             <p>
               {toReview > 0
                 ? `You have ${toReview} item${toReview > 1 ? "s" : ""} waiting for your review.`
@@ -280,8 +279,6 @@ function Pending({ pending, user, onRefresh }) {
     </>
   );
 }
-
-
 
 /* ───────────────────────── coordinator-only styles ───────────────────────── */
 const coordCss = `

@@ -333,11 +333,262 @@ export function Modal({ title, sub, onClose, children }) {
   );
 }
 
+/* Inline profile panel (shown on the Monitor Interns page, not a modal) */
+function InternProfile({ u, records, today, onClose, onRefresh }) {
+  const recs = records.filter((r) => r.user_id === u.id);
+  const isIn = recs.some((r) => r.date === today && r.action === "CHECK_IN" && !r.checked_out_at);
+  const days = [...new Set(recs.map((r) => r.date))].length;
+  const total = calcHours(recs);
+  const outputBased = u.tracking_type === "output";
+  const pct = Math.min(Math.round((total / REQUIRED_HOURS) * 100), 100);
+  const left = Math.max(Math.round((REQUIRED_HOURS - total) * 10) / 10, 0);
+  const onsite = recs.filter((r) => r.uid !== "ONLINE").length;
+  const online = recs.filter((r) => r.uid === "ONLINE").length;
+  const recent = [...recs]
+    .sort(
+      (a, b) =>
+        String(b.date).localeCompare(String(a.date)) ||
+        String(b.checked_in_at || "").localeCompare(String(a.checked_in_at || ""))
+    )
+    .slice(0, 5);
+
+  const parts = (u.name || "").trim().split(/\s+/);
+  const studentId = u.student_id || u.student_number || "—";
+
+  // the values the form starts from (the page re-polls every few seconds, so edits live in their own state)
+  const baseFields = () => ({
+    first_name: u.first_name || parts[0] || "",
+    middle_name: u.middle_name || "",
+    last_name: u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
+    contact_number: u.contact_number || "",
+    address: u.address || "",
+    program: u.program || "",
+    semester: u.semester || "",
+    placement: u.placement || "",
+    work_mode: u.work_mode || "onsite",
+    tracking_type: u.tracking_type || "hours",
+    uid: u.nfc_uid || "",
+  });
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(baseFields);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const startEdit = () => { setDraft(baseFields()); setMsg(null); setEditing(true); };
+  const cancelEdit = () => { setEditing(false); setMsg(null); };
+  const setField = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+
+  const save = async () => {
+    const clean = Object.fromEntries(Object.entries(draft).map(([k, v]) => [k, String(v).trim()]));
+    if (!clean.first_name || !clean.last_name) {
+      setMsg({ type: "error", text: "First name and last name are required." });
+      return;
+    }
+    setSaving(true); setMsg(null);
+    try {
+      const res = await fetch(`${API}/admin/users/${u.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(clean),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const firstError = data?.errors ? Object.values(data.errors)[0]?.[0] : null;
+        throw new Error(
+          firstError || data?.message ||
+          (res.status === 404 || res.status === 405
+            ? "Saving profile details isn't set up on the server yet."
+            : "Could not save the changes.")
+        );
+      }
+
+      setEditing(false);
+      setMsg({ type: "success", text: "Profile updated." });
+      onRefresh && onRefresh();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // key = editable draft field, options = renders a dropdown, no key = read-only
+  const fields = [
+    { key: "first_name", label: "First name", view: u.first_name || parts[0] || "—" },
+    { key: "middle_name", label: "Middle name", view: u.middle_name || "—" },
+    { key: "last_name", label: "Last name", view: u.last_name || (parts.length > 1 ? parts[parts.length - 1] : "—") },
+    { label: "Email", view: u.email || "—" },
+    { key: "contact_number", label: "Contact", type: "tel", view: u.contact_number || "—" },
+    { key: "address", label: "Address", view: u.address || "—" },
+    { label: "College", view: u.college || "CCIS" },
+    {
+      key: "program", label: "Program", view: u.program || "—",
+      options: [["", "Select program"], ["BSIT - 4", "BSIT - 4"], ["BSCS - 4", "BSCS - 4"], ["BSIS - 4", "BSIS - 4"]],
+    },
+    {
+      key: "semester", label: "Semester", view: u.semester || "—",
+      options: [["", "Select semester"], ["1st Semester", "1st Semester"], ["2nd Semester", "2nd Semester"]],
+    },
+    { key: "placement", label: "Placement", view: u.placement || "—" },
+    {
+      key: "work_mode", label: "Work mode", view: u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite",
+      options: [["onsite", "Onsite"], ["offsite", "Offsite (WFH)"]],
+    },
+    {
+      key: "tracking_type", label: "Tracking", view: outputBased ? "Output-based" : "Hours-based",
+      options: [["hours", "Hours-based"], ["output", "Output-based"]],
+    },
+    { key: "uid", label: "NFC UID", view: u.nfc_uid || "Not linked" },
+    {
+      label: "OJT Status",
+      view: outputBased ? "Output-based" : pct >= 100 ? "Complete" : pct >= 50 ? "Halfway" : "In Progress",
+    },
+  ];
+
+  return (
+    <section className="imp-panel" aria-label={`Profile of ${u.name}`}>
+      <div className="imp-tools">
+        {!editing && (
+          <button type="button" className="ix-b ghost sm" onClick={startEdit}>
+            <Icon name="settings" size={14} /> Edit
+          </button>
+        )}
+        <button className="imp-close" onClick={onClose} aria-label="Close profile">
+          <Icon name="x" size={16} />
+        </button>
+      </div>
+
+      <div className="imp-top">
+        <div className="imp-who">
+          <Avatar name={u.name} photo={u.photo} size={96} status={isIn ? "on" : "off"} />
+          <h2>{u.name}</h2>
+          <span className="imp-sid">Student ID: <strong>{studentId}</strong></span>
+          <Badge label={isIn ? "Present Now" : "Not In"} type={isIn ? "in" : "out"} />
+        </div>
+
+        <dl className="imp-info">
+          {fields.map((f) => (
+            <div key={f.label}>
+              <dt>{f.label}</dt>
+              <dd title={editing && f.key ? undefined : String(f.view)}>
+                {editing && f.key ? (
+                  f.options ? (
+                    <select className="imp-edit" value={draft[f.key]} onChange={setField(f.key)} aria-label={f.label}>
+                      {f.options.map(([val, text]) => <option key={val} value={val}>{text}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      className="imp-edit" type={f.type || "text"} value={draft[f.key]}
+                      onChange={setField(f.key)} aria-label={f.label}
+                    />
+                  )
+                ) : f.view}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      {editing && (
+        <div className="imp-edit-bar">
+          <button type="button" className="ix-b ghost" onClick={cancelEdit} disabled={saving}>Cancel</button>
+          <button type="button" className="ix-b primary" onClick={save} disabled={saving}>
+            {saving ? "Saving..." : "Save changes"}
+          </button>
+        </div>
+      )}
+      {msg && <div style={{ marginTop: 14 }}><Msg msg={msg} /></div>}
+
+      <div className="imp-stats">
+        <div><strong>{days}</strong><span>Days present</span></div>
+        <div><strong>{onsite}</strong><span>Onsite taps</span></div>
+        <div><strong>{online}</strong><span>Online logs</span></div>
+        <div><strong>{outputBased ? "—" : total + "h"}</strong><span>Hours rendered</span></div>
+      </div>
+
+      {outputBased ? (
+        <div className="ix-note" style={{ marginTop: 14 }}>
+          <Icon name="info" size={18} />
+          <span>This intern is <strong>output-based</strong>, so progress is measured by submitted MOVs, not hours.</span>
+        </div>
+      ) : (
+        <div className="imp-progress">
+          <div className="imp-progress-row">
+            <span>OJT progress</span>
+            <strong>{total}h of {REQUIRED_HOURS}h · {left}h left</strong>
+          </div>
+          <div className="ix-prog"><Bar pct={pct} /><span>{pct}%</span></div>
+        </div>
+      )}
+
+      <div className="imp-recent">
+        <h3>Recent attendance</h3>
+        <Table
+          headers={["Date", "Type", "Action", "Time In", "Time Out"]}
+          rows={recent.map((r) => [
+            r.date,
+            <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
+            <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
+            fmtTime(r.checked_in_at),
+            fmtTime(r.checked_out_at),
+          ])}
+          empty="No attendance records yet."
+        />
+      </div>
+    </section>
+  );
+}
+
 /* Shared "Monitor Interns" page (same for admin and coordinator) */
 export function InternMonitor({ interns, records, loading, onRefresh }) {
   const today = todayManila();
   const [saving, setSaving] = useState(null);
   const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+  const [open, setOpen] = useState(false);       // suggestions dropdown
+  const [active, setActive] = useState(0);       // highlighted suggestion
+  const wrapRef = useRef(null);
+  const panelRef = useRef(null);
+
+  // close the suggestions when clicking elsewhere
+  useEffect(() => {
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  const q = search.trim().toLowerCase();
+  const suggestions = q
+    ? interns.filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(q)).slice(0, 6)
+    : [];
+
+  // looked up by id so the panel stays live while the page polls
+  const selected = interns.find((u) => u.id === selectedId) || null;
+
+  const pick = (u) => {
+    setSelectedId(u.id);
+    setSearch(u.name);
+    setOpen(false);
+    setTimeout(() => panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+  };
+  const closeProfile = () => { setSelectedId(null); setSearch(""); };
+
+  // clicking a card opens the profile without changing the search box,
+  // so the rest of the interns stay visible
+  const openCard = (u) => {
+    setSelectedId(u.id);
+    setOpen(false);
+    setTimeout(() => panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+
+  const onSearchKey = (e) => {
+    if (!open || !suggestions.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => (a + 1) % suggestions.length); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => (a - 1 + suggestions.length) % suggestions.length); }
+    else if (e.key === "Enter") { e.preventDefault(); pick(suggestions[active] || suggestions[0]); }
+    else if (e.key === "Escape") setOpen(false);
+  };
 
   const updateSettings = async (id, field, value, current) => {
     setSaving(id);
@@ -357,7 +608,7 @@ export function InternMonitor({ interns, records, loading, onRefresh }) {
   };
 
   const rows = interns
-    .filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase()))
+    .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(q))
     .map((u) => {
       const recs = records.filter((r) => r.user_id === u.id);
       return {
@@ -373,20 +624,74 @@ export function InternMonitor({ interns, records, loading, onRefresh }) {
     <>
       <PageHeader title="Monitor Interns" sub="Real-time status of all interns." live />
       <div className="ix-toolbar">
-        <div className="ix-search">
-          <Icon name="search" size={16} />
-          <input type="text" placeholder="Search intern..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="imp-search-wrap" ref={wrapRef}>
+          <div className="ix-search">
+            <Icon name="search" size={16} />
+            <input
+              type="text"
+              placeholder="Search intern..."
+              value={search}
+              role="combobox"
+              aria-expanded={open && suggestions.length > 0}
+              aria-autocomplete="list"
+              onChange={(e) => { setSearch(e.target.value); setOpen(true); setActive(0); if (selectedId) setSelectedId(null); }}
+              onFocus={() => setOpen(true)}
+              onKeyDown={onSearchKey}
+            />
+          </div>
+
+          {open && q && (
+            <ul className="imp-suggest" role="listbox">
+              {suggestions.length === 0 ? (
+                <li className="imp-suggest-empty">No intern found</li>
+              ) : (
+                suggestions.map((u, i) => (
+                  <li key={u.id} role="option" aria-selected={i === active}>
+                    <button
+                      type="button"
+                      className={i === active ? "imp-suggest-item active" : "imp-suggest-item"}
+                      onMouseEnter={() => setActive(i)}
+                      onClick={() => pick(u)}
+                    >
+                      <Avatar name={u.name} photo={u.photo} size={32} />
+                      <span className="imp-suggest-text">
+                        <strong>{u.name}</strong>
+                        <small>{u.email}</small>
+                      </span>
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          )}
         </div>
+
         <span className="ix-chip green"><i /> {present} present now</span>
         <span className="ix-chip">{rows.length - present} not in</span>
       </div>
+
+      {selected && (
+        <div ref={panelRef}>
+          <InternProfile key={selected.id} u={selected} records={records} today={today} onClose={closeProfile} onRefresh={onRefresh} />
+        </div>
+      )}
 
       {loading ? <Spinner /> : rows.length === 0 ? (
         <div className="ix-card"><Empty icon="users" title="No interns found" /></div>
       ) : (
         <div className="ix-intern-grid">
           {rows.map(({ u, isIn, days, last }) => (
-            <div key={u.id} className="ix-ic">
+            <div
+              key={u.id}
+              className={selectedId === u.id ? "ix-ic clickable selected" : "ix-ic clickable"}
+              role="button"
+              tabIndex={0}
+              aria-label={`View profile of ${u.name}`}
+              onClick={() => openCard(u)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCard(u); }
+              }}
+            >
               <div className="ix-ic-top">
                 <Avatar name={u.name} photo={u.photo} status={isIn ? "on" : "off"} />
                 <div className="ix-ic-id">
@@ -398,33 +703,6 @@ export function InternMonitor({ interns, records, loading, onRefresh }) {
               <div className="ix-ic-stats">
                 <div><strong>{days}</strong><span>Days present</span></div>
                 <div><strong>{last || "—"}</strong><span>Last record</span></div>
-              </div>
-              <div className="ix-ic-foot">
-                <label className="ix-mini">
-                  <span>Work mode</span>
-                  <select
-                    className="ix-select"
-                    value={u.work_mode || "onsite"}
-                    disabled={saving === u.id}
-                    onChange={(e) => updateSettings(u.id, "work_mode", e.target.value, u)}
-                  >
-                    <option value="onsite">Onsite</option>
-                    <option value="offsite">Offsite (WFH)</option>
-                  </select>
-                </label>
-                <label className="ix-mini">
-                  <span>Tracking type</span>
-                  <select
-                    className="ix-select"
-                    value={u.tracking_type || "hours"}
-                    disabled={saving === u.id}
-                    onChange={(e) => updateSettings(u.id, "tracking_type", e.target.value, u)}
-                  >
-                    <option value="hours">Hours-based</option>
-                    <option value="output">Output-based</option>
-                  </select>
-                </label>
-                {saving === u.id && <em>Saving...</em>}
               </div>
             </div>
           ))}
@@ -732,7 +1010,7 @@ const css = `
 
   /* profile photo at the top of the sidebar */
   .ix-side-profile { margin: 0 10px 10px; padding-bottom: 12px; border-bottom: 1px solid #f1e2d9; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
-  .ix-side-photo { width: 45px; height: 45px; border-radius: 12px; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 18px rgba(232,88,42,0.28); transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1), border-radius .3s, font-size .3s; }
+  .ix-side-photo { width: 45px; height: 45px; border-radius: 0px; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 18px rgba(232,88,42,0.28); transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1), border-radius .3s, font-size .3s; }
   .ix-side.open .ix-side-photo { width: 120px; height: 120px; border-radius: 22px; font-size: 46px; }
   .ix-side-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ix-side-who { text-align: center; max-height: 0; max-width: 200px; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-height .3s, opacity .2s, margin .3s; }
@@ -911,6 +1189,9 @@ const css = `
   .ix-intern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
   .ix-ic { background: #fff; border-radius: 20px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); transition: transform .2s, box-shadow .2s; }
   .ix-ic:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 14px 30px rgba(15,23,42,0.09); }
+  .ix-ic.clickable { cursor: pointer; }
+  .ix-ic.clickable:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+  .ix-ic.selected { box-shadow: 0 0 0 2px #e8582a, 0 14px 30px rgba(232,88,42,0.18); }
   .ix-ic-top { display: flex; align-items: center; gap: 12px; }
   .ix-ic-id { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .ix-ic-id strong { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -925,13 +1206,56 @@ const css = `
   .ix-mini span { font-size: 10.5px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .4px; }
   .ix-mini .ix-select { padding: 8px 10px; font-size: 12.5px; border-radius: 10px; }
 
+  /* ───── Monitor Interns: quick search + inline profile ───── */
+  .imp-search-wrap { position: relative; }
+  .imp-suggest { position: absolute; top: calc(100% + 6px); left: 0; right: 0; min-width: 280px; z-index: 40; list-style: none; margin: 0; padding: 6px; background: #fff; border: 1px solid #f1e2d9; border-radius: 14px; box-shadow: 0 16px 36px rgba(150,52,20,0.16); animation: ix-pop .15s ease-out; }
+  .imp-suggest-item { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: none; background: none; border-radius: 10px; cursor: pointer; text-align: left; }
+  .imp-suggest-item.active, .imp-suggest-item:hover { background: #fff3ec; }
+  .imp-suggest-text { display: flex; flex-direction: column; min-width: 0; }
+  .imp-suggest-text strong { font-size: 13px; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imp-suggest-text small { font-size: 11.5px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imp-suggest-empty { padding: 12px; font-size: 12.5px; color: #94a3b8; text-align: center; }
+
+  .imp-panel { position: relative; background: #fff; border-radius: 20px; padding: 22px 24px; margin-bottom: 20px; border-top: 4px solid #e8582a; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 12px 32px rgba(150,52,20,0.10); animation: ix-rise .3s cubic-bezier(.2,.8,.2,1) backwards; }
+  .imp-tools { position: absolute; top: 14px; right: 14px; display: flex; align-items: center; gap: 8px; }
+  .imp-close { width: 32px; height: 32px; border-radius: 50%; border: none; background: #f1f5f9; color: #475569; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .imp-close:hover { background: #fdeee7; color: #e8582a; }
+  .imp-close:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+  .imp-top { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+  .imp-who { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 170px; flex-shrink: 0; text-align: center; }
+  .imp-who h2 { font-size: 16px; font-weight: 800; line-height: 1.25; }
+  .imp-info { flex: 1 1 360px; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px 24px; padding-right: 36px; padding-top: 34px; }
+  .imp-info div { min-width: 0; }
+  .imp-info dt { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .4px; }
+  .imp-info dd { margin: 2px 0 0; font-size: 13.5px; font-weight: 600; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imp-sid { font-size: 12px; color: #64748b; }
+  .imp-sid strong { color: #1e293b; font-weight: 700; }
+  .imp-info dd:has(.imp-edit) { overflow: visible; }
+  .imp-edit { width: 100%; padding: 7px 10px; border: 1.5px solid #f1e2d9; border-radius: 10px; background: #fffaf7; font-size: 13px; font-weight: 500; color: #1e293b; font-family: inherit; }
+  .imp-edit:focus { outline: none; border-color: #e8582a; background: #fff; box-shadow: 0 0 0 3px rgba(232,88,42,0.12); }
+  .imp-edit-bar { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+  .imp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 20px; }
+  .imp-stats div { background: #fff6f1; border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; }
+  .imp-stats strong { font-size: 18px; font-weight: 800; color: #1b1410; }
+  .imp-stats span { font-size: 11px; color: #94a3b8; }
+  .imp-progress { margin-top: 16px; }
+  .imp-progress-row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: #64748b; margin-bottom: 6px; }
+  .imp-progress-row strong { color: #1e293b; }
+  .imp-recent { margin-top: 20px; border: 1px solid #f3e3da; border-radius: 14px; overflow: hidden; }
+  .imp-recent h3 { margin: 0; padding: 12px 18px; font-size: 13px; font-weight: 700; background: #fff6f1; color: #8a6a5c; }
+  @media (max-width: 600px) {
+    .imp-who { width: 100%; }
+    .imp-info { padding-right: 0; }
+    .imp-search-wrap { width: 100%; }
+  }
+
   /* ───── Modal ───── */
   .ix-modal-wrap, .ix-modal-wrap * { box-sizing: border-box; }
   .ix-modal-wrap { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #0f172a; }
   .ix-modal-wrap h2, .ix-modal-wrap p { margin: 0; }
   .ix-modal-wrap button, .ix-modal-wrap input, .ix-modal-wrap select, .ix-modal-wrap textarea { font-family: inherit; }
   .ix-modal-wrap { position: fixed; inset: 0; z-index: 1000; background: rgba(15,23,42,0.5); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 16px; animation: ix-fade .2s; }
-  .ix-modal { background: #fff; border-radius: 22px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.3); border-top: 5px solid #e8582a; animation: ix-pop .25s ease-out; }
+  .ix-modal { background: #fff; border-radius: 0px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.3); border-top: 5px solid #e8582a; animation: ix-pop .25s ease-out; }
   .ix-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 24px 14px; }
   .ix-modal header h2 { font-size: 18px; font-weight: 800; }
   .ix-modal header p { font-size: 12.5px; color: #94a3b8; margin-top: 2px; }
@@ -1002,7 +1326,7 @@ const css = `
   @keyframes ix-ring { 0%, 86%, 100% { transform: rotate(0); } 88% { transform: rotate(16deg); } 91% { transform: rotate(-14deg); } 94% { transform: rotate(10deg); } 97% { transform: rotate(-6deg); } }
   @keyframes ix-pulse { 0% { box-shadow: 0 0 0 0 rgba(232,88,42,0.5); } 100% { box-shadow: 0 0 0 9px rgba(232,88,42,0); } }
   @media (prefers-reduced-motion: reduce) {
-    .ix-content, .ix-live i, .ix-spin, .ix-modal, .ix-nav::after, .ix-notification-count, .ix-notification-btn svg, .ix-notification-dropdown { animation: none !important; }
+    .ix-content, .ix-live i, .ix-spin, .ix-modal, .ix-nav::after, .ix-notification-count, .ix-notification-btn svg, .ix-notification-dropdown, .imp-panel, .imp-suggest { animation: none !important; }
     .ix-side, .ix-strip, .ix-side-label, .ix-brand-name, .ix-side-photo, .ix-side-who { transition: none !important; }
   }
 
