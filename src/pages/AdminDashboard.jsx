@@ -406,8 +406,15 @@ function Accounts({ users, onRefresh }) {
   const [msg, setMsg] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [uploading, setUploading] = useState(null);
   const uidBuffer = useRef("");
+
+  // ── edit-user modal state ──
+  const [editUser, setEditUser] = useState(null);   // the user being edited (null = modal closed)
+  const [editForm, setEditForm] = useState({});
+  const [editPhoto, setEditPhoto] = useState(null); // a newly chosen photo file
+  const [editPreview, setEditPreview] = useState(null);
+  const [editMsg, setEditMsg] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // Listens for the NFC reader (it "types" the UID and presses Enter)
   useEffect(() => {
@@ -437,6 +444,14 @@ function Accounts({ users, onRefresh }) {
       uidBuffer.current = "";
     }
   }, [form.role]);
+
+  // preview of the newly chosen photo in the edit modal
+  useEffect(() => {
+    if (!editPhoto) { setEditPreview(null); return; }
+    const url = URL.createObjectURL(editPhoto);
+    setEditPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [editPhoto]);
 
   const openModal = () => { setMsg(null); setShowForm(true); };
   const closeModal = () => {
@@ -486,38 +501,107 @@ function Accounts({ users, onRefresh }) {
     } finally { setDeleting(null); }
   };
 
-  const changePhoto = async (u, file) => {
-    if (!file) return;
-    if (!file.type.startsWith("image/") || file.size > 2 * 1024 * 1024) {
-      setMsg({ type: "error", text: "Please choose an image under 2 MB." });
+  /* ───── edit ───── */
+  const openEdit = (u) => {
+    const parts = (u.name || "").trim().split(/\s+/);
+    setEditForm({
+      first_name: u.first_name || parts[0] || "",
+      middle_name: u.middle_name || "",
+      last_name: u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
+      email: u.email || "",
+      student_id: u.student_id || "",
+      contact_number: u.contact_number || "",
+      address: u.address || "",
+      program: u.program || "",
+      semester: u.semester || "",
+      placement: u.placement || "",
+      work_mode: u.work_mode || "onsite",
+      tracking_type: u.tracking_type || "hours",
+      uid: u.nfc_uid || "",
+    });
+    setEditPhoto(null);
+    setEditMsg(null);
+    setMsg(null);
+    setEditUser(u);
+  };
+  const closeEdit = () => { setEditUser(null); setEditPhoto(null); setEditMsg(null); };
+  const setEF = (k) => (e) => setEditForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const pickEditPhoto = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!f.type.startsWith("image/") || f.size > 2 * 1024 * 1024) {
+      setEditMsg({ type: "error", text: "Please choose an image under 2 MB." });
       return;
     }
-    setUploading(u.id); setMsg(null);
+    setEditMsg(null);
+    setEditPhoto(f);
+  };
+
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    setSavingEdit(true); setEditMsg(null);
     try {
-      const fd = new FormData();
-      fd.append("photo", file);
-      const res = await fetch(`${API}/admin/users/${u.id}/photo`, {
-        method: "POST", headers: { Accept: "application/json" }, body: fd,
+      const clean = Object.fromEntries(Object.entries(editForm).map(([k, v]) => [k, String(v).trim()]));
+
+      // 1) the details
+      const res = await fetch(`${API}/admin/users/${editUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(clean),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Upload failed.");
-      setMsg({ type: "success", text: data.message || "Photo updated." });
-      // if this is my own account, refresh my navbar photo too
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const firstError = data?.errors ? Object.values(data.errors)[0]?.[0] : null;
+        throw new Error(
+          firstError || data?.message ||
+          (res.status === 404 || res.status === 405
+            ? "Saving isn't set up on the server yet."
+            : "Could not save the changes.")
+        );
+      }
+
+      // 2) the photo, only if a new one was chosen
+      let newPhoto = null;
+      if (editPhoto) {
+        const fd = new FormData();
+        fd.append("photo", editPhoto);
+        const pr = await fetch(`${API}/admin/users/${editUser.id}/photo`, {
+          method: "POST", headers: { Accept: "application/json" }, body: fd,
+        });
+        const pdata = await pr.json().catch(() => null);
+        if (!pr.ok) throw new Error(pdata?.message || "Details were saved, but the photo could not be uploaded.");
+        newPhoto = pdata?.photo || null;
+      }
+
+      // if this is my own account, refresh my navbar name / photo too
       const me = JSON.parse(sessionStorage.getItem("user") || "{}");
-      if (me.id === u.id && data.photo) sessionStorage.setItem("user", JSON.stringify({ ...me, photo: data.photo }));
+      if (me.id === editUser.id) {
+        sessionStorage.setItem("user", JSON.stringify({
+          ...me,
+          ...(data?.name ? { name: data.name } : {}),
+          ...(newPhoto ? { photo: newPhoto } : {}),
+        }));
+      }
+
+      setMsg({ type: "success", text: data?.message || "User updated." });
+      closeEdit();
       onRefresh();
     } catch (err) {
-      setMsg({ type: "error", text: err instanceof SyntaxError ? "Photo upload isn't set up on the server yet." : err.message });
-    } finally { setUploading(null); }
+      setEditMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setSavingEdit(false); }
   };
+
+  const editIsIntern = editUser?.role === "intern";
 
   return (
     <>
-      <PageHeader title="Manage Accounts" sub="Add or remove users from the system.">
+      <PageHeader title="Manage Accounts" sub="Add, edit or remove users from the system.">
         <button className="ix-b primary" onClick={openModal}><Icon name="plus" size={16} /> Add New User</button>
       </PageHeader>
 
-      {!showForm && <Msg msg={msg} />}
+      {!showForm && !editUser && <Msg msg={msg} />}
 
       <div className="ix-card flush">
         <Table
@@ -529,13 +613,9 @@ function Accounts({ users, onRefresh }) {
             </div>,
             u.email,
             <div className="ix-actions">
-              <label className="ix-b ghost sm" style={{ opacity: uploading === u.id ? 0.6 : 1 }}>
-                <input
-                  type="file" accept="image/*" hidden disabled={uploading === u.id}
-                  onChange={(e) => { changePhoto(u, e.target.files?.[0]); e.target.value = ""; }}
-                />
-                <Icon name="camera" size={14} /> {uploading === u.id ? "Uploading..." : "Photo"}
-              </label>
+              <button className="ix-b ghost sm" onClick={() => openEdit(u)}>
+                <Icon name="settings" size={14} /> Edit
+              </button>
               <button className="ix-b danger sm" onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}>
                 <Icon name="trash" size={14} /> {deleting === u.id ? "..." : "Delete"}
               </button>
@@ -545,6 +625,7 @@ function Accounts({ users, onRefresh }) {
         />
       </div>
 
+      {/* ───────── Add user ───────── */}
       {showForm && (
         <Modal title="Add New User" sub="Fill in the details below." onClose={closeModal}>
           <Msg msg={msg} />
@@ -695,6 +776,131 @@ function Accounts({ users, onRefresh }) {
             <div className="ix-form-actions">
               <button type="button" className="ix-b ghost" onClick={closeModal}>Cancel</button>
               <button type="submit" className="ix-b primary" disabled={adding}>{adding ? "Adding..." : "Add User"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ───────── Edit user ───────── */}
+      {editUser && (
+        <Modal title="Edit User" sub={`${ROLE_NAME[editUser.role] || editUser.role} · ${editUser.email}`} onClose={closeEdit}>
+          <Msg msg={editMsg} />
+          <form
+            onSubmit={saveEdit}
+            onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
+            className="ix-form"
+          >
+            {/* photo: current one, or a preview of the new one */}
+            <div className="ix-photo-pick">
+              <label className="ix-photo-box">
+                <input type="file" accept="image/*" onChange={pickEditPhoto} />
+                {editPreview
+                  ? <img src={editPreview} alt="New profile" />
+                  : <Avatar name={editUser.name} photo={editUser.photo} size={92} />}
+                <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
+              </label>
+              <div className="ix-photo-info">
+                <strong>Profile photo</strong>
+                <span>Click the photo to change it. JPG or PNG, max 2 MB.</span>
+                {editPhoto && <button type="button" onClick={() => setEditPhoto(null)}>Undo new photo</button>}
+              </div>
+            </div>
+
+            <div className="ix-row-gap">
+              <div className="ix-field">
+                <label htmlFor="ed-fn">First name</label>
+                <input id="ed-fn" type="text" required value={editForm.first_name} onChange={setEF("first_name")} />
+              </div>
+              <div className="ix-field">
+                <label htmlFor="ed-mn">Middle name</label>
+                <input id="ed-mn" type="text" value={editForm.middle_name} onChange={setEF("middle_name")} />
+              </div>
+            </div>
+            <div className="ix-field">
+              <label htmlFor="ed-ln">Last name</label>
+              <input id="ed-ln" type="text" required value={editForm.last_name} onChange={setEF("last_name")} />
+            </div>
+
+            <div className="ix-field">
+              <label htmlFor="ed-email">Email</label>
+              <input id="ed-email" type="email" required value={editForm.email} onChange={setEF("email")} />
+            </div>
+
+            {editIsIntern && (
+              <div className="ix-field">
+                <label htmlFor="ed-sid">Student ID</label>
+                <input id="ed-sid" type="text" value={editForm.student_id} onChange={setEF("student_id")} />
+              </div>
+            )}
+            <div className="ix-field">
+              <label htmlFor="ed-contact">Contact number</label>
+              <input id="ed-contact" type="tel" value={editForm.contact_number} onChange={setEF("contact_number")} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="ed-addr">Address</label>
+              <input id="ed-addr" type="text" value={editForm.address} onChange={setEF("address")} />
+            </div>
+
+            {editIsIntern && (
+              <>
+                <div className="ix-row-gap">
+                  <div className="ix-field">
+                    <label htmlFor="ed-prog">Program</label>
+                    <select id="ed-prog" value={editForm.program} onChange={setEF("program")}>
+                      <option value="">Select program</option>
+                      <option value="BSIT - 4">BSIT - 4</option>
+                      <option value="BSCS - 4">BSCS - 4</option>
+                      <option value="BSIS - 4">BSIS - 4</option>
+                    </select>
+                  </div>
+                  <div className="ix-field">
+                    <label htmlFor="ed-sem">Semester</label>
+                    <select id="ed-sem" value={editForm.semester} onChange={setEF("semester")}>
+                      <option value="">Select semester</option>
+                      <option value="1st Semester">1st Semester</option>
+                      <option value="2nd Semester">2nd Semester</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="ix-field">
+                  <label htmlFor="ed-college">College</label>
+                  <input id="ed-college" type="text" value="CCIS" readOnly disabled />
+                </div>
+
+                <div className="ix-field">
+                  <label htmlFor="ed-place">Placement</label>
+                  <input id="ed-place" type="text" value={editForm.placement} onChange={setEF("placement")} />
+                </div>
+
+                <div className="ix-row-gap">
+                  <div className="ix-field">
+                    <label htmlFor="ed-wm">Work mode</label>
+                    <select id="ed-wm" value={editForm.work_mode} onChange={setEF("work_mode")}>
+                      <option value="onsite">Onsite</option>
+                      <option value="offsite">Offsite (WFH)</option>
+                    </select>
+                  </div>
+                  <div className="ix-field">
+                    <label htmlFor="ed-tt">Tracking type</label>
+                    <select id="ed-tt" value={editForm.tracking_type} onChange={setEF("tracking_type")}>
+                      <option value="hours">Hours-based</option>
+                      <option value="output">Output-based</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="ix-field">
+                  <label htmlFor="ed-uid">NFC card UID</label>
+                  <input id="ed-uid" type="text" placeholder="Type the UID" value={editForm.uid} onChange={setEF("uid")} />
+                  <div className="ix-hint">Clear this field to unlink the card.</div>
+                </div>
+              </>
+            )}
+
+            <div className="ix-form-actions">
+              <button type="button" className="ix-b ghost" onClick={closeEdit} disabled={savingEdit}>Cancel</button>
+              <button type="submit" className="ix-b primary" disabled={savingEdit}>{savingEdit ? "Saving..." : "Save changes"}</button>
             </div>
           </form>
         </Modal>

@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar,
-  calcHours, fmtTime, greeting, REQUIRED_HOURS,
+  calcHours, fmtTime, greeting, REQUIRED_HOURS, AnnouncementBoard,
 } from "../components/DashKit.jsx";
 
 // Home look (hero, stats, calendar, gaps) is shared with the admin / coordinator dashboards
@@ -180,18 +180,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
       <div className="adm-col">
         <HomeCalendar />
 
-        <div className="ix-card adm-duty">
-          <div className="adm-duty-head">
-            <span className="adm-duty-icon" style={{ background: "linear-gradient(135deg, #f2864f, #e8582a)", boxShadow: "0 8px 16px rgba(232,88,42,0.3)" }}>
-              <Icon name="bell" size={18} />
-            </span>
-            <h2>Announcements</h2>
-          </div>
-          <div className="adm-duty-empty">
-            <strong>No announcements yet.</strong>
-            <p>Important OJT announcements will appear here.</p>
-          </div>
-        </div>
+        <AnnouncementBoard />
       </div>
     </div>
   );

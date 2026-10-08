@@ -334,7 +334,7 @@ export function Modal({ title, sub, onClose, children }) {
 }
 
 /* Inline profile panel (shown on the Monitor Interns page, not a modal) */
-function InternProfile({ u, records, today, onClose, onRefresh }) {
+function InternProfile({ u, records, today, onClose, onRefresh, canEdit = false }) {
   const recs = records.filter((r) => r.user_id === u.id);
   const isIn = recs.some((r) => r.date === today && r.action === "CHECK_IN" && !r.checked_out_at);
   const days = [...new Set(recs.map((r) => r.date))].length;
@@ -441,7 +441,7 @@ function InternProfile({ u, records, today, onClose, onRefresh }) {
     },
     { key: "uid", label: "NFC UID", view: u.nfc_uid || "Not linked" },
     {
-      label: "OJT Status",
+      label: "Status",
       view: outputBased ? "Output-based" : pct >= 100 ? "Complete" : pct >= 50 ? "Halfway" : "In Progress",
     },
   ];
@@ -449,7 +449,7 @@ function InternProfile({ u, records, today, onClose, onRefresh }) {
   return (
     <section className="imp-panel" aria-label={`Profile of ${u.name}`}>
       <div className="imp-tools">
-        {!editing && (
+        {canEdit && !editing && (
           <button type="button" className="ix-b ghost sm" onClick={startEdit}>
             <Icon name="settings" size={14} /> Edit
           </button>
@@ -541,7 +541,8 @@ function InternProfile({ u, records, today, onClose, onRefresh }) {
 }
 
 /* Shared "Monitor Interns" page (same for admin and coordinator) */
-export function InternMonitor({ interns, records, loading, onRefresh }) {
+// canEdit is off by default: Monitor Interns is view-only. Editing lives in Manage Accounts (admin).
+export function InternMonitor({ interns, records, loading, onRefresh, canEdit = false }) {
   const today = todayManila();
   const [saving, setSaving] = useState(null);
   const [search, setSearch] = useState("");
@@ -672,7 +673,7 @@ export function InternMonitor({ interns, records, loading, onRefresh }) {
 
       {selected && (
         <div ref={panelRef}>
-          <InternProfile key={selected.id} u={selected} records={records} today={today} onClose={closeProfile} onRefresh={onRefresh} />
+          <InternProfile key={selected.id} u={selected} records={records} today={today} onClose={closeProfile} onRefresh={onRefresh} canEdit={canEdit} />
         </div>
       )}
 
@@ -712,6 +713,157 @@ export function InternMonitor({ interns, records, loading, onRefresh }) {
   );
 }
 
+/* ───────────────────────── Announcements ───────────────────────── */
+const fmtDay = (v) => {
+  const d = new Date(v);
+  return isNaN(d) ? "" : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+};
+
+// Read-only card (intern home). Polls so a new post shows up without a refresh.
+export function AnnouncementBoard({ limit = 3 }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch(`${API}/announcements`, { headers: { Accept: "application/json" } });
+        const data = await res.json();
+        if (alive && Array.isArray(data)) setItems(data);
+      } catch { /* keep what we have */ }
+      finally { if (alive) setLoading(false); }
+    };
+    load();
+    const iv = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  return (
+    <div className="ix-card adm-duty">
+      <div className="adm-duty-head">
+        <span className="adm-duty-icon" style={{ background: "linear-gradient(135deg, #f2864f, #e8582a)", boxShadow: "0 8px 16px rgba(232,88,42,0.3)" }}>
+          <Icon name="bell" size={18} />
+        </span>
+        <h2>Announcements</h2>
+        {items.length > 0 && <span className="ix-count">{items.length}</span>}
+      </div>
+      {loading ? <Spinner /> : items.length === 0 ? (
+        <div className="adm-duty-empty">
+          <strong>No announcements yet.</strong>
+          <p>Important OJT announcements will appear here.</p>
+        </div>
+      ) : (
+        <ul className="ann-list">
+          {items.slice(0, limit).map((a) => (
+            <li key={a.id}>
+              <strong>{a.title}</strong>
+              <p>{a.body}</p>
+              <small>{a.author || "OJT office"} · {fmtDay(a.created_at)}</small>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Full page for staff: post a new announcement + manage the old ones
+export function AnnouncementManager({ user }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${API}/announcements`, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      if (Array.isArray(data)) setItems(data);
+    } catch { /* keep what we have */ }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const post = async (e) => {
+    e.preventDefault();
+    setSaving(true); setMsg(null);
+    try {
+      const res = await fetch(`${API}/announcements`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ user_id: user.id, title: title.trim(), body: body.trim() }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || (data?.errors && Object.values(data.errors)[0]?.[0]) || "Could not post the announcement.");
+      setMsg({ type: "success", text: "Posted. Interns have been notified." });
+      setTitle(""); setBody("");
+      load();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("Delete this announcement?")) return;
+    try {
+      await fetch(`${API}/announcements/${id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      load();
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <>
+      <PageHeader title="Announcements" sub="Post updates for all interns. They get a notification right away." />
+      <div className="ann-split">
+        <div className="ix-card">
+          <Msg msg={msg} />
+          <form onSubmit={post} className="ix-form">
+            <div className="ix-field">
+              <label htmlFor="ann-title">Title</label>
+              <input id="ann-title" type="text" required maxLength={150} value={title}
+                placeholder="e.g. Orientation moved to Friday" onChange={(e) => setTitle(e.target.value)} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="ann-body">Message</label>
+              <textarea id="ann-body" rows={6} required maxLength={2000} value={body}
+                placeholder="Write the details interns need to know..." onChange={(e) => setBody(e.target.value)} />
+            </div>
+            <button type="submit" className="ix-b primary" disabled={saving}>
+              <Icon name="send" size={15} /> {saving ? "Posting..." : "Post announcement"}
+            </button>
+          </form>
+        </div>
+
+        <Section icon="bell" title="Posted announcements" count={items.length}>
+          {loading ? <Spinner /> : items.length === 0 ? (
+            <Empty icon="bell" title="Nothing posted yet" sub="Your announcements will be listed here." />
+          ) : (
+            <ul className="ann-list ann-manage">
+              {items.map((a) => (
+                <li key={a.id}>
+                  <div className="ann-row">
+                    <strong>{a.title}</strong>
+                    <button type="button" className="ix-b danger sm" onClick={() => remove(a.id)} aria-label={`Delete ${a.title}`}>
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </div>
+                  <p>{a.body}</p>
+                  <small>{a.author || "OJT office"} · {fmtDay(a.created_at)}</small>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      </div>
+    </>
+  );
+}
+
 /* ───────────────────────── Shell (navbar + sidebar) ───────────────────────── */
 const ROLE_LABEL = {
   intern: "OJT Intern",
@@ -743,7 +895,7 @@ function useNotifications(userId) {
 
   useEffect(() => {
     load();
-    const iv = setInterval(load, 30000);
+    const iv = setInterval(load, 10000);
     return () => clearInterval(iv);
   }, [load]);
 
@@ -1255,7 +1407,7 @@ const css = `
   .ix-modal-wrap h2, .ix-modal-wrap p { margin: 0; }
   .ix-modal-wrap button, .ix-modal-wrap input, .ix-modal-wrap select, .ix-modal-wrap textarea { font-family: inherit; }
   .ix-modal-wrap { position: fixed; inset: 0; z-index: 1000; background: rgba(15,23,42,0.5); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 16px; animation: ix-fade .2s; }
-  .ix-modal { background: #fff; border-radius: 0px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.3); border-top: 5px solid #e8582a; animation: ix-pop .25s ease-out; }
+  .ix-modal { background: #fff; border-radius: 22px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.3); border-top: 5px solid #e8582a; animation: ix-pop .25s ease-out; }
   .ix-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 24px 14px; }
   .ix-modal header h2 { font-size: 18px; font-weight: 800; }
   .ix-modal header p { font-size: 12.5px; color: #94a3b8; margin-top: 2px; }
@@ -1314,6 +1466,19 @@ const css = `
   .ix-doc-sigs { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-top: 52px; }
   .ix-doc-sig { width: 190px; border-top: 1px solid #1e293b; padding-top: 6px; text-align: center; font-size: 12px; color: #64748b; }
   .ix-doc-empty { text-align: center; padding: 48px 20px; color: #94a3b8; font-size: 14px; }
+
+  /* ───── Announcements ───── */
+  .ann-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .ann-split > * { min-width: 0; margin: 0; }
+  .ann-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .ann-manage { margin: 0; padding: 16px 20px 20px; }
+  .ann-list li { padding: 12px 14px; border-radius: 14px; background: #fff6f1; border: 1px solid #f8e3d8; }
+  .ann-list li strong { font-size: 13.5px; color: #1e293b; }
+  .ann-list li p { margin: 4px 0 6px; font-size: 12.5px; line-height: 1.5; color: #64748b; white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .ann-manage li p { -webkit-line-clamp: unset; display: block; }
+  .ann-list li small { font-size: 11px; color: #94a3b8; }
+  .ann-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  @media (max-width: 1000px) { .ann-split { grid-template-columns: 1fr; } }
 
   /* ───── Motion ───── */
   @keyframes ix-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }

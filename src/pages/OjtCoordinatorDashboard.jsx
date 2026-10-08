@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   Spinner, PageHeader, Badge, Table, Section, Msg, Avatar, Ring, Icon,
-  InternMonitor, todayManila, fmtTime, greeting,
+  InternMonitor, AnnouncementManager, todayManila, fmtTime, greeting,
 } from "../components/DashKit.jsx";
 import NfcCards from "../components/NfcCards.jsx";
 import {
@@ -38,7 +38,7 @@ export default function OjtCoordinatorDashboard() {
 
   useEffect(() => {
     fetchAll();
-    const iv = setInterval(fetchAll, 4000);
+    const iv = setInterval(fetchAll, 15000);
     return () => clearInterval(iv);
   }, []);
 
@@ -81,6 +81,7 @@ export default function OjtCoordinatorDashboard() {
       {path === "/coordinator/nfc" && <NfcCards user={user} interns={interns} onRefresh={fetchAll} />}
       {path === "/coordinator/dtr" && <DTR interns={interns} records={records} />}
       {path === "/coordinator/reports" && <Reports interns={interns} records={records} />}
+      {path === "/coordinator/announcements" && <AnnouncementManager user={user} />}
     </Shell>
   );
 }
