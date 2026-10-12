@@ -1,3 +1,4 @@
+//App.jsx
 import { useState, useEffect, useRef } from "react";
 import schoolLogo from "./assets/logo.png";
 

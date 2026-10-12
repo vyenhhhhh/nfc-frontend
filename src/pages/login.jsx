@@ -1,9 +1,11 @@
+//login.jsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
 import campus from "../assets/campus.jpg";
 
 const API = "http://localhost:8000/api";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const REMEMBER_KEY = "ojt_remember";
 const REMEMBER_DAYS = 7;
 
@@ -71,6 +73,123 @@ const WaveIcon = ({ size = 22 }) => (
   </svg>
 );
 
+/* Forgot password flow: recover with a code / date of birth, or get the code by email */
+function RecoverFlow({ onDone }) {
+  const [step, setStep] = useState("verify"); // "verify" | "newpass" | "email"
+  const [identifier, setIdentifier] = useState("");
+  const [proof, setProof] = useState("code");  // "code" | "dob"
+  const [code, setCode] = useState("");
+  const [dob, setDob] = useState("");
+  const [pass, setPass] = useState(null);      // { reset_token, name } once step 1 matched
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const post = async (path, body) => {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch(`${API}${path}`, {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.status === 429) throw new Error("Too many tries. Please wait a minute.");
+      if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Something went wrong.");
+      return d;
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+      return null;
+    } finally { setBusy(false); }
+  };
+
+  // Step 1: only the ID number and the recovery code / date of birth
+  const verify = async (e) => {
+    e.preventDefault();
+    const d = await post("/recovery/verify", {
+      identifier, ...(proof === "code" ? { code } : { date_of_birth: dob }),
+    });
+    if (d) { setPass(d); setStep("newpass"); }
+  };
+
+  // Step 2: shown only after step 1 matched
+  const setNew = async (e) => {
+    e.preventDefault();
+    if (pw.length < 6) { setMsg({ type: "error", text: "New password must be at least 6 characters." }); return; }
+    if (pw !== pw2) { setMsg({ type: "error", text: "The passwords don't match." }); return; }
+    const d = await post("/recovery/reset", { reset_token: pass.reset_token, new_password: pw });
+    if (d) { setMsg({ type: "success", text: d.message }); setTimeout(onDone, 2200); }
+  };
+
+  const sendEmail = async (e) => {
+    e.preventDefault();
+    const d = await post("/recovery/send-code", { identifier });
+    if (d) setMsg({ type: "success", text: d.message });
+  };
+
+  const go = (s) => { setStep(s); setMsg(null); };
+  const Msg = () => (msg ? <div className={msg.type === "success" ? "lf-rec-msg ok" : "lf-rec-msg err"} role="alert">{msg.text}</div> : null);
+
+  return (
+    <div className="lf-rec">
+      {step === "verify" && (
+        <>
+          <h3>Recover account</h3>
+          <p className="lf-modal-lead">Enter your ID number and your recovery code or date of birth.</p>
+          <form onSubmit={verify}>
+            <label>ID number (student or employee ID)</label>
+            <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoComplete="username" placeholder="Your ID number" />
+
+            <div className="lf-rec-tabs" role="tablist">
+              <button type="button" className={proof === "code" ? "on" : ""} onClick={() => setProof("code")}>Recovery code</button>
+              <button type="button" className={proof === "dob" ? "on" : ""} onClick={() => setProof("dob")}>Date of birth</button>
+            </div>
+            {proof === "code"
+              ? <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="XXXX-XXXX" autoComplete="off" style={{ textTransform: "uppercase" }} />
+              : <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} required aria-label="Date of birth" />}
+
+            <Msg />
+            <button type="submit" className="lf-rec-btn" disabled={busy}>{busy ? "Checking..." : "Continue"}</button>
+          </form>
+          <button type="button" className="lf-link lf-rec-alt" onClick={() => go("email")}>Forgot recovery code?</button>
+        </>
+      )}
+
+      {step === "newpass" && (
+        <>
+          <h3>Set a new password</h3>
+          <p className="lf-modal-lead">Verified{pass?.name ? `: ${pass.name}` : ""}. Choose a new password.</p>
+          <form onSubmit={setNew}>
+            <label>New password</label>
+            <input type={showPw ? "text" : "password"} value={pw} onChange={(e) => setPw(e.target.value)} required minLength={6} autoComplete="new-password" autoFocus />
+            <label>Confirm new password</label>
+            <input type={showPw ? "text" : "password"} value={pw2} onChange={(e) => setPw2(e.target.value)} required minLength={6} autoComplete="new-password" />
+            <label className="lf-rec-check"><input type="checkbox" checked={showPw} onChange={(e) => setShowPw(e.target.checked)} /> Show passwords</label>
+            <Msg />
+            <button type="submit" className="lf-rec-btn" disabled={busy || msg?.type === "success"}>{busy ? "Saving..." : "Change password"}</button>
+          </form>
+        </>
+      )}
+
+      {step === "email" && (
+        <>
+          <h3>Get your recovery code</h3>
+          <p className="lf-modal-lead">We'll email it to the address on your account.</p>
+          <form onSubmit={sendEmail}>
+            <label>ID number (student or employee ID)</label>
+            <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoComplete="username" placeholder="Your ID number" />
+            <Msg />
+            <button type="submit" className="lf-rec-btn" disabled={busy}>{busy ? "Sending..." : "Send to my email"}</button>
+          </form>
+          <p className="lf-modal-note">Can't access your email? Ask the system administrator to help.</p>
+          <button type="button" className="lf-link lf-rec-alt" onClick={() => go("verify")}>Back to recover account</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function LoginForm({ variant = "student" }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -79,6 +198,7 @@ export default function LoginForm({ variant = "student" }) {
   const [showPassword, setShowPassword] = useState(false);
   const [slide, setSlide] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
   const [panel, setPanel] = useState(null); // null | "about" | "faqs" | "forgot"
   const [faqOpen, setFaqOpen] = useState(0);
   const [isFull, setIsFull] = useState(false);
@@ -86,26 +206,23 @@ export default function LoginForm({ variant = "student" }) {
   const [now, setNow] = useState(() => new Date());
   const navigate = useNavigate();
 
-  // Which role the person picked on the form: "intern" or "employee"
-  const [role, setRole] = useState(variant === "student" ? "intern" : "employee");
-  useEffect(() => {
-    setRole(variant === "student" ? "intern" : "employee");
-  }, [variant]);
-  const isStudent = role === "intern";
-
-  const pickRole = (r) => {
-    setRole(r);
-    setError(null);
-  };
-
   const goByRole = (data) => {
   if (data.role === "intern") navigate("/intern");
   else if (data.role === "admin") navigate("/admin");
   else if (data.role === "ojt_coordinator") navigate("/coordinator");
+  else if (data.role === "supervisor") navigate("/supervisor");
   else setError("Unknown role. Contact administrator.");
 };
 
   // If "Remember me" was ticked within the last 7 days, skip the login screen
+  // load Google's sign-in script once
+  useEffect(() => {
+    if (document.getElementById("gsi-script")) return;
+    const sc = document.createElement("script");
+    sc.id = "gsi-script"; sc.src = "https://accounts.google.com/gsi/client"; sc.async = true;
+    document.head.appendChild(sc);
+  }, []);
+
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(REMEMBER_KEY) || "null");
@@ -135,6 +252,7 @@ export default function LoginForm({ variant = "student" }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
+        setLoginOpen(false);
         setPanel(null);
         setMenuOpen(false);
       }
@@ -175,14 +293,6 @@ export default function LoginForm({ variant = "student" }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Login failed.");
 
-      // Make sure the account matches the role that was picked
-      if (isStudent && data.role !== "intern") {
-        throw new Error("This isn't an intern account. Please select Employee instead.");
-      }
-      if (!isStudent && data.role === "intern") {
-        throw new Error("This is an intern account. Please select Intern instead.");
-      }
-
       sessionStorage.setItem("user", JSON.stringify(data));
       if (remember) {
         localStorage.setItem(
@@ -200,13 +310,42 @@ export default function LoginForm({ variant = "student" }) {
     }
   };
 
+  // Sign in with Google (popup). The backend checks the token and finds the account by email.
   const handleGoogle = () => {
-    // Your backend starts the Google sign-in flow at this URL (e.g. Laravel Socialite)
-    window.location.href = `${API}/auth/google?role=${isStudent ? "intern" : "employee"}`;
+    setError(null);
+    const g = window.google?.accounts?.oauth2;
+    if (!GOOGLE_CLIENT_ID) return setError("Google sign-in is not set up yet.");
+    if (!g) return setError("Google sign-in could not load. Check your internet and try again.");
+    g.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: "openid email profile",
+      callback: async (resp) => {
+        if (!resp?.access_token) return setError("Google sign-in was cancelled.");
+        setLoading(true);
+        try {
+          const res = await fetch(`${API}/login/google`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ access_token: resp.access_token }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message || "Google sign-in failed.");
+          sessionStorage.setItem("user", JSON.stringify(data));
+          if (remember) {
+            localStorage.setItem(REMEMBER_KEY, JSON.stringify({ user: data, expires: Date.now() + REMEMBER_DAYS * 24 * 60 * 60 * 1000 }));
+          }
+          goByRole(data);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      },
+    }).requestAccessToken();
   };
 
   const sideItems = [
-    { label: "Home", icon: <HomeIcon />, onClick: () => go(isStudent ? "/login" : "/login/staff"), active: true },
+    { label: "Home", icon: <HomeIcon />, onClick: () => go("/login"), active: true },
   ];
 
   const clock = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -215,7 +354,7 @@ export default function LoginForm({ variant = "student" }) {
     <div className="lf-page">
       {/* ── Top navbar ── */}
       <header className="lf-nav">
-        <button className="lf-logo-btn" onClick={() => go(isStudent ? "/login" : "/login/staff")} aria-label="Home">
+        <button className="lf-logo-btn" onClick={() => go("/login")} aria-label="Home">
           <img src={logo} alt="CSU CCIS" className="lf-nav-logo" />
           <span className={menuOpen ? "lf-brand-name show" : "lf-brand-name"} aria-hidden={!menuOpen}>
             CSU CCIS<br />MYTRACK
@@ -243,6 +382,14 @@ export default function LoginForm({ variant = "student" }) {
           <button onClick={() => openPanel("about")}>About</button>
           <button onClick={() => openPanel("faqs")}>FAQs</button>
         </nav>
+
+        <button
+          className={loginOpen ? "lf-login-link open" : "lf-login-link"}
+          aria-expanded={loginOpen}
+          onClick={() => { setLoginOpen((o) => !o); setMenuOpen(false); }}
+        >
+          <UserIcon /> Log in
+        </button>
       </header>
 
       <div className="lf-body">
@@ -266,6 +413,107 @@ export default function LoginForm({ variant = "student" }) {
         </aside>
 
         <div className="lf-main">
+          {/* ── Log in dropdown (opened from the navbar) ── */}
+          {loginOpen && (
+            <div className="lf-drop" role="dialog" aria-label="Log in">
+              {error && (
+                <div className="lf-error" role="alert">
+                  <span className="lf-error-dot">!</span> {error}
+                </div>
+              )}
+                <form onSubmit={handleLogin} className="lf-form">
+                  <div className="lf-field">
+                    <span className="lf-field-icon"><MailIcon /></span>
+                    <div className="lf-field-body">
+                      <label htmlFor="lf-email">Email</label>
+                      <input
+                        id="lf-email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="Email address"
+                        required
+                        autoComplete="username"
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+
+                  <div className="lf-field">
+                    <span className="lf-field-icon"><LockIcon /></span>
+                    <div className="lf-field-body">
+                      <label htmlFor="lf-pass">Password</label>
+                      <input
+                        id="lf-pass"
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Password"
+                        required
+                        autoComplete="current-password"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="lf-eye"
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? (
+                        <Icon size={20}>
+                          <path d="M17.9 17.9A10.4 10.4 0 0 1 12 19.5C5.5 19.5 2 12 2 12a18 18 0 0 1 4.1-5.1M9.9 4.6A9.7 9.7 0 0 1 12 4.5c6.5 0 10 7.5 10 7.5a18 18 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2" />
+                          <path d="M3 3l18 18" />
+                        </Icon>
+                      ) : (
+                        <Icon size={20}>
+                          <path d="M2 12s3.5-7.5 10-7.5S22 12 22 12s-3.5 7.5-10 7.5S2 12 2 12z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </Icon>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="lf-options">
+                    <label className="lf-check" htmlFor="lf-remember">
+                      <input
+                        id="lf-remember"
+                        type="checkbox"
+                        checked={remember}
+                        onChange={(e) => setRemember(e.target.checked)}
+                      />
+                      Remember me for 7 days
+                    </label>
+                    <button type="button" className="lf-link" onClick={() => { setLoginOpen(false); openPanel("forgot"); }}>
+                      Forgot password?
+                    </button>
+                  </div>
+
+                  <button type="submit" disabled={loading} className="lf-login-btn">
+                    {loading ? (
+                      <>
+                        <span className="lf-spinner" aria-hidden="true" /> Signing in...
+                      </>
+                    ) : (
+                      <>
+                        <WaveIcon size={18} /> Sign in
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                <div className="lf-or"><span>or</span></div>
+
+                <button type="button" className="lf-google" onClick={handleGoogle}>
+                  <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                  </svg>
+                  Sign in with Google
+                </button>
+            </div>
+          )}
           <div className="lf-split">
             {/* ── Left: hero with campus photo ── */}
             <section className="lf-hero">
@@ -329,12 +577,12 @@ export default function LoginForm({ variant = "student" }) {
               </div>
             </section>
 
-            {/* ── Right: login card ── */}
+            {/* ── Right: info panel (the login form now lives in the navbar dropdown) ── */}
             <section className="lf-right">
               <span className="lf-orb o1" />
               <span className="lf-orb o2" />
               <span className="lf-orb o3" />
-              <div className="lf-card">
+              <div className="lf-card lf-info">
                 <div className="lf-card-head">
                   <img src={logo} alt="" className="lf-card-logo" />
                   <div className="lf-brand">
@@ -342,139 +590,37 @@ export default function LoginForm({ variant = "student" }) {
                   </div>
                 </div>
 
-                <div className="lf-roles" role="radiogroup" aria-label="Select your role">
-                  <span className={isStudent ? "lf-roles-thumb" : "lf-roles-thumb right"} aria-hidden="true" />
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={isStudent}
-                    className={isStudent ? "lf-role active" : "lf-role"}
-                    onClick={() => pickRole("intern")}
-                  >
-                    <UserIcon /> Intern
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={!isStudent}
-                    className={!isStudent ? "lf-role active" : "lf-role"}
-                    onClick={() => pickRole("employee")}
-                  >
-                    <StaffIcon /> Employee
-                  </button>
+                <h3 className="lf-welcome">Your OJT, tracked in one tap.</h3>
+                <p className="lf-welcome-sub">Attendance, requirements and updates for CCIS interns, all in one place.</p>
+
+                <div className="lf-now" aria-label="Current date and time">
+                  <span className="lf-now-dot" aria-hidden="true" />
+                  <span>{now.toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" })}</span>
+                  <b>{clock}</b>
                 </div>
 
-                <h3 className="lf-welcome">{isStudent ? "Welcome back!" : "Good to see you again."}</h3>
-                <p className="lf-welcome-sub">
-                  {isStudent
-                    ? "Sign in to see how many hours you've logged so far."
-                    : "Sign in to review your interns' hours and requirements."}
-                </p>
+                <h4 className="lf-info-h">How it works</h4>
+                <ol className="lf-steps">
+                  <li><span>1</span><div><b>Tap your NFC card</b><small>Check in and out at the reader. Each tap gets its own secure UUID.</small></div></li>
+                  <li><span>2</span><div><b>Submit your requirements</b><small>Upload pre-internship documents online and track their approval.</small></div></li>
+                  <li><span>3</span><div><b>Follow your hours</b><small>See rendered hours, your DTR and notifications as they happen.</small></div></li>
+                </ol>
 
-                {error && (
-                  <div className="lf-error" role="alert">
-                    <span className="lf-error-dot">!</span> {error}
-                  </div>
-                )}
+                <h4 className="lf-info-h">Who uses it</h4>
+                <div className="lf-roles-grid">
+                  <div><UserIcon /><b>Interns</b><small>Hours, MOVs, DTR</small></div>
+                  <div><StaffIcon /><b>Coordinators</b><small>Review and monitor</small></div>
+                  <div><HomeIcon /><b>Supervisors</b><small>Attendance reports</small></div>
+                  <div><LockIcon /><b>Admins</b><small>Accounts and calendar</small></div>
+                </div>
 
-                <form onSubmit={handleLogin} className="lf-form">
-                  <div className="lf-field">
-                    <span className="lf-field-icon"><MailIcon /></span>
-                    <div className="lf-field-body">
-                      <label htmlFor="lf-email">Email</label>
-                      <input
-                        id="lf-email"
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="Username"
-                        required
-                        autoComplete="username"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="lf-field">
-                    <span className="lf-field-icon"><LockIcon /></span>
-                    <div className="lf-field-body">
-                      <label htmlFor="lf-pass">Password</label>
-                      <input
-                        id="lf-pass"
-                        type={showPassword ? "text" : "password"}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Password"
-                        required
-                        autoComplete="current-password"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="lf-eye"
-                      onClick={() => setShowPassword(!showPassword)}
-                      aria-label={showPassword ? "Hide password" : "Show password"}
-                    >
-                      {showPassword ? (
-                        <Icon size={20}>
-                          <path d="M17.9 17.9A10.4 10.4 0 0 1 12 19.5C5.5 19.5 2 12 2 12a18 18 0 0 1 4.1-5.1M9.9 4.6A9.7 9.7 0 0 1 12 4.5c6.5 0 10 7.5 10 7.5a18 18 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2" />
-                          <path d="M3 3l18 18" />
-                        </Icon>
-                      ) : (
-                        <Icon size={20}>
-                          <path d="M2 12s3.5-7.5 10-7.5S22 12 22 12s-3.5 7.5-10 7.5S2 12 2 12z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </Icon>
-                      )}
-                    </button>
-                  </div>
-
-                  <div className="lf-options">
-                    <label className="lf-check" htmlFor="lf-remember">
-                      <input
-                        id="lf-remember"
-                        type="checkbox"
-                        checked={remember}
-                        onChange={(e) => setRemember(e.target.checked)}
-                      />
-                      Remember me for 7 days
-                    </label>
-                    <button type="button" className="lf-link" onClick={() => openPanel("forgot")}>
-                      Forgot password?
-                    </button>
-                  </div>
-
-                  <button type="submit" disabled={loading} className="lf-login-btn">
-                    {loading ? (
-                      <>
-                        <span className="lf-spinner" aria-hidden="true" /> Signing in...
-                      </>
-                    ) : (
-                      <>
-                        <WaveIcon size={18} /> Sign in
-                      </>
-                    )}
-                  </button>
-                </form>
-
-                <div className="lf-or"><span>or</span></div>
-
-                <button type="button" className="lf-google" onClick={handleGoogle}>
-                  <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-                  </svg>
-                  Sign in with Google
+                <button type="button" className="lf-login-btn lf-info-cta" onClick={() => { setLoginOpen(true); setMenuOpen(false); }}>
+                  <WaveIcon size={18} /> Log in to continue
                 </button>
-
-                <div className="lf-switch">
-                  {isStudent
-                    ? "Employee? Admins and OJT coordinators, pick Employee above."
-                    : "Intern? Students on OJT, pick Intern above."}
-                </div>
+                <div className="lf-switch">Need help? Contact your OJT coordinator.</div>
               </div>
             </section>
+
           </div>
         </div>
       </div>
@@ -502,19 +648,7 @@ export default function LoginForm({ variant = "student" }) {
               </>
             )}
 
-            {panel === "forgot" && (
-              <>
-                <h3>Forgot your password?</h3>
-                <p className="lf-modal-lead">No worries, it happens to everyone.</p>
-                <p>
-                  {isStudent
-                    ? "Message your OJT coordinator and ask for a password reset. Include your full name and the email you use to sign in."
-                    : "Contact the system administrator and ask for a password reset. Include your full name and the email you use to sign in."}
-                </p>
-                <p>Once your account is reset, you'll get a new password you can use to sign in right away.</p>
-                <p className="lf-modal-note">Signed up with Google? Use the "Sign in with Google" button instead. No password needed.</p>
-              </>
-            )}
+            {panel === "forgot" && <RecoverFlow onDone={() => setPanel(null)} />}
 
             {panel === "faqs" && (
               <>
@@ -656,8 +790,8 @@ const css = `
 
   /* ── The tap scene ── */
   .lf-scene {
-    position: absolute; z-index: 3; right: clamp(24px, 5vw, 68px); top: 50%;
-    width: 300px; height: 330px; margin-top: -165px;
+    position: absolute; z-index: 3; right: clamp(24px, 5vw, 68px); top: 56%;
+    width: 300px; height: 330px; margin-top: -135px;
   }
   .lf-reader { position: absolute; left: 75px; top: 160px; width: 150px; height: 150px; }
   .lf-reader-pad {
@@ -712,8 +846,8 @@ const css = `
   .lf-orb.o3 { width: 160px; height: 160px; bottom: 90px; right: -50px; background: radial-gradient(circle, rgba(255,190,150,0.5), rgba(255,190,150,0)); }
 
   .lf-card {
-    position: relative; margin: auto; background: rgba(255,255,255,0.92); width: 100%; max-width: 400px; border-radius: 28px;
-    padding: 24px 30px 22px; border: 1px solid rgba(255,255,255,0.9);
+    position: relative; margin: auto; background: rgba(255,255,255,0.92); width: 100%; max-width: 400px; border-radius: 10px;
+    padding: 24px 30px 22px;
     box-shadow: 0 30px 70px rgba(150,52,20,0.16), 0 2px 8px rgba(27,20,16,0.05);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     animation: lf-rise .6s cubic-bezier(.2,.8,.2,1) both;
@@ -822,6 +956,72 @@ const css = `
   .lf-faq-plus { color: var(--o); font-size: 18px; transition: transform .2s; }
   .lf-faq-item.open .lf-faq-plus { transform: rotate(45deg); }
   .lf-faq-item p { padding: 0 15px 12px; margin: 0; }
+
+
+  /* ───── Recover account ───── */
+  .lf-rec form { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .lf-rec label { font-size: 12px; font-weight: 600; color: var(--mut); margin-top: 4px; }
+  .lf-rec input[type="text"], .lf-rec input[type="password"], .lf-rec input[type="date"], .lf-rec input:not([type]) {
+    width: 100%; padding: 11px 13px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--field);
+    font-size: 14px; font-family: inherit; color: var(--ink);
+  }
+  .lf-rec input:focus { outline: none; background: #fff; border-color: var(--o); box-shadow: 0 0 0 4px rgba(232,88,42,0.14); }
+  .lf-rec-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--field); border-radius: 12px; margin-top: 8px; }
+  .lf-rec-tabs button { padding: 8px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; font-size: 13px; color: var(--mut); cursor: pointer; }
+  .lf-rec-tabs button.on { background: #fff; color: var(--o); box-shadow: 0 2px 8px rgba(27,20,16,.08); }
+  .lf-rec-check { display: flex; align-items: center; gap: 8px; font-weight: 500 !important; cursor: pointer; }
+  .lf-rec-btn { margin-top: 8px; padding: 13px; border: 0; border-radius: 14px; cursor: pointer; color: #fff; font-size: 14.5px; font-weight: 700; background: linear-gradient(135deg, var(--o2), #e04a1a); box-shadow: 0 10px 22px var(--o-glow); }
+  .lf-rec-btn:disabled { opacity: .7; cursor: default; }
+  .lf-rec-msg { border-radius: 12px; padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+  .lf-rec-msg.ok { background: #e6f7ee; color: #15803d; }
+  .lf-rec-msg.err { background: #fef2f2; color: #dc2626; }
+  .lf-rec-alt { display: block; margin: 14px auto 0; }
+
+
+  /* ───── Log in dropdown ───── */
+  .lf-main { position: relative; }
+  .lf-login-link {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px;
+    background: none; border: none; border-radius: 10px; cursor: pointer;
+    font-size: 14px; font-weight: 600; color: #3d322c; transition: color .15s, background .15s;
+  }
+  .lf-login-link svg { width: 17px; height: 17px; }
+  .lf-login-link:hover, .lf-login-link.open { color: var(--o); background: var(--o-soft); }
+  .lf-login-link:focus-visible { outline: 2px solid var(--o); outline-offset: 2px; }
+  .lf-drop {
+    position: absolute; top: 0; right: 24px; z-index: 25; width: 380px; max-width: calc(100% - 24px);
+    background: #fff; border-radius: 0 0 10px 10px; padding: 22px 22px 20px;
+    box-shadow: 0 24px 60px rgba(27,20,16,0.28), 0 2px 8px rgba(27,20,16,0.08);
+    animation: lf-pop .2s ease-out;
+  }
+  .lf-drop .lf-form { gap: 12px; }
+  /* the picture always covers its box without being squashed */
+  .lf-campus { object-fit: cover; object-position: center 35%; }
+
+
+  /* ───── Info panel (right) ───── */
+  .lf-info { max-width: 410px; }
+  .lf-info .lf-welcome { margin-top: 12px; font-size: 22px; }
+  .lf-info .lf-welcome-sub { margin: 4px auto 12px; }
+  .lf-now { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12.5px; color: var(--mut); background: var(--field); border-radius: 99px; padding: 7px 14px; }
+  .lf-now b { color: var(--ink); font-weight: 700; }
+  .lf-now-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+  .lf-info-h { margin: 16px 0 8px; font-family: var(--display); font-size: 13px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; color: var(--o); }
+  .lf-steps { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .lf-steps li { display: flex; gap: 12px; align-items: flex-start; }
+  .lf-steps li > span { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--o-soft); color: var(--o); font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  .lf-steps b { display: block; font-size: 13.5px; }
+  .lf-steps small { display: block; margin-top: 1px; font-size: 12px; line-height: 1.45; color: var(--mut); }
+  .lf-roles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .lf-roles-grid > div { display: grid; grid-template-columns: auto 1fr; column-gap: 9px; align-items: center; padding: 9px 11px; background: var(--field); border-radius: 12px; color: var(--o); }
+  .lf-roles-grid svg { grid-row: span 2; width: 18px; height: 18px; }
+  .lf-roles-grid b { font-size: 12.5px; color: var(--ink); }
+  .lf-roles-grid small { font-size: 11px; color: var(--mut); }
+  .lf-info-cta { width: 100%; margin-top: 16px; }
+  @media (max-height: 900px) and (min-width: 901px) {
+    .lf-info .lf-welcome-sub, .lf-now { display: none; }
+    .lf-info-h { margin-top: 12px; }
+  }
 
   /* ───── Motion ───── */
   @keyframes lf-slidein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

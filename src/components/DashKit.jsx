@@ -6,7 +6,40 @@ import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../assets/logo.png";
 
 const API = "http://localhost:8000/api";
-export const REQUIRED_HOURS = 486;
+export const REQUIRED_HOURS = 486; // fallback when an intern has no program set
+
+/* ── Required OJT hours per program ──────────────────────────────
+   EXAMPLE VALUES ONLY — replace with the real numbers from the CCIS OJT office. */
+export const PROGRAM_HOURS = { BSIT: 486, BSIS: 400, BSCS: 300 };
+export const PROGRAMS = Object.keys(PROGRAM_HOURS);
+export function programKey(program) {
+  const p = String(program || "").toUpperCase();
+  if (/BSIT|INFORMATION\s+TECH/.test(p)) return "BSIT";
+  if (/BSIS|INFORMATION\s+SYS/.test(p)) return "BSIS";
+  if (/BSCS|COMPUTER\s+SCI/.test(p)) return "BSCS";
+  return null;
+}
+export const requiredHoursFor = (program) => PROGRAM_HOURS[programKey(program)] ?? REQUIRED_HOURS;
+
+/* ── Internship requirements (edit the lists here) ── */
+export const PRE_REQUIREMENTS = [
+  { key: "letter_of_intent", label: "Letter of Intent", hint: "With your CV attached" },
+  { key: "endorsement_letter", label: "Endorsement Letter", hint: "Signed by the OJT Coordinator, Chairperson and Dean of CCIS" },
+  { key: "moa", label: "Memorandum of Agreement (MOA)", hint: "Must be approved and notarized — hours are not credited without it" },
+  { key: "internship_contract", label: "Student Internship Contract" },
+  { key: "medical_certificate", label: "Medical Certificate" },
+  { key: "personal_history", label: "Student Trainee's Personal History", hint: "A4 size" },
+  { key: "parents_consent", label: "Parents' Consent" },
+  { key: "pledge", label: "Student's Pledge" },
+  { key: "acceptance_form", label: "Acceptance Form" },
+  { key: "insurance", label: "Insurance" },
+];
+export const POST_REQUIREMENTS = [
+  { key: "certificate_of_completion", label: "Certificate of Completion" },
+  { key: "evaluation_forms", label: "Evaluation Forms" },
+  { key: "narrative_report", label: "Narrative Report" },
+  { key: "dtr", label: "Daily Time Record (DTR)", hint: "Signed copy" },
+];
 const STORAGE = "http://localhost:8000/storage/";
 
 // Two lines shown next to the logo when the sidebar is open
@@ -26,9 +59,10 @@ export function greeting() {
   if (h < 12) return "Good morning";
   if (h < 18) return "Good afternoon";
   return "Good evening";
-}
+} 
 
-// Total hours from a list of attendance records (first check-in / check-out per date)
+// Total hours from a list of attendance records (first check-in / check-out per date).
+// A check-out that is not later than the check-in is ignored (this used to cause negative hours).
 export function calcHours(recs) {
   let total = 0;
   const byDate = {};
@@ -38,7 +72,10 @@ export function calcHours(recs) {
     if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
   });
   Object.values(byDate).forEach(({ in: i, out: o }) => {
-    if (i && o) total += (new Date(o) - new Date(i)) / 3600000;
+    if (i && o) {
+      const h = (new Date(o) - new Date(i)) / 3600000;
+      if (h > 0) total += h;
+    }
   });
   return Math.round(total * 10) / 10;
 }
@@ -85,7 +122,12 @@ const PATHS = {
   search: <><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></>,
   trash: <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14M10 11v6M14 11v6" />,
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
+  eye: <><path d="M2 12s3.5-7.5 10-7.5S22 12 22 12s-3.5 7.5-10 7.5S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>,
+  eyeoff: <><path d="M17.9 17.9A10.4 10.4 0 0 1 12 19.5C5.5 19.5 2 12 2 12a18 18 0 0 1 4.1-5.1M9.9 4.6A9.7 9.7 0 0 1 12 4.5c6.5 0 10 7.5 10 7.5a18 18 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2" /><path d="M3 3l18 18" /></>,
+  key: <><circle cx="8" cy="15" r="4" /><path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2" /></>,
+  pencil: <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />,
   x: <path d="M6 6l12 12M18 6L6 18" />,
+  lock: <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
   print: <><path d="M6 9V3h12v6" /><rect x="3" y="9" width="18" height="9" rx="2" /><path d="M7 14h10v7H7z" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   camera: <><path d="M4 8a2 2 0 0 1 2-2h1.5l1-2h7l1 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><circle cx="12" cy="13" r="3.5" /></>,
@@ -309,7 +351,8 @@ export function PhotoPicker({ file, onChange }) {
   );
 }
 
-export function Modal({ title, sub, onClose, children }) {
+// `actions` = optional buttons shown beside the X (e.g. an Edit button); `wide` = bigger window
+export function Modal({ title, sub, onClose, actions, wide, children }) {
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -318,13 +361,16 @@ export function Modal({ title, sub, onClose, children }) {
 
   return createPortal(
     <div className="ix-modal-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="ix-modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={wide ? "ix-modal wide" : "ix-modal"} role="dialog" aria-modal="true" aria-label={title}>
         <header>
           <div>
             <h2>{title}</h2>
             {sub && <p>{sub}</p>}
           </div>
-          <button className="ix-modal-x" onClick={onClose} aria-label="Close"><Icon name="x" size={16} /></button>
+          <div className="ix-modal-tools">
+            {actions}
+            <button className="ix-modal-x" onClick={onClose} aria-label="Close"><Icon name="x" size={16} /></button>
+          </div>
         </header>
         <div className="ix-modal-body">{children}</div>
       </div>
@@ -333,221 +379,588 @@ export function Modal({ title, sub, onClose, children }) {
   );
 }
 
-/* Inline profile panel (shown on the Monitor Interns page, not a modal) */
-function InternProfile({ u, records, today, onClose, onRefresh, canEdit = false }) {
+/* Account security: recovery code (view / replace) and change password.
+   Each action asks for the current password in a small window. Used on every "My Profile" page. */
+function PwInput({ value, onChange, placeholder, autoComplete, autoFocus }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="sec-pw">
+      <input
+        type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder} autoComplete={autoComplete} autoFocus={autoFocus}
+      />
+      <button type="button" onClick={() => setShow((v) => !v)} aria-label={show ? "Hide password" : "Show password"}>
+        <Icon name={show ? "eye" : "eyeoff"} size={18} />
+      </button>
+    </div>
+  );
+}
+
+export function AccountSecurity({ user }) {
+  const [dob, setDob] = useState(null);
+  const [code, setCode] = useState(null);       // the code, once revealed
+  const [ask, setAsk] = useState(null);         // null | "show" | "new" | "pw"
+  const [pw, setPw] = useState("");
+  const [np, setNp] = useState("");
+  const [np2, setNp2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [note, setNote] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/me?user_id=${user.id}`).then((r) => r.json())
+      .then((d) => setDob(d?.date_of_birth ? String(d.date_of_birth).slice(0, 10) : ""))
+      .catch(() => setDob(""));
+  }, [user.id]);
+
+  const close = () => { setAsk(null); setPw(""); setNp(""); setNp2(""); setErr(null); setBusy(false); };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr(null);
+    if (ask === "pw") {
+      if (np.length < 6) { setErr("New password must be at least 6 characters."); return; }
+      if (np !== np2) { setErr("The new passwords don't match."); return; }
+    }
+    const path = ask === "show" ? "/account/recovery-code"
+      : ask === "new" ? "/account/recovery-code/regenerate" : "/account/change-password";
+    setBusy(true);
+    try {
+      const res = await fetch(`${API}${path}`, {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ user_id: user.id, password: pw, ...(ask === "pw" ? { new_password: np } : {}) }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.status === 429) throw new Error("Too many tries. Please wait a minute.");
+      if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Something went wrong.");
+      if (ask === "pw") { setCode(null); setNote({ type: "success", text: "Password changed." }); }
+      else { setCode(d.code); setNote(ask === "new" ? { type: "success", text: "New recovery code created. The old one no longer works." } : null); }
+      close();
+    } catch (er) {
+      setErr(er instanceof TypeError ? "Couldn't reach the server." : er.message);
+      setBusy(false);
+    }
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
+  };
+
+  const dobLabel = dob ? new Date(dob + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" }) : null;
+  const titles = { show: "View recovery code", new: "Make a new recovery code", pw: "Change Password" };
+
+  return (
+    <section className="ix-card sec-card">
+      <div className="ix-card-label">Account security</div>
+      <Msg msg={note} />
+
+      <div className="sec-row2">
+        <div className="sec-label">Account Recovery Code</div>
+        <div className="sec-value">
+          <code className={code ? "show" : ""}>{code || "••••••••"}</code>
+          {code && <button type="button" className="sec-ic" onClick={copy} aria-label="Copy code"><small>{copied ? "Copied" : "Copy"}</small></button>}
+          <button type="button" className="sec-ic" aria-label={code ? "Hide code" : "Show code"}
+            onClick={() => (code ? setCode(null) : setAsk("show"))}>
+            <Icon name={code ? "eye" : "eyeoff"} size={18} />
+          </button>
+          <button type="button" className="sec-ic" aria-label="Make a new code" title="Make a new code" onClick={() => setAsk("new")}>
+            <Icon name="pencil" size={17} />
+          </button>
+        </div>
+        <small className="sec-hint">Use it on the login page (Forgot password?) to set a new password. It changes after every use, so check this page for the new one.</small>
+      </div>
+
+      <div className="sec-row2">
+        <div className="sec-label">Date of birth</div>
+        <div className="sec-value"><strong>{dob === null ? "…" : dobLabel || "Not set"}</strong></div>
+        <small className="sec-hint">{dob === "" ? "Ask your administrator to add it. It can also be used to recover your account." : "Set by your administrator. It can also be used to recover your account."}</small>
+      </div>
+
+      <button type="button" className="ix-b warn sec-change" onClick={() => setAsk("pw")}>
+        <Icon name="key" size={16} /> Change Password
+      </button>
+
+      {ask && (
+        <Modal title={titles[ask]} sub={ask === "pw" ? null : "Enter your password to continue."} onClose={close}>
+          <form onSubmit={submit} className="sec-form">
+            {err && <div className="ix-hint" style={{ color: "#dc2626" }} role="alert">{err}</div>}
+            <PwInput value={pw} onChange={setPw} placeholder="Current Password" autoComplete="current-password" autoFocus />
+            {ask === "pw" && (
+              <>
+                <PwInput value={np} onChange={setNp} placeholder="New Password" autoComplete="new-password" />
+                <PwInput value={np2} onChange={setNp2} placeholder="Re-type Password" autoComplete="new-password" />
+              </>
+            )}
+            {ask === "new" && <small className="sec-hint">Your current code will stop working.</small>}
+            <div className="ix-form-actions">
+              <button type="button" className="ix-b ghost" onClick={close} disabled={busy}>Cancel</button>
+              <button type="submit" className="ix-b primary" disabled={busy || !pw}>{busy ? "Please wait..." : ask === "pw" ? "Save" : "Continue"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+/* "My Profile" page for admin, coordinator and supervisor (their own account) */
+export function MyProfile({ user }) {
+  const [me, setMe] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/me?user_id=${user.id}`);
+      const d = await res.json();
+      if (res.ok) setMe(d);
+      else setMsg({ type: "error", text: d.message || "Could not load your profile." });
+    } catch {
+      setMsg({ type: "error", text: "Couldn't reach the server." });
+    }
+  }, [user.id]);
+  useEffect(() => { load(); }, [load]);
+
+  if (!me) return (<><PageHeader title="My Profile" sub="Your account information." />{msg ? <Msg msg={msg} /> : <Spinner />}</>);
+
+  const parts = (me.name || "").trim().split(/\s+/);
+  const base = () => ({
+    first_name: me.first_name || parts[0] || "",
+    middle_name: me.middle_name || "",
+    last_name: me.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
+    contact_number: me.contact_number || "",
+    address: me.address || "",
+  });
+  const setField = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+
+  const save = async () => {
+    const clean = Object.fromEntries(Object.entries(draft).map(([k, v]) => [k, String(v).trim()]));
+    if (!clean.first_name || !clean.last_name) { setMsg({ type: "error", text: "First name and last name are required." }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      const res = await fetch(`${API}/admin/users/${me.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(clean),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((data?.errors && Object.values(data.errors)[0]?.[0]) || data?.message || "Could not save the changes.");
+
+      let photo = me.photo;
+      if (photoFile) {
+        const fd = new FormData();
+        fd.append("photo", photoFile);
+        const rp = await fetch(`${API}/admin/users/${me.id}/photo`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
+        const pd = await rp.json().catch(() => null);
+        if (!rp.ok) throw new Error(pd?.message || "Details saved, but the photo could not be uploaded.");
+        photo = pd.photo;
+      }
+
+      // keep the signed-in session (sidebar name / photo) in step
+      try {
+        const cur = JSON.parse(sessionStorage.getItem("user") || "{}");
+        sessionStorage.setItem("user", JSON.stringify({ ...cur, name: data.name || cur.name, photo }));
+      } catch { /* ignore */ }
+
+      setEditing(false); setPhotoFile(null);
+      setMsg({ type: "success", text: "Profile updated." });
+      await load();
+      if (photoFile || data.name !== user.name) setTimeout(() => window.location.reload(), 700);
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setSaving(false); }
+  };
+
+  const rows = [
+    { key: "first_name", label: "First name", view: base().first_name || "—" },
+    { key: "middle_name", label: "Middle name", view: me.middle_name || "—" },
+    { key: "last_name", label: "Last name", view: base().last_name || "—" },
+    { label: "Email", view: me.email || "—" },
+    { label: "Role", view: ROLE_LABEL[me.role] || me.role },
+    { key: "contact_number", label: "Contact", type: "tel", view: me.contact_number || "—" },
+    { key: "address", label: "Address", view: me.address || "—" },
+  ];
+
+  return (
+    <>
+      <PageHeader title="My Profile" sub="Your account information." />
+      <section className="imp-panel" style={{ marginTop: 0 }}>
+        <div className="imp-tools">
+          {!editing && (
+            <button type="button" className="ix-b ghost sm" onClick={() => { setDraft(base()); setMsg(null); setEditing(true); }}>
+              <Icon name="settings" size={14} /> Edit
+            </button>
+          )}
+        </div>
+        <div className="imp-top">
+          <div className="imp-who">
+            <Avatar name={me.name} photo={me.photo} size={96} />
+            <h2>{me.name}</h2>
+            <Badge label={ROLE_LABEL[me.role] || me.role} type={"r-" + me.role} />
+            {editing && (
+              <label className="ix-b ghost sm" style={{ cursor: "pointer", position: "relative" }}>
+                <input
+                  type="file" accept="image/*" style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]; e.target.value = "";
+                    if (!f) return;
+                    if (!f.type.startsWith("image/") || f.size > 2 * 1024 * 1024) { setMsg({ type: "error", text: "Choose an image under 2 MB." }); return; }
+                    setPhotoFile(f);
+                  }}
+                />
+                <Icon name="camera" size={14} /> {photoFile ? photoFile.name.slice(0, 14) : "Change photo"}
+              </label>
+            )}
+          </div>
+          <dl className="imp-info">
+            {rows.map((f) => (
+              <div key={f.label}>
+                <dt>{f.label}</dt>
+                <dd title={String(f.view)}>
+                  {editing && f.key
+                    ? <input className="imp-edit" type={f.type || "text"} value={draft[f.key]} onChange={setField(f.key)} aria-label={f.label} />
+                    : f.view}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+        {editing && (
+          <div className="imp-edit-bar">
+            <button type="button" className="ix-b ghost" disabled={saving} onClick={() => { setEditing(false); setPhotoFile(null); setMsg(null); }}>Cancel</button>
+            <button type="button" className="ix-b primary" disabled={saving} onClick={save}>{saving ? "Saving..." : "Save changes"}</button>
+          </div>
+        )}
+        {msg && <div style={{ marginTop: 14 }}><Msg msg={msg} /></div>}
+      </section>
+      <AccountSecurity user={user} />
+    </>
+  );
+}
+
+/* Inline profile panel on Monitor Interns: attendance focus only.
+   Personal details live in Manage Accounts (View). */
+function InternProfile({ u, records, today, onClose, onViewRecords }) {
   const recs = records.filter((r) => r.user_id === u.id);
   const isIn = recs.some((r) => r.date === today && r.action === "CHECK_IN" && !r.checked_out_at);
   const days = [...new Set(recs.map((r) => r.date))].length;
   const total = calcHours(recs);
   const outputBased = u.tracking_type === "output";
-  const pct = Math.min(Math.round((total / REQUIRED_HOURS) * 100), 100);
-  const left = Math.max(Math.round((REQUIRED_HOURS - total) * 10) / 10, 0);
+  const required = requiredHoursFor(u.program);
+  const pct = Math.min(Math.round((total / required) * 100), 100);
+  const left = Math.max(Math.round((required - total) * 10) / 10, 0);
   const onsite = recs.filter((r) => r.uid !== "ONLINE").length;
   const online = recs.filter((r) => r.uid === "ONLINE").length;
-  const recent = [...recs]
-    .sort(
-      (a, b) =>
-        String(b.date).localeCompare(String(a.date)) ||
-        String(b.checked_in_at || "").localeCompare(String(a.checked_in_at || ""))
-    )
-    .slice(0, 5);
-
-  const parts = (u.name || "").trim().split(/\s+/);
   const studentId = u.student_id || u.student_number || "—";
 
-  // the values the form starts from (the page re-polls every few seconds, so edits live in their own state)
-  const baseFields = () => ({
-    first_name: u.first_name || parts[0] || "",
-    middle_name: u.middle_name || "",
-    last_name: u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
-    contact_number: u.contact_number || "",
-    address: u.address || "",
-    program: u.program || "",
-    semester: u.semester || "",
-    placement: u.placement || "",
-    work_mode: u.work_mode || "onsite",
-    tracking_type: u.tracking_type || "hours",
-    uid: u.nfc_uid || "",
-  });
-
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(baseFields);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState(null);
-
-  const startEdit = () => { setDraft(baseFields()); setMsg(null); setEditing(true); };
-  const cancelEdit = () => { setEditing(false); setMsg(null); };
-  const setField = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
-
-  const save = async () => {
-    const clean = Object.fromEntries(Object.entries(draft).map(([k, v]) => [k, String(v).trim()]));
-    if (!clean.first_name || !clean.last_name) {
-      setMsg({ type: "error", text: "First name and last name are required." });
-      return;
-    }
-    setSaving(true); setMsg(null);
-    try {
-      const res = await fetch(`${API}/admin/users/${u.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(clean),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        const firstError = data?.errors ? Object.values(data.errors)[0]?.[0] : null;
-        throw new Error(
-          firstError || data?.message ||
-          (res.status === 404 || res.status === 405
-            ? "Saving profile details isn't set up on the server yet."
-            : "Could not save the changes.")
-        );
-      }
-
-      setEditing(false);
-      setMsg({ type: "success", text: "Profile updated." });
-      onRefresh && onRefresh();
-    } catch (err) {
-      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
-    } finally {
-      setSaving(false);
-    }
+  const todayRecs = recs.filter((r) => r.date === today);
+  const tIn = todayRecs.find((r) => r.checked_in_at)?.checked_in_at;
+  const tOut = todayRecs.find((r) => r.checked_out_at)?.checked_out_at;
+  const lastDate = recs.map((r) => r.date).sort().pop();
+  const fmtDate = (d) => {
+    const x = new Date(d + "T00:00:00");
+    return isNaN(x) ? d : x.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
   };
 
-  // key = editable draft field, options = renders a dropdown, no key = read-only
-  const fields = [
-    { key: "first_name", label: "First name", view: u.first_name || parts[0] || "—" },
-    { key: "middle_name", label: "Middle name", view: u.middle_name || "—" },
-    { key: "last_name", label: "Last name", view: u.last_name || (parts.length > 1 ? parts[parts.length - 1] : "—") },
-    { label: "Email", view: u.email || "—" },
-    { key: "contact_number", label: "Contact", type: "tel", view: u.contact_number || "—" },
-    { key: "address", label: "Address", view: u.address || "—" },
-    { label: "College", view: u.college || "CCIS" },
-    {
-      key: "program", label: "Program", view: u.program || "—",
-      options: [["", "Select program"], ["BSIT - 4", "BSIT - 4"], ["BSCS - 4", "BSCS - 4"], ["BSIS - 4", "BSIS - 4"]],
-    },
-    {
-      key: "semester", label: "Semester", view: u.semester || "—",
-      options: [["", "Select semester"], ["1st Semester", "1st Semester"], ["2nd Semester", "2nd Semester"]],
-    },
-    { key: "placement", label: "Placement", view: u.placement || "—" },
-    {
-      key: "work_mode", label: "Work mode", view: u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite",
-      options: [["onsite", "Onsite"], ["offsite", "Offsite (WFH)"]],
-    },
-    {
-      key: "tracking_type", label: "Tracking", view: outputBased ? "Output-based" : "Hours-based",
-      options: [["hours", "Hours-based"], ["output", "Output-based"]],
-    },
-    { key: "uid", label: "NFC UID", view: u.nfc_uid || "Not linked" },
-    {
-      label: "Status",
-      view: outputBased ? "Output-based" : pct >= 100 ? "Complete" : pct >= 50 ? "Halfway" : "In Progress",
-    },
-  ];
+  const emergencyWho = [u.emergency_contact_name, u.emergency_contact_relation && `(${u.emergency_contact_relation})`]
+    .filter(Boolean).join(" ");
+
+  const cell = (label, value) => (
+    <div className="ipv-cell" key={label}>
+      <span className="ipv-label">{label}</span>
+      <div className="ipv-value">{value}</div>
+    </div>
+  );
 
   return (
-    <section className="imp-panel" aria-label={`Profile of ${u.name}`}>
-      <div className="imp-tools">
-        {canEdit && !editing && (
-          <button type="button" className="ix-b ghost sm" onClick={startEdit}>
-            <Icon name="settings" size={14} /> Edit
-          </button>
-        )}
-        <button className="imp-close" onClick={onClose} aria-label="Close profile">
-          <Icon name="x" size={16} />
-        </button>
-      </div>
-
-      <div className="imp-top">
-        <div className="imp-who">
-          <Avatar name={u.name} photo={u.photo} size={96} status={isIn ? "on" : "off"} />
+    <section className="imp-panel ipv" aria-label={`Profile of ${u.name}`}>
+      {/* header */}
+      <div className="ipv-head">
+        <Avatar name={u.name} photo={u.photo} size={84} status={isIn ? "on" : "off"} />
+        <div className="ipv-head-main">
           <h2>{u.name}</h2>
-          <span className="imp-sid">Student ID: <strong>{studentId}</strong></span>
+          <div className="ipv-head-sub">
+            <span>Student ID <strong>{studentId}</strong></span>
+            {u.program && <span>{u.program}</span>}
+            {u.placement && <span>{u.placement}</span>}
+          </div>
           <Badge label={isIn ? "Present Now" : "Not In"} type={isIn ? "in" : "out"} />
         </div>
-
-        <dl className="imp-info">
-          {fields.map((f) => (
-            <div key={f.label}>
-              <dt>{f.label}</dt>
-              <dd title={editing && f.key ? undefined : String(f.view)}>
-                {editing && f.key ? (
-                  f.options ? (
-                    <select className="imp-edit" value={draft[f.key]} onChange={setField(f.key)} aria-label={f.label}>
-                      {f.options.map(([val, text]) => <option key={val} value={val}>{text}</option>)}
-                    </select>
-                  ) : (
-                    <input
-                      className="imp-edit" type={f.type || "text"} value={draft[f.key]}
-                      onChange={setField(f.key)} aria-label={f.label}
-                    />
-                  )
-                ) : f.view}
-              </dd>
-            </div>
-          ))}
-        </dl>
+        <div className="ipv-head-actions">
+          <button className="imp-close" onClick={onClose} aria-label="Close profile"><Icon name="x" size={16} /></button>
+        </div>
       </div>
 
-      {editing && (
-        <div className="imp-edit-bar">
-          <button type="button" className="ix-b ghost" onClick={cancelEdit} disabled={saving}>Cancel</button>
-          <button type="button" className="ix-b primary" onClick={save} disabled={saving}>
-            {saving ? "Saving..." : "Save changes"}
-          </button>
+      {/* today */}
+      <div className="ipv-block">
+        <h3 className="ipv-title">Today</h3>
+        <div className="ipv-grid c3">
+          {cell("Time in", tIn ? fmtTime(tIn) : "Not in yet")}
+          {cell("Time out", tOut ? fmtTime(tOut) : tIn ? <Badge label="Still in" type="in" /> : "—")}
+          {cell("Last record", lastDate ? fmtDate(lastDate) : "—")}
         </div>
-      )}
-      {msg && <div style={{ marginTop: 14 }}><Msg msg={msg} /></div>}
-
-      <div className="imp-stats">
-        <div><strong>{days}</strong><span>Days present</span></div>
-        <div><strong>{onsite}</strong><span>Onsite taps</span></div>
-        <div><strong>{online}</strong><span>Online logs</span></div>
-        <div><strong>{outputBased ? "—" : total + "h"}</strong><span>Hours rendered</span></div>
       </div>
 
-      {outputBased ? (
-        <div className="ix-note" style={{ marginTop: 14 }}>
-          <Icon name="info" size={18} />
-          <span>This intern is <strong>output-based</strong>, so progress is measured by submitted MOVs, not hours.</span>
+      {/* quick contact */}
+      <div className="ipv-block">
+        <h3 className="ipv-title">Contact</h3>
+        <div className="ipv-grid c3">
+          {cell("Contact number", u.contact_number || "—")}
+          {cell("Emergency contact", emergencyWho || "Not set")}
+          {cell("Emergency number", u.emergency_contact_number || "—")}
         </div>
-      ) : (
-        <div className="imp-progress">
-          <div className="imp-progress-row">
-            <span>OJT progress</span>
-            <strong>{total}h of {REQUIRED_HOURS}h · {left}h left</strong>
+      </div>
+
+      {/* attendance summary + progress */}
+      <div className="ipv-block">
+        <div className="ipv-title-row">
+          <h3 className="ipv-title">Attendance summary</h3>
+          {onViewRecords && (
+            <button type="button" className="ix-b ghost sm" onClick={onViewRecords}>
+              <Icon name="list" size={14} /> View all records
+            </button>
+          )}
+        </div>
+        <div className="ipv-grid c4 ipv-stats">
+          <div className="ipv-cell"><strong>{days}</strong><span>Days present</span></div>
+          <div className="ipv-cell"><strong>{onsite}</strong><span>Onsite taps</span></div>
+          <div className="ipv-cell"><strong>{online}</strong><span>Online logs</span></div>
+          <div className="ipv-cell"><strong>{outputBased ? "—" : total + "h"}</strong><span>Hours rendered</span></div>
+        </div>
+
+        {outputBased ? (
+          <div className="ix-note" style={{ marginTop: 14 }}>
+            <Icon name="info" size={18} />
+            <span>This intern is <strong>output-based</strong>, so progress is measured by submitted MOVs, not hours.</span>
           </div>
-          <div className="ix-prog"><Bar pct={pct} /><span>{pct}%</span></div>
-        </div>
-      )}
-
-      <div className="imp-recent">
-        <h3>Recent attendance</h3>
-        <Table
-          headers={["Date", "Type", "Action", "Time In", "Time Out"]}
-          rows={recent.map((r) => [
-            r.date,
-            <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
-            <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-            fmtTime(r.checked_in_at),
-            fmtTime(r.checked_out_at),
-          ])}
-          empty="No attendance records yet."
-        />
+        ) : (
+          <div className="ipv-progress">
+            <div className="ipv-progress-row">
+              <span>OJT progress</span>
+              <span><strong>{total}h</strong> of {required}h · {left}h left</span>
+            </div>
+            <div className="ipv-bar-line">
+              <div className="ipv-bar"><div className="ix-bar-fill" style={{ width: `${Math.max(0, pct)}%` }} /></div>
+              <strong>{pct}%</strong>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-/* Shared "Monitor Interns" page (same for admin and coordinator) */
-// canEdit is off by default: Monitor Interns is view-only. Editing lives in Manage Accounts (admin).
-export function InternMonitor({ interns, records, loading, onRefresh, canEdit = false }) {
+/* Read-only details (same look as the Monitor Interns profile). Used in the View window in Manage Accounts. */
+export function UserDetails({ u }) {
+  const isIntern = u.role === "intern";
+  const parts = (u.name || "").trim().split(/\s+/);
+  const bday = u.date_of_birth
+    ? new Date(String(u.date_of_birth).slice(0, 10) + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
+    : "—";
+
+  const cell = (label, value, full = false) => (
+    <div className="ipv-cell" key={label} style={full ? { gridColumn: "1 / -1" } : undefined}>
+      <span className="ipv-label">{label}</span>
+      <div className="ipv-value">{value || "—"}</div>
+    </div>
+  );
+
+  return (
+    <div className="ipv ipv-modal">
+      {/* header (same as Monitor Interns) */}
+      <div className="ipv-head">
+        <Avatar name={u.name} photo={u.photo} size={84} />
+        <div className="ipv-head-main">
+          <h2>{u.name}</h2>
+          <div className="ipv-head-sub">
+            <span>{isIntern ? "Student ID" : "Employee ID"} <strong>{u.student_id || "—"}</strong></span>
+            {isIntern && u.program && <span>{u.program}</span>}
+            {isIntern && u.placement && <span>{u.placement}</span>}
+          </div>
+          <Badge label={ROLE_LABEL[u.role] || u.role} type={"r-" + u.role} />
+        </div>
+      </div>
+
+      <div className="ipv-block">
+        <h3 className="ipv-title">Personal information</h3>
+        <div className="ipv-grid c3">
+          {cell("First name", u.first_name || parts[0])}
+          {cell("Middle name", u.middle_name)}
+          {cell("Last name", u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""))}
+          {cell("Birthday", bday)}
+          {cell("Email", u.email)}
+          {cell("Contact number", u.contact_number)}
+          {cell("Address", u.address, true)}
+        </div>
+      </div>
+
+      {isIntern && (
+        <>
+          <div className="ipv-block">
+            <h3 className="ipv-title">Internship details</h3>
+            <div className="ipv-grid c3">
+              {cell("College", u.college || "CCIS")}
+              {cell("Program", u.program)}
+              {cell("Semester", u.semester)}
+              {cell("Placement", u.placement)}
+              {cell("Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite")}
+              {cell("Tracking", u.tracking_type === "output" ? "Output-based" : "Hours-based")}
+              {cell("NFC UID", u.nfc_uid || "Not linked", true)}
+            </div>
+          </div>
+
+          <div className="ipv-block">
+            <h3 className="ipv-title">Emergency contact</h3>
+            <div className="ipv-grid c3">
+              {cell("Full name", u.emergency_contact_name)}
+              {cell("Relationship", u.emergency_contact_relation)}
+              {cell("Contact number", u.emergency_contact_number)}
+              {cell("Address", u.emergency_contact_address, true)}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* Shared form for "Add New User" and "Edit User" (same look as the View window) */
+export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions }) {
+  const add = mode === "add";
+  const today = new Date().toISOString().slice(0, 10);
+
+  const cell = (label, control, { full = false, hint, plain = false } = {}) => {
+    const Tag = plain ? "div" : "label";
+    return (
+      <Tag className="ipv-cell uf-cell" key={label} style={full ? { gridColumn: "1 / -1" } : undefined}>
+        <span className="ipv-label">{label}</span>
+        {control}
+        {hint && <small className="uf-hint">{hint}</small>}
+      </Tag>
+    );
+  };
+  const text = (k, props = {}) => (
+    <input className="uf-input" value={f[k] ?? ""} onChange={set(k)} {...props} />
+  );
+
+  return (
+    <div className="ipv ipv-modal">
+      <div className="ipv-head uf-head">
+        {header}
+        {title && (
+          <div className="ipv-head-main">
+            <h2>{title}</h2>
+            {sub && <div className="ipv-head-sub"><span>{sub}</span></div>}
+          </div>
+        )}
+      </div>
+
+      <div className="ipv-block">
+        <h3 className="ipv-title">Personal information</h3>
+        <div className="ipv-grid c3">
+          {cell("First name", text("first_name", { required: true }))}
+          {cell("Middle name", text("middle_name"))}
+          {cell("Last name", text("last_name", { required: true }))}
+          {cell("Birthday", text("date_of_birth", { type: "date", max: today, required: add }),
+            { hint: "Used for account recovery." })}
+          {cell("Contact number", text("contact_number", { type: "tel", placeholder: "e.g. 09123456789" }))}
+          {cell("Email", text("email", { type: "email", required: true, placeholder: "e.g. juan@csu.edu.ph" }))}
+          {cell("Address", text("address", { placeholder: "Street, Barangay, City" }), { full: true })}
+        </div>
+      </div>
+
+      <div className="ipv-block">
+        <h3 className="ipv-title">Account</h3>
+        <div className="ipv-grid c3">
+          {cell(isIntern ? "Student ID" : "Employee ID",
+            text("student_id", { required: add, placeholder: isIntern ? "e.g. 2021-00123" : "e.g. EMP-0001" }),
+            { hint: "Used to sign up for account recovery." })}
+          {add && cell("Role", (
+            <select className="uf-input" value={f.role} onChange={set("role")}>
+              <option value="intern">Intern</option>
+              <option value="ojt_coordinator">OJT Coordinator</option>
+              <option value="supervisor">Supervisor</option>
+              <option value="admin">Admin</option>
+            </select>
+          ))}
+          {cell(add ? "Password" : "Set new password",
+            text("password", {
+              type: "text", autoComplete: "off", required: add, minLength: add ? 6 : undefined,
+              placeholder: add ? "At least 6 characters" : "Leave blank to keep",
+            }))}
+        </div>
+      </div>
+
+      {isIntern && (
+        <>
+          <div className="ipv-block">
+            <h3 className="ipv-title">Internship details</h3>
+            <div className="ipv-grid c3">
+              {cell("College", <input className="uf-input" value="CCIS" disabled readOnly />)}
+              {cell("Program", (
+                <select className="uf-input" value={f.program} onChange={set("program")}>
+                  {!add && <option value="">Select program</option>}
+                  <option value="BSIT - 4">BSIT - 4</option>
+                  <option value="BSCS - 4">BSCS - 4</option>
+                  <option value="BSIS - 4">BSIS - 4</option>
+                </select>
+              ))}
+              {cell("Semester", (
+                <select className="uf-input" value={f.semester} onChange={set("semester")}>
+                  {!add && <option value="">Select semester</option>}
+                  <option value="1st Semester">1st Semester</option>
+                  <option value="2nd Semester">2nd Semester</option>
+                </select>
+              ))}
+              {cell("Placement", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }), { full: true })}
+              {cell("Work mode", (
+                <select className="uf-input" value={f.work_mode} onChange={set("work_mode")}>
+                  <option value="onsite">Onsite</option>
+                  <option value="offsite">Offsite (WFH)</option>
+                </select>
+              ))}
+              {cell("Tracking", (
+                <select className="uf-input" value={f.tracking_type} onChange={set("tracking_type")}>
+                  <option value="hours">Hours-based</option>
+                  <option value="output">Output-based</option>
+                </select>
+              ))}
+              {cell("NFC card UID", uidField, { plain: true })}
+            </div>
+          </div>
+
+          <div className="ipv-block">
+            <h3 className="ipv-title">Emergency contact</h3>
+            <div className="ipv-grid c3">
+              {cell("Full name", text("emergency_contact_name"))}
+              {cell("Relationship", text("emergency_contact_relation", { placeholder: "e.g. Mother" }))}
+              {cell("Contact number", text("emergency_contact_number", { type: "tel" }))}
+              {cell("Address", text("emergency_contact_address"), { full: true })}
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="ipv-block">
+        <div className="ix-form-actions">{actions}</div>
+      </div>
+    </div>
+  );
+}
+
+/* Shared "Monitor Interns" page (same for admin and coordinator).
+   Pass recordsPath (e.g. "/admin/records") to show the "View all records" button. */
+export function InternMonitor({ interns, records, loading, onRefresh, recordsPath = null }) {
   const today = todayManila();
+  const navigate = useNavigate();
   const [saving, setSaving] = useState(null);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [open, setOpen] = useState(false);       // suggestions dropdown
+  const [programFilter, setProgramFilter] = useState("all");
   const [active, setActive] = useState(0);       // highlighted suggestion
   const wrapRef = useRef(null);
   const panelRef = useRef(null);
@@ -560,8 +973,9 @@ export function InternMonitor({ interns, records, loading, onRefresh, canEdit = 
   }, []);
 
   const q = search.trim().toLowerCase();
+  const matchesProgram = (u) => programFilter === "all" || programKey(u.program) === programFilter;
   const suggestions = q
-    ? interns.filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(q)).slice(0, 6)
+    ? interns.filter(matchesProgram).filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(q)).slice(0, 6)
     : [];
 
   // looked up by id so the panel stays live while the page polls
@@ -575,8 +989,7 @@ export function InternMonitor({ interns, records, loading, onRefresh, canEdit = 
   };
   const closeProfile = () => { setSelectedId(null); setSearch(""); };
 
-  // clicking a card opens the profile without changing the search box,
-  // so the rest of the interns stay visible
+  // clicking a card opens the profile without changing the search box
   const openCard = (u) => {
     setSelectedId(u.id);
     setOpen(false);
@@ -609,6 +1022,7 @@ export function InternMonitor({ interns, records, loading, onRefresh, canEdit = 
   };
 
   const rows = interns
+    .filter(matchesProgram)
     .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(q))
     .map((u) => {
       const recs = records.filter((r) => r.user_id === u.id);
@@ -667,17 +1081,32 @@ export function InternMonitor({ interns, records, loading, onRefresh, canEdit = 
           )}
         </div>
 
+        <select
+          className="ix-select"
+          value={programFilter}
+          onChange={(e) => { setProgramFilter(e.target.value); setSelectedId(null); }}
+          aria-label="Filter by program"
+        >
+          <option value="all">All programs</option>
+          <option value="BSIT">BSIT</option>
+          <option value="BSCS">BSCS</option>
+          <option value="BSIS">BSIS</option>
+        </select>
+
         <span className="ix-chip green"><i /> {present} present now</span>
         <span className="ix-chip">{rows.length - present} not in</span>
       </div>
 
       {selected && (
         <div ref={panelRef}>
-          <InternProfile key={selected.id} u={selected} records={records} today={today} onClose={closeProfile} onRefresh={onRefresh} canEdit={canEdit} />
+          <InternProfile
+            key={selected.id} u={selected} records={records} today={today} onClose={closeProfile}
+            onViewRecords={recordsPath ? () => navigate(recordsPath, { state: { search: selected.name } }) : null}
+          />
         </div>
       )}
 
-      {loading ? <Spinner /> : rows.length === 0 ? (
+      {loading ? <Spinner /> : selected ? null : rows.length === 0 ? (
         <div className="ix-card"><Empty icon="users" title="No interns found" /></div>
       ) : (
         <div className="ix-intern-grid">
@@ -735,7 +1164,7 @@ export function AnnouncementBoard({ limit = 3 }) {
       finally { if (alive) setLoading(false); }
     };
     load();
-    const iv = setInterval(load, 15000);
+    const iv = setInterval(() => { if (!document.hidden) load(); }, 15000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
@@ -895,7 +1324,7 @@ function useNotifications(userId) {
 
   useEffect(() => {
     load();
-    const iv = setInterval(load, 10000);
+    const iv = setInterval(() => { if (!document.hidden) load(); }, 20000);
     return () => clearInterval(iv);
   }, [load]);
 
@@ -922,6 +1351,20 @@ export default function Shell({ navItems, user, children }) {
   const [isFull, setIsFull] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
+
+  // student / employee ID and program are not in the login response, so read them from the account
+  const [me, setMe] = useState(null);
+  useEffect(() => {
+    if (!user?.id) return;
+    fetch(`${API}/me?user_id=${user.id}`).then((r) => r.json()).then((d) => setMe(d?.user || d)).catch(() => {});
+    // eslint-disable-next-line
+  }, []);
+  const yearLabel = (p) => {
+    const [prog, yr] = String(p || "").split(/\s*-\s*/);
+    const n = parseInt(yr, 10);
+    const sfx = n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th";
+    return prog ? (n ? `${prog} · ${n}${sfx} Year` : prog) : "";
+  };
 
   const { items: notifications, markRead, markAllRead } = useNotifications(user?.id);
   const unreadCount = notifications.filter((n) => !n.is_read).length;
@@ -1000,14 +1443,6 @@ export default function Shell({ navItems, user, children }) {
         </button>
 
         <div className="ix-nav-right">
-          <div className="ix-user">
-            <Avatar name={user?.name} photo={user?.photo} size={38} />
-            <div className="ix-user-text">
-              <strong>{user?.name || "User"}</strong>
-              <span>{ROLE_LABEL[user?.role] || "Staff"}</span>
-            </div>
-          </div>
-
           <div className="ix-notification-wrap" ref={notifRef}>
             <button
               className="ix-notification-btn"
@@ -1064,11 +1499,13 @@ export default function Shell({ navItems, user, children }) {
         <div className={menuOpen ? "ix-strip open" : "ix-strip"} />
         {menuOpen && <div className="ix-backdrop" onClick={() => setMenuOpen(false)} />}
         <aside className={menuOpen ? "ix-side open" : "ix-side"} aria-label="Main navigation">
-          <div className="ix-side-profile">
+          <div className="ix-side-profile" aria-hidden={!menuOpen}>
             <SquarePhoto name={user?.name} photo={user?.photo} />
             <div className="ix-side-who">
               <strong>{user?.name || "User"}</strong>
-              <span>{ROLE_LABEL[user?.role] || "Staff"}</span>
+              <span className="ix-side-role">{ROLE_LABEL[user?.role] || "Staff"}</span>
+              {me?.student_id && <span className="ix-side-meta">{user?.role === "intern" ? "ID No." : "Employee ID"} · {me.student_id}</span>}
+              {user?.role === "intern" && me?.program && <span className="ix-side-meta">{yearLabel(me.program)}</span>}
             </div>
           </div>
           {navItems.map((it) => (
@@ -1109,7 +1546,7 @@ const css = `
   .ix-nav { height: 75px; flex-shrink: 0; background: #fff; display: flex; align-items: center; gap: 10px; padding: 0 22px 0 15px; position: relative; z-index: 30; box-shadow: 0 4px 14px rgba(15,23,42,0.12); }
   .ix-nav::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; pointer-events: none; background: linear-gradient(90deg, #f2733a, #ffb48f, #f59e0b, #f2733a); background-size: 200% 100%; animation: ix-slide 6s linear infinite; }
   .ix-logo-btn { background: none; border: none; cursor: pointer; display: flex; align-items: center; text-align: left; margin-right: 14px; }
-  .ix-nav-logo { height: 42px; width: auto; flex-shrink: 0; }
+  .ix-nav-logo { height: 36px; width: auto; flex-shrink: 0; }
   .ix-brand-name { display: block; overflow: hidden; white-space: nowrap; max-width: 0; opacity: 0; margin-left: 0; font-size: 11.5px; font-weight: 800; line-height: 1.2; letter-spacing: .8px; color: #0b1220; transition: max-width .35s cubic-bezier(.2,.8,.2,1), opacity .25s, margin-left .35s; }
   .ix-brand-name.show { max-width: 170px; opacity: 1; margin-left: 10px; }
   .ix-icon-btn { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 8px; display: flex; color: #1e293b; transition: background .15s, color .15s; }
@@ -1141,12 +1578,7 @@ const css = `
   .ix-notification-content small { font-size: 10px; color: #94a3b8; }
   .ix-no-notifications { padding: 30px 16px; text-align: center; font-size: 12px; color: #94a3b8; }
 
-  .ix-user { display: flex; align-items: center; gap: 10px; }
-  .ix-user .ix-av { box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(232,88,42,0.45); }
   .ix-avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 6px 14px rgba(232,88,42,0.35); }
-  .ix-user-text { display: flex; flex-direction: column; line-height: 1.25; }
-  .ix-user-text strong { font-size: 13px; font-weight: 700; }
-  .ix-user-text span { font-size: 11px; color: #94a3b8; }
   .ix-logout { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 10px; cursor: pointer; background: #fff; border: 1.5px solid #e2e8f0; color: #334155; font-size: 13px; font-weight: 600; transition: all .15s; }
   .ix-logout:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; transform: translateY(-1px); box-shadow: 0 8px 16px rgba(232,88,42,0.2); }
   .ix-icon-btn:focus-visible, .ix-logout:focus-visible, .ix-logo-btn:focus-visible, .ix-side-item:focus-visible, .ix-b:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
@@ -1161,13 +1593,13 @@ const css = `
   .ix-side.open { width: 236px; }
 
   /* profile photo at the top of the sidebar */
-  .ix-side-profile { margin: 0 10px 10px; padding-bottom: 12px; border-bottom: 1px solid #f1e2d9; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
-  .ix-side-photo { width: 45px; height: 45px; border-radius: 0px; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 18px rgba(232,88,42,0.28); transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1), border-radius .3s, font-size .3s; }
-  .ix-side.open .ix-side-photo { width: 120px; height: 120px; border-radius: 22px; font-size: 46px; }
+  .ix-side-profile { margin: 0 10px 10px; padding-bottom: 12px; border-bottom: 0px solid #f1e2d9; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+  .ix-side-photo { width: 45px; height: 45px; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 18px rgba(232,88,42,0.28); transition: width .3s cubic-bezier(.2,.8,.2,1), height .3s cubic-bezier(.2,.8,.2,1), border-radius .3s, font-size .3s; }
+  .ix-side.open .ix-side-photo { width: 120px; height: 120px; border-radius: 0px; font-size: 46px; }
   .ix-side-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ix-side-who { text-align: center; max-height: 0; max-width: 200px; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-height .3s, opacity .2s, margin .3s; }
   .ix-side-who strong { display: block; font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
-  .ix-side-who span { font-size: 11.5px; color: #94a3b8; }
+  .ix-side-who span { font-size: 11.5px; color: #fdfdfd; }
   .ix-side.open .ix-side-who { max-height: 56px; opacity: 1; margin-top: 12px; transition-delay: .1s; }
 
   .ix-side-item { position: relative; display: flex; align-items: center; gap: 16px; height: 48px; margin: 2px 10px; padding: 0 0 0 13px; border: none; background: none; cursor: pointer; color: #334155; border-radius: 12px; white-space: nowrap; text-align: left; transition: background .2s, color .2s, transform .2s, box-shadow .2s; }
@@ -1181,6 +1613,42 @@ const css = `
   .ix-side.open .ix-side-label { opacity: 1; transform: none; transition-delay: .1s; }
   .ix-side-foot { margin-top: auto; padding: 18px 22px; font-size: 11px; font-weight: 700; letter-spacing: .5px; color: #e8582a; white-space: nowrap; opacity: 0; transition: opacity .2s; }
   .ix-side.open .ix-side-foot { opacity: 1; transition-delay: .15s; }
+  /* ── Compact formal sidebar (made a little bigger) ── */
+  .ix-strip { width: 64px; }
+  .ix-strip.open { width: 240px; }
+  .ix-side { width: 64px; padding-top: 12px; background: #fff; border-right: none; box-shadow: none; }
+  .ix-side.open { width: 240px; box-shadow: 6px 0 20px rgba(15,23,42,0.06); }
+  .ix-side-profile { margin: 0 10px 8px; padding-bottom: 12px; border-bottom: none; }
+  .ix-side-photo { width: 44px; height: 44px; border-radius: 0px; font-size: 18px; background: #334155; box-shadow: none; }
+  .ix-side.open .ix-side-photo { width: 150px; height: 150px; border-radius: 0px; font-size: 56px; }
+  .ix-side-who strong { font-size: 13.5px; font-weight: 600; color: #111827; white-space: normal; line-height: 1.25; }
+  .ix-side-who span { display: block; font-size: 11.5px; color: #6b7280; line-height: 1.5; }
+  .ix-side-who .ix-side-role { color: #c2410c; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 2px 0 6px; }
+  .ix-side-who .ix-side-meta { color: #374151; }
+  .ix-side-who { max-width: 216px; }
+  .ix-side.open .ix-side-who { max-height: 140px; margin-top: 12px; }
+  .ix-side-item { gap: 14px; height: 42px; margin: 2px 8px; padding: 0 0 0 14px; border-radius: 6px; color: #4b5563; }
+  .ix-side-item:hover { background: #f3f4f6; color: #111827; transform: none; }
+  .ix-side-item:hover .ix-side-icon { animation: none; }
+  .ix-side-item.active { background: #fdf1ea; color: #c2410c; box-shadow: none; }
+  .ix-side-item.active:hover { transform: none; }
+  .ix-side-item.active::before { left: -8px; top: 7px; bottom: 7px; width: 3px; background: #e8582a; }
+  .ix-side-icon svg { width: 18px; height: 18px; }
+  .ix-side-label { font-size: 13.5px; font-weight: 500; }
+  .ix-side-foot { margin-top: auto; padding: 14px 18px; border-top: 1px solid #eceef1; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: #6b7280; }
+  .ix-side::after { content: ""; flex: 0 0 0; }
+  .ix-side-item:last-of-type { margin-bottom: 28px; }
+
+  /* hide the profile photo block while the sidebar is collapsed */
+  .ix-side-profile { max-height: 0; margin-top: 0; margin-bottom: 0; padding-bottom: 0; opacity: 0; visibility: hidden; overflow: hidden;
+    transition: max-height .3s cubic-bezier(.2,.8,.2,1), opacity .2s, margin .3s, padding .3s, visibility 0s linear .3s; }
+  .ix-side.open .ix-side-profile { max-height: 320px; margin: 0 10px 8px; padding-bottom: 12px; opacity: 1; visibility: visible;
+    transition: max-height .3s cubic-bezier(.2,.8,.2,1), opacity .25s .1s, margin .3s, padding .3s, visibility 0s; }
+
+  /* calmer top bar */
+  .ix-nav { height: 64px; box-shadow: none; border-bottom: 1px solid #e5e7eb; }
+  .ix-nav::after { height: 2px; background: #e8582a; animation: none; }
+  .ix-nav-logo { height: 36px; }
 
   /* ───── Main ───── */
   .ix-main { flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px 40px; }
@@ -1258,6 +1726,24 @@ const css = `
   .ix-badge.onsite { background: #e8f1fd; color: #1d4ed8; }
   .ix-badge.approved { background: #e6f7ee; color: #15803d; }
   .ix-badge.rejected { background: #fef2f2; color: #dc2626; }
+  .sec-card { margin-top: 20px; }
+  .sec-row2 { padding: 14px 0; border-top: 1px solid #f3e3da; }
+  .sec-row2:first-of-type { border-top: 0; }
+  .sec-label { font-size: 12px; color: #8a7468; font-weight: 600; margin-bottom: 4px; }
+  .sec-value { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; }
+  .sec-value code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 17px; letter-spacing: 3px; color: #1e293b; margin-right: auto; }
+  .sec-value code.show { font-weight: 800; letter-spacing: 3px; background: #fff8f4; border: 1.5px dashed #f5b79f; border-radius: 10px; padding: 6px 12px; }
+  .sec-ic { border: 0; background: transparent; color: #64748b; cursor: pointer; padding: 6px; border-radius: 8px; display: inline-flex; align-items: center; }
+  .sec-ic:hover { background: #fff3ec; color: #e04a1a; }
+  .sec-hint { display: block; margin-top: 6px; color: #8a7468; font-size: 12px; line-height: 1.45; }
+  .sec-change { margin-top: 8px; background: #f59e0b; color: #fff; border-color: #f59e0b; }
+  .sec-change:hover { background: #d97706; }
+  .sec-form { display: flex; flex-direction: column; gap: 14px; }
+  .sec-pw { position: relative; }
+  .sec-pw input { width: 100%; padding: 14px 44px 14px 14px; border: 1.5px solid #e2e8f0; border-radius: 12px; font-size: 14px; font-family: inherit; }
+  .sec-pw input:focus { outline: none; border-color: #e8582a; box-shadow: 0 0 0 4px rgba(232,88,42,.12); }
+  .sec-pw button { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: #64748b; cursor: pointer; padding: 6px; display: inline-flex; }
+  .ix-badge.none { background: #f1f5f9; color: #64748b; }
   .ix-badge.pending { background: #fffbeb; color: #b45309; }
   .ix-badge.r-intern { background: #e6f7ee; color: #15803d; }
   .ix-badge.r-supervisor { background: #f0eafd; color: #6d28d9; }
@@ -1408,9 +1894,11 @@ const css = `
   .ix-modal-wrap button, .ix-modal-wrap input, .ix-modal-wrap select, .ix-modal-wrap textarea { font-family: inherit; }
   .ix-modal-wrap { position: fixed; inset: 0; z-index: 1000; background: rgba(15,23,42,0.5); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 16px; animation: ix-fade .2s; }
   .ix-modal { background: #fff; border-radius: 22px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.3); border-top: 5px solid #e8582a; animation: ix-pop .25s ease-out; }
+  .ix-modal.wide { max-width: 880px; }
   .ix-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 24px 14px; }
   .ix-modal header h2 { font-size: 18px; font-weight: 800; }
   .ix-modal header p { font-size: 12.5px; color: #94a3b8; margin-top: 2px; }
+  .ix-modal-tools { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .ix-modal-x { width: 32px; height: 32px; border-radius: 50%; border: none; background: #f1f5f9; color: #475569; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .ix-modal-x:hover { background: #fdeee7; color: #e8582a; }
   .ix-modal-body { padding: 4px 24px 24px; }
@@ -1443,6 +1931,60 @@ const css = `
   .ix-remarks { font-size: 12.5px; color: #94a3b8; margin-top: 10px; }
   .ix-allgood { padding: 48px 20px; text-align: center; }
   .ix-allgood .ix-empty-icon { width: 64px; height: 64px; background: #e6f7ee; color: #16a34a; }
+
+  /* ───── Profile panel / details (ipv) ───── */
+  .ipv { padding: 0; overflow: hidden; border-top: 4px solid #e8582a; }
+  .ipv-head { display: flex; align-items: center; gap: 20px; padding: 22px 28px; border-bottom: 1px solid #eadfd8; background: #fffaf7; }
+  .ipv-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .ipv-head-main h2 { font-size: 21px; font-weight: 800; letter-spacing: -.3px; color: #0b1220; line-height: 1.2; }
+  .ipv-head-sub { display: flex; flex-wrap: wrap; gap: 4px 0; font-size: 13px; color: #64748b; }
+  .ipv-head-sub span + span::before { content: ""; display: inline-block; width: 1px; height: 12px; background: #d8c9bf; margin: 0 12px; vertical-align: -1px; }
+  .ipv-head-sub strong { color: #1e293b; font-weight: 700; }
+  .ipv-head-actions { display: flex; align-items: center; gap: 8px; align-self: flex-start; }
+
+  .ipv-block { padding: 20px 28px; border-bottom: 1px solid #eadfd8; }
+  .ipv-block:last-child { border-bottom: 0; }
+  .ipv-title { margin: 0 0 12px; font-size: 14.5px; font-weight: 800; color: #1b1410; display: flex; align-items: center; gap: 9px; }
+  .ipv-title::before { content: ""; width: 4px; height: 16px; border-radius: 2px; background: #e8582a; }
+  .ipv-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .ipv-title-row .ipv-title { margin: 0; }
+  .ipv-muted { font-size: 12px; color: #94a3b8; }
+
+  /* ruled grid: 1px gaps over a line-coloured background draw the borders */
+  .ipv-grid { display: grid; gap: 1px; background: #e3d6cd; border: 1px solid #e3d6cd; border-radius: 12px; overflow: hidden; }
+  .ipv-grid.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ipv-grid.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ipv-grid.c4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .ipv-cell { background: #fff; padding: 12px 16px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .ipv-cell.wide { grid-column: span 2; }
+  .ipv-label { font-size: 12px; font-weight: 600; color: #8a7468; }
+  .ipv-value { font-size: 14.5px; font-weight: 700; color: #111827; overflow-wrap: anywhere; line-height: 1.35; }
+
+  .ipv-stats .ipv-cell { padding: 14px 18px; }
+  .ipv-stats .ipv-cell strong { font-size: 24px; font-weight: 800; color: #e8582a; line-height: 1.1; }
+  .ipv-stats .ipv-cell span { font-size: 12.5px; font-weight: 600; color: #6b5a50; }
+
+  .ipv-progress { margin-top: 16px; }
+  .ipv-progress-row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: #64748b; margin-bottom: 8px; }
+  .ipv-progress-row strong { color: #111827; }
+  .ipv-bar-line { display: flex; align-items: center; gap: 12px; }
+  .ipv-bar { flex: 1; height: 12px; border-radius: 99px; background: #f1e6df; overflow: hidden; }
+  .ipv-bar-line > strong { font-size: 14px; font-weight: 800; min-width: 40px; text-align: right; color: #111827; }
+
+  /* details inside the View window (no card chrome of its own) */
+  .ipv-flat .ipv-head { padding: 0 0 18px; background: none; }
+  .ipv-flat .ipv-block { padding: 18px 0; }
+  .ipv-flat .ipv-block:last-child { padding-bottom: 0; }
+
+  @media (max-width: 900px) {
+    .ipv-grid.c3, .ipv-grid.c4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 560px) {
+    .ipv-head { flex-wrap: wrap; padding: 18px; }
+    .ipv-block { padding: 16px 18px; }
+    .ipv-grid.c2, .ipv-grid.c3, .ipv-grid.c4:not(.ipv-stats) { grid-template-columns: 1fr; }
+    .ipv-cell.wide { grid-column: auto; }
+  }
 
   /* ───── Hours cards ───── */
   .ix-hours-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
@@ -1480,6 +2022,20 @@ const css = `
   .ann-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   @media (max-width: 1000px) { .ann-split { grid-template-columns: 1fr; } }
 
+  /* View / Add / Edit window: same look as the Monitor Interns profile, edge to edge inside the modal */
+  .ipv-modal { margin: 0 -24px -24px; border-top: 1px solid #eadfd8; }
+
+  /* Add / Edit user form (inputs inside the same boxed cells) */
+  .uf-head .ix-photo-pick { flex: 1; background: transparent; }
+  .uf-cell { cursor: text; transition: background .15s, box-shadow .15s; }
+  .uf-cell:focus-within { background: #fffaf7; box-shadow: inset 0 0 0 2px #e8582a; }
+  .uf-input { width: 100%; padding: 2px 0; border: 0; outline: none; background: transparent; font-size: 14.5px; font-weight: 700; color: #111827; font-family: inherit; }
+  select.uf-input { cursor: pointer; }
+  .uf-input::placeholder { font-weight: 400; color: #b6c0cc; }
+  .uf-input:disabled { color: #94a3b8; }
+  .uf-input.scanning { color: #d94a1c; }
+  .uf-hint { font-size: 11px; font-weight: 400; line-height: 1.4; color: #94a3b8; }
+
   /* ───── Motion ───── */
   @keyframes ix-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
   @keyframes ix-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -1492,20 +2048,20 @@ const css = `
   @keyframes ix-pulse { 0% { box-shadow: 0 0 0 0 rgba(232,88,42,0.5); } 100% { box-shadow: 0 0 0 9px rgba(232,88,42,0); } }
   @media (prefers-reduced-motion: reduce) {
     .ix-content, .ix-live i, .ix-spin, .ix-modal, .ix-nav::after, .ix-notification-count, .ix-notification-btn svg, .ix-notification-dropdown, .imp-panel, .imp-suggest { animation: none !important; }
-    .ix-side, .ix-strip, .ix-side-label, .ix-brand-name, .ix-side-photo, .ix-side-who { transition: none !important; }
+    .ix-side, .ix-strip, .ix-side-label, .ix-brand-name, .ix-side-photo, .ix-side-who, .ix-side-profile { transition: none !important; }
   }
 
   /* ───── Responsive ───── */
   @media (max-width: 900px) {
     .ix-strip, .ix-strip.open { width: 0; }
     .ix-side { width: 0; }
-    .ix-side.open { width: 236px; box-shadow: 10px 0 40px rgba(0,0,0,0.25); }
+    .ix-side.open { width: 240px; box-shadow: none; }
     .ix-backdrop { display: block; }
     .ix-fs-btn { display: none; }
     .ix-main { padding: 20px 16px 32px; }
   }
-  @media (max-width: 600px) {
-    .ix-user-text, .ix-logout span { display: none; }
+  @media (max-width: 600px) { 
+    .ix-logout span { display: none; }
     .ix-logout { padding: 9px; }
     .ix-notification-dropdown { position: fixed; top: 80px; left: 12px; right: 12px; width: auto; }
     .ix-hero { padding: 22px; }

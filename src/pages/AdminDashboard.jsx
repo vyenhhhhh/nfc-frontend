@@ -1,11 +1,13 @@
 // AdminDashboard.jsx
 import { useState, useEffect, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker,
-  InternMonitor, todayManila, fmtTime, calcHours, greeting, esc, REQUIRED_HOURS,
+  InternMonitor, AccountSecurity, UserDetails, UserForm, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
 } from "../components/DashKit.jsx";
 import { formalLayout } from "../components/formalLayout.js";
+import { mdCss } from "../components/materialTheme.js";
+import { internCss, cardUnify, CS48_CSS, dtrFormHtml, t12, weekdayIdx } from "./InternDashboard.jsx";
 
 const API = "http://localhost:8000/api";
 const NAV = [
@@ -28,7 +30,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchAll();
-    const iv = setInterval(fetchAll, 3000);
+    const iv = setInterval(() => { if (!document.hidden) fetchAll(); }, 15000);
     return () => clearInterval(iv);
   }, []);
 
@@ -53,14 +55,19 @@ export default function AdminDashboard() {
   return (
     <Shell navItems={NAV} user={user}>
       <style>{adminCss}</style>
+      <style>{internCss}</style>
       <style>{formalLayout}</style>
+      <style>{mdCss}</style>
+      <style>{cardUnify}</style>
+      <style>{adminMatch}</style>
       {path === "/admin" && <Home user={user} records={records} interns={interns} coordinators={coordinators} loading={loading} />}
-      {path === "/admin/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} />}
+      {path === "/admin/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} recordsPath="/admin/records" />}
       {path === "/admin/records" && <Records records={records} loading={loading} />}
       {path === "/admin/accounts" && <Accounts users={users} onRefresh={fetchAll} />}
       {path === "/admin/calendar" && <Calendar />}
       {path === "/admin/dtr" && <DTR interns={interns} records={records} />}
       {path === "/admin/reports" && <Reports interns={interns} records={records} />}
+      {path === "/admin/profile" && <AdminProfile user={user} />}
     </Shell>
   );
 }
@@ -85,6 +92,7 @@ export function MiniStat({ icon, tone, label, value, hint, bar, live }) {
 }
 
 function Home({ user, records, interns, coordinators, loading }) {
+  const go = useNavigate();
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
   const inNowAll = todayRecs.filter((r) => r.action === "CHECK_IN" && !r.checked_out_at);
@@ -95,36 +103,63 @@ function Home({ user, records, interns, coordinators, loading }) {
   const first = user.name?.split(" ")[0] || "there";
   const dateLabel = new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" });
 
+  const stats = [
+    { icon: "users", tone: "orange", label: "Total interns", value: interns.length, hint: "registered" },
+    { icon: "user", tone: "blue", label: "OJT coordinators", value: coordinators.length, hint: "on the program" },
+    { icon: "tap", tone: "green", label: "Checked in today", value: checkedIn, hint: `of ${interns.length} interns` },
+    { icon: "list", tone: "purple", label: "Today's records", value: todayRecs.length, hint: "taps and logs" },
+  ];
+
+  const quick = [
+    { icon: "users", label: "Monitor", to: "/admin/interns" },
+    { icon: "list", label: "Records", to: "/admin/records" },
+    { icon: "file", label: "DTR", to: "/admin/dtr" },
+  ];
+
   return (
     <div className="adm-home">
-      {/* ───── LEFT: hero, stats, live attendance ───── */}
+      {/* ───── LEFT ───── */}
       <div className="adm-col">
-        <div className="ix-card adm-hero">
-          <span className="adm-hero-glow" aria-hidden="true" />
-          <div className="adm-hero-text">
-            <span className="adm-hero-tag">Admin overview · {dateLabel}</span>
-            <h1>{greeting()}, {first} </h1>
-            <p>Here's what's happening across the OJT program today.</p>
-            <div className="adm-hero-facts">
-              <div><strong>{checkedIn}</strong><span>checked in now</span></div>
-              <div><strong>{todayRecs.length}</strong><span>records today</span></div>
-              <div><strong>{interns.length}</strong><span>interns</span></div>
+        {/* hero */}
+        <div className="hv-hero">
+          <span className="hv-blob a" aria-hidden="true" />
+          <span className="hv-blob b" aria-hidden="true" />
+
+          <div className="hv-hero-main">
+            <span className={`hv-pill ${checkedIn > 0 ? "live" : "idle"}`}>
+              <i aria-hidden="true" /> {checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody checked in yet"}
+            </span>
+            <h1>{greeting()}, {first}</h1>
+            <p>Here's what's happening across the OJT program today. {dateLabel}.</p>
+          </div>
+
+          <div className="hv-hero-side">
+            <div className="hv-quick">
+              {quick.map((q) => (
+                <button key={q.to} type="button" onClick={() => go(q.to)}>
+                  <Icon name={q.icon} size={14} /> {q.label}
+                </button>
+              ))}
             </div>
           </div>
-          <Ring pct={pct} size={150} stroke={14} track="rgba(255,255,255,0.18)" color="#ffb48f">
-            <strong>{checkedIn}/{interns.length}</strong>
-            <span>interns in</span>
-          </Ring>
         </div>
 
-        <div className="adm-stats">
-          <MiniStat icon="users" tone="orange" label="Total interns" value={interns.length} hint="registered" />
-          <MiniStat icon="user" tone="blue" label="OJT coordinators" value={coordinators.length} hint="on the program" />
-          <MiniStat icon="tap" tone="green" label="Checked in today" value={checkedIn} hint={`of ${interns.length} interns`} bar={pct} live={checkedIn > 0} />
-          <MiniStat icon="list" tone="purple" label="Today's records" value={todayRecs.length} hint="taps and logs" />
+        {/* stats */}
+        <div className="hv-stats">
+          {stats.map((s) => (
+            <div key={s.label} className={`hv-stat ${s.tone}`}>
+              <span className="hv-stat-ic"><Icon name={s.icon} size={18} /></span>
+              <div className="hv-stat-body">
+                <small>{s.label}</small>
+                <strong>{s.value}</strong>
+                <em>{s.hint}</em>
+              </div>
+            </div>
+          ))}
         </div>
 
-        <div className="adm-live">
+        {/* live attendance */}
+        <div className="adm-live hv-recent">
           <Section icon="clock" title="Today's Live Attendance" count={todayRecs.length} live>
             {loading ? (
               <Spinner />
@@ -136,14 +171,8 @@ function Home({ user, records, interns, coordinators, loading }) {
                     <Avatar name={r.name} photo={r.photo} size={32} />
                     <strong>{r.name}</strong>
                   </div>,
-                  <Badge
-                    label={r.uid === "ONLINE" ? "Online" : "Onsite"}
-                    type={r.uid === "ONLINE" ? "online" : "onsite"}
-                  />,
-                  <Badge
-                    label={r.action === "CHECK_IN" ? "IN" : "OUT"}
-                    type={r.action === "CHECK_IN" ? "in" : "out"}
-                  />,
+                  <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
+                  <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
                   <span className="adm-time">{fmtTime(r.checked_in_at)}</span>,
                 ])}
                 empty="No activity today yet."
@@ -153,7 +182,7 @@ function Home({ user, records, interns, coordinators, loading }) {
         </div>
       </div>
 
-      {/* ───── RIGHT: calendar + who's on duty ───── */}
+      {/* ───── RIGHT: calendar + on duty ───── */}
       <div className="adm-col">
         <HomeCalendar />
 
@@ -185,6 +214,46 @@ function Home({ user, records, interns, coordinators, loading }) {
     </div>
   );
 }
+
+/* makes the remaining admin cards follow the same --card-* variables as the intern pages */
+export const adminMatch = `
+.ix-content .ix-section,
+.ix-content .ix-sub,
+.ix-content .ix-ic:not(.selected),
+.ix-content .ix-hc,
+.ix-content .ix-stat,
+.ix-content .ix-doc,
+.ix-content .imp-panel {
+  border: var(--card-border) !important;
+  border-radius: var(--card-radius) !important;
+  box-shadow: var(--card-shadow) !important;
+  background: #fff;
+}
+.ix-content .ix-ic.selected {
+  border: 0 !important;
+  border-radius: var(--card-radius) !important;
+  box-shadow: 0 0 0 2px #e8582a, var(--md-shadow) !important;
+}
+.ix-content .ix-section { overflow: hidden; }
+/* smaller intern cards on Monitor Interns */
+.ix-content .ix-intern-grid {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+.ix-content .ix-ic {
+  padding: 12px 14px !important;
+}
+.ix-content .ix-ic-top { gap: 10px; }
+.ix-content .ix-ic-id strong { font-size: 13px; }
+.ix-content .ix-ic-id span { font-size: 11px; }
+.ix-content .ix-ic-stats {
+  margin: 10px 0 0;
+  gap: 8px;
+}
+.ix-content .ix-ic-stats div { padding: 6px 10px; }
+.ix-content .ix-ic-stats strong { font-size: 13px; }
+.ix-content .ix-ic-stats span { font-size: 10.5px; }
+`;
 
 /* ───────────────────────── Home Calendar ───────────────────────── */
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -275,8 +344,9 @@ export function HomeCalendar() {
 
 /* ───────────────────────── Records ───────────────────────── */
 export function Records({ records, loading }) {
+  const { state } = useLocation();                       // "View all records" from Monitor Interns pre-fills the search
   const [dateFilter, setDateFilter] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(state?.search || "");
   const filtered = records
     .filter((r) => !dateFilter || r.date === dateFilter)
     .filter((r) => r.name?.toLowerCase().includes(search.toLowerCase()));
@@ -319,6 +389,16 @@ export function Submissions({ movs, user, onRefresh }) {
   const [processing, setProcessing] = useState(null);
   const [remarks, setRemarks] = useState({});
   const [msg, setMsg] = useState(null);
+  const [fPhase, setFPhase] = useState("all");   // all | pre | post
+  const [fStatus, setFStatus] = useState("all"); // all | pending | approved | rejected
+
+  const reqLabel = (m) => {
+    if (!m.requirement || m.requirement === "others") return "Others";
+    const hit = [...PRE_REQUIREMENTS, ...POST_REQUIREMENTS].find((r) => r.key === m.requirement);
+    return hit ? hit.label : m.requirement;
+  };
+  const shown = movs.filter((m) =>
+    (fPhase === "all" || (m.phase || "pre") === fPhase) && (fStatus === "all" || m.status === fStatus));
 
   const handleReview = async (id, status) => {
     setProcessing(id + status);
@@ -343,11 +423,29 @@ export function Submissions({ movs, user, onRefresh }) {
     <>
       <PageHeader title="MOV Submissions" sub="Review intern-submitted documents (MOVs, forms, certificates)." live />
       <Msg msg={msg} />
+      {movs.length > 0 && (
+        <div className="ix-toolbar" style={{ marginBottom: 14 }}>
+          <select className="ix-select" value={fPhase} onChange={(e) => setFPhase(e.target.value)} aria-label="Filter by phase">
+            <option value="all">All phases</option>
+            <option value="pre">Pre-internship</option>
+            <option value="post">Post-internship</option>
+          </select>
+          <select className="ix-select" value={fStatus} onChange={(e) => setFStatus(e.target.value)} aria-label="Filter by status">
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <span style={{ color: "#8a7468", fontSize: 13 }}>{shown.length} of {movs.length}</span>
+        </div>
+      )}
       {movs.length === 0 ? (
         <div className="ix-card"><Empty icon="inbox" title="No submissions yet" sub="Interns' uploaded documents will show up here." /></div>
+      ) : shown.length === 0 ? (
+        <div className="ix-card"><Empty icon="inbox" title="Nothing matches" sub="Try a different phase or status." /></div>
       ) : (
         <div className="ix-list">
-          {movs.map((m) => (
+          {shown.map((m) => (
             <div key={m.id} className="ix-sub">
               <div className="ix-sub-top">
                 <Avatar name={m.intern_name} photo={m.intern_photo} />
@@ -361,6 +459,10 @@ export function Submissions({ movs, user, onRefresh }) {
                 />
               </div>
               <div className="ix-sub-title">{m.title}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "2px 0 8px" }}>
+                <Badge label={(m.phase || "pre") === "post" ? "Post-internship" : "Pre-internship"} type={(m.phase || "pre") === "post" ? "online" : "onsite"} />
+                <Badge label={reqLabel(m)} type="none" />
+              </div>
               <a className="ix-file" href={`http://localhost:8000/storage/${m.file_path}`} target="_blank" rel="noopener noreferrer">
                 <Icon name="clip" size={16} /> {m.original_name}
               </a>
@@ -392,10 +494,12 @@ export function Submissions({ movs, user, onRefresh }) {
 /* ───────────────────────── Manage Accounts ───────────────────────── */
 const BLANK_FORM = {
   first_name: "", middle_name: "", last_name: "",
-  email: "", password: "password123", role: "intern",
+  email: "", password: "", date_of_birth: "", role: "intern",
   student_id: "", contact_number: "", address: "",
   placement: "", semester: "1st Semester", program: "BSIT - 4",
   uid: "", work_mode: "onsite", tracking_type: "hours", photo: null,
+  emergency_contact_name: "", emergency_contact_relation: "",
+  emergency_contact_number: "", emergency_contact_address: "",
 };
 const ROLE_NAME = { intern: "Intern", supervisor: "Supervisor", admin: "Admin", ojt_coordinator: "OJT Coordinator" };
 
@@ -405,8 +509,14 @@ function Accounts({ users, onRefresh }) {
   const [deleting, setDeleting] = useState(null);
   const [msg, setMsg] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
   const [scanning, setScanning] = useState(false);
   const uidBuffer = useRef("");
+
+  // ── view-user modal state (read-only details, with an Edit button) ──
+  const [viewUser, setViewUser] = useState(null);
+  const vu = viewUser ? users.find((x) => x.id === viewUser.id) || viewUser : null; // stays fresh after a refresh
 
   // ── edit-user modal state ──
   const [editUser, setEditUser] = useState(null);   // the user being edited (null = modal closed)
@@ -518,6 +628,12 @@ function Accounts({ users, onRefresh }) {
       work_mode: u.work_mode || "onsite",
       tracking_type: u.tracking_type || "hours",
       uid: u.nfc_uid || "",
+      date_of_birth: u.date_of_birth ? String(u.date_of_birth).slice(0, 10) : "",
+      password: "",
+      emergency_contact_name: u.emergency_contact_name || "",
+      emergency_contact_relation: u.emergency_contact_relation || "",
+      emergency_contact_number: u.emergency_contact_number || "",
+      emergency_contact_address: u.emergency_contact_address || "",
     });
     setEditPhoto(null);
     setEditMsg(null);
@@ -595,313 +711,184 @@ function Accounts({ users, onRefresh }) {
 
   const editIsIntern = editUser?.role === "intern";
 
+  /* ───── search + role filter ───── */
+  const ROLE_TABS = [
+    { key: "all", label: "All" },
+    { key: "intern", label: "Interns" },
+    { key: "admin", label: "Admins" },
+    { key: "supervisor", label: "Supervisors" },
+    { key: "ojt_coordinator", label: "Coordinators" },
+  ];
+  const sq = search.trim().toLowerCase();
+  const shownUsers = users
+    .filter((u) => roleFilter === "all" || u.role === roleFilter)
+    .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(sq));
+
   return (
     <>
-      <PageHeader title="Manage Accounts" sub="Add, edit or remove users from the system.">
+      <PageHeader title="Manage Accounts" sub="Add, view, edit or remove users from the system.">
         <button className="ix-b primary" onClick={openModal}><Icon name="plus" size={16} /> Add New User</button>
       </PageHeader>
 
-      {!showForm && !editUser && <Msg msg={msg} />}
+      {!showForm && !editUser && !vu && <Msg msg={msg} />}
+
+      <div className="ix-toolbar">
+        <div className="ix-search">
+          <Icon name="search" size={16} />
+          <input
+            type="text"
+            placeholder="Search name, email or ID..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <span className="ix-chip">{shownUsers.length} of {users.length}</span>
+      </div>
+
+      <div className="ix-pills">
+        {ROLE_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            className={roleFilter === t.key ? "ix-pill active" : "ix-pill"}
+            onClick={() => setRoleFilter(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
       <div className="ix-card flush">
         <Table
           headers={["User", "Email", "Action"]}
-          rows={users.map((u) => [
+          rows={shownUsers.map((u) => [
             <div className="ix-actions">
               <Avatar name={u.name} photo={u.photo} size={36} />
               <strong>{u.name}</strong>
             </div>,
             u.email,
             <div className="ix-actions">
-              <button className="ix-b ghost sm" onClick={() => openEdit(u)}>
-                <Icon name="settings" size={14} /> Edit
+              <button className="ix-b ghost sm" onClick={() => { setMsg(null); setViewUser(u); }}>
+                <Icon name="eye" size={14} /> View
               </button>
               <button className="ix-b danger sm" onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}>
                 <Icon name="trash" size={14} /> {deleting === u.id ? "..." : "Delete"}
               </button>
             </div>,
           ])}
-          empty="No users yet."
+          empty={users.length ? "No users match your search." : "No users yet."}
         />
       </div>
 
+      {/* ───────── View user (read-only, Edit button beside the X) ───────── */}
+      {vu && !editUser && (
+        <Modal
+          wide
+          title="User profile"
+          sub={`${ROLE_NAME[vu.role] || vu.role} · ${vu.email}`}
+          onClose={() => setViewUser(null)}
+          actions={
+            <button type="button" className="ix-b ghost sm" onClick={() => { setViewUser(null); openEdit(vu); }}>
+              <Icon name="pencil" size={14} /> Edit
+            </button>
+          }
+        >
+          <UserDetails u={vu} />
+        </Modal>
+      )}
+
       {/* ───────── Add user ───────── */}
       {showForm && (
-        <Modal title="Add New User" sub="Fill in the details below." onClose={closeModal}>
+        <Modal wide title="Add New User" sub="Fill in the details below." onClose={closeModal}>
           <Msg msg={msg} />
           <form
             onSubmit={handleAdd}
             onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
-            className="ix-form"
           >
-            <PhotoPicker file={form.photo} onChange={(f) => setForm((st) => ({ ...st, photo: f }))} />
-
-            <div className="ix-row-gap">
-              <div className="ix-field">
-                <label htmlFor="acc-fn">First name</label>
-                <input id="acc-fn" type="text" required value={form.first_name}
-                  onChange={(e) => setForm((f) => ({ ...f, first_name: e.target.value }))} />
-              </div>
-              <div className="ix-field">
-                <label htmlFor="acc-mn">Middle name</label>
-                <input id="acc-mn" type="text" value={form.middle_name}
-                  onChange={(e) => setForm((f) => ({ ...f, middle_name: e.target.value }))} />
-              </div>
-            </div>
-            <div className="ix-field">
-              <label htmlFor="acc-ln">Last name</label>
-              <input id="acc-ln" type="text" required value={form.last_name}
-                onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))} />
-            </div>
-
-            <div className="ix-field">
-              <label htmlFor="acc-email">Email</label>
-              <input id="acc-email" type="email" required placeholder="e.g. juan@csu.edu.ph" value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
-            </div>
-
-            {form.role === "intern" && (
-              <div className="ix-field">
-                <label htmlFor="acc-sid">Student ID</label>
-                <input id="acc-sid" type="text" required placeholder="e.g. 2021-00123" value={form.student_id}
-                  onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))} />
-              </div>
-            )}
-            <div className="ix-field">
-              <label htmlFor="acc-contact">Contact number</label>
-              <input id="acc-contact" type="tel" placeholder="e.g. 09123456789" value={form.contact_number}
-                onChange={(e) => setForm((f) => ({ ...f, contact_number: e.target.value }))} />
-            </div>
-            <div className="ix-field">
-              <label htmlFor="acc-addr">Address</label>
-              <input id="acc-addr" type="text" placeholder="Street, Barangay, City" value={form.address}
-                onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
-            </div>
-
-            <div className="ix-field">
-              <label htmlFor="acc-pass">Password</label>
-              <input id="acc-pass" type="password" required value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
-            </div>
-            <div className="ix-field">
-              <label htmlFor="acc-role">Role</label>
-              <select id="acc-role" value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
-                <option value="intern">Intern</option>
-                <option value="ojt_coordinator">OJT Coordinator</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-
-            {form.role === "intern" && (
-              <>
-                <div className="ix-row-gap">
-                  <div className="ix-field">
-                    <label htmlFor="acc-prog">Program</label>
-                    <select id="acc-prog" value={form.program} onChange={(e) => setForm((f) => ({ ...f, program: e.target.value }))}>
-                      <option value="BSIT - 4">BSIT - 4</option>
-                      <option value="BSCS - 4">BSCS - 4</option>
-                      <option value="BSIS - 4">BSIS - 4</option>
-                    </select>
-                  </div>
-                  <div className="ix-field">
-                    <label htmlFor="acc-sem">Semester</label>
-                    <select id="acc-sem" value={form.semester} onChange={(e) => setForm((f) => ({ ...f, semester: e.target.value }))}>
-                      <option value="1st Semester">1st Semester</option>
-                      <option value="2nd Semester">2nd Semester</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="ix-field">
-                  <label htmlFor="acc-college">College</label>
-                  <input id="acc-college" type="text" value="CCIS" readOnly disabled />
-                </div>
-
-                <div className="ix-field">
-                  <label htmlFor="acc-place">Placement</label>
-                  <input id="acc-place" type="text" required placeholder="e.g. Provincial IT Office, Butuan City" value={form.placement}
-                    onChange={(e) => setForm((f) => ({ ...f, placement: e.target.value }))} />
-                </div>
-
-                <div className="ix-row-gap">
-                  <div className="ix-field">
-                    <label htmlFor="acc-wm">Work mode</label>
-                    <select id="acc-wm" value={form.work_mode} onChange={(e) => setForm((f) => ({ ...f, work_mode: e.target.value }))}>
-                      <option value="onsite">Onsite</option>
-                      <option value="offsite">Offsite (WFH)</option>
-                    </select>
-                  </div>
-                  <div className="ix-field">
-                    <label htmlFor="acc-tt">Tracking type</label>
-                    <select id="acc-tt" value={form.tracking_type} onChange={(e) => setForm((f) => ({ ...f, tracking_type: e.target.value }))}>
-                      <option value="hours">Hours-based</option>
-                      <option value="output">Output-based</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="ix-field">
-                  <label htmlFor="acc-uid">NFC card UID</label>
+            <UserForm
+              mode="add"
+              f={form}
+              set={(k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }))}
+              isIntern={form.role === "intern"}
+              header={<PhotoPicker file={form.photo} onChange={(file) => setForm((s) => ({ ...s, photo: file }))} />}
+              uidField={
+                <>
                   <div className="ix-row-gap">
                     <input
-                      id="acc-uid" type="text"
-                      className={scanning ? "scanning" : ""}
+                      type="text"
+                      className={scanning ? "uf-input scanning" : "uf-input"}
                       placeholder="Scan the card or type the UID"
                       value={scanning ? "Waiting for card tap..." : form.uid}
                       readOnly={scanning}
-                      onChange={(e) => setForm((f) => ({ ...f, uid: e.target.value }))}
+                      onChange={(e) => setForm((s) => ({ ...s, uid: e.target.value }))}
                     />
                     <button
                       type="button"
-                      className={scanning ? "ix-b ghost" : "ix-b primary"}
+                      className={scanning ? "ix-b ghost sm" : "ix-b primary sm"}
                       onClick={(e) => { e.currentTarget.blur(); uidBuffer.current = ""; setScanning((s) => !s); }}
                     >
-                      <Icon name="nfc" size={16} /> {scanning ? "Cancel" : "Scan"}
+                      <Icon name="nfc" size={14} /> {scanning ? "Cancel" : "Scan"}
                     </button>
                   </div>
-                  {scanning && (
-                    <div className="ix-hint info">Keep this window focused, then tap the NFC card on the reader.</div>
-                  )}
+                  {scanning && <small className="uf-hint">Keep this window focused, then tap the card on the reader.</small>}
                   {form.uid && !scanning && (
-                    <div className="ix-hint good">
-                      <Icon name="check" size={14} /> UID captured: <strong style={{ fontFamily: "monospace" }}>{form.uid}</strong>
-                      <button type="button" onClick={() => setForm((f) => ({ ...f, uid: "" }))}>clear</button>
-                    </div>
+                    <small className="uf-hint">
+                      UID captured: <strong style={{ fontFamily: "monospace" }}>{form.uid}</strong>{" "}
+                      <button type="button" style={{ background: "none", border: 0, color: "#dc2626", cursor: "pointer", fontSize: 11 }}
+                        onClick={() => setForm((s) => ({ ...s, uid: "" }))}>clear</button>
+                    </small>
                   )}
-                  <div className="ix-hint">Leave blank if there's no NFC card yet.</div>
-                </div>
-              </>
-            )}
-
-            <div className="ix-form-actions">
-              <button type="button" className="ix-b ghost" onClick={closeModal}>Cancel</button>
-              <button type="submit" className="ix-b primary" disabled={adding}>{adding ? "Adding..." : "Add User"}</button>
-            </div>
+                  {!form.uid && !scanning && <small className="uf-hint">Leave blank if there's no NFC card yet.</small>}
+                </>
+              }
+              actions={
+                <>
+                  <button type="button" className="ix-b ghost" onClick={closeModal}>Cancel</button>
+                  <button type="submit" className="ix-b primary" disabled={adding}>{adding ? "Adding..." : "Add User"}</button>
+                </>
+              }
+            />
           </form>
         </Modal>
       )}
 
       {/* ───────── Edit user ───────── */}
       {editUser && (
-        <Modal title="Edit User" sub={`${ROLE_NAME[editUser.role] || editUser.role} · ${editUser.email}`} onClose={closeEdit}>
+        <Modal wide title="Edit User" sub={`${ROLE_NAME[editUser.role] || editUser.role} · ${editUser.email}`} onClose={closeEdit}>
           <Msg msg={editMsg} />
           <form
             onSubmit={saveEdit}
             onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
-            className="ix-form"
           >
-            {/* photo: current one, or a preview of the new one */}
-            <div className="ix-photo-pick">
-              <label className="ix-photo-box">
-                <input type="file" accept="image/*" onChange={pickEditPhoto} />
-                {editPreview
-                  ? <img src={editPreview} alt="New profile" />
-                  : <Avatar name={editUser.name} photo={editUser.photo} size={92} />}
-                <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
-              </label>
-              <div className="ix-photo-info">
-                <strong>Profile photo</strong>
-                <span>Click the photo to change it. JPG or PNG, max 2 MB.</span>
-                {editPhoto && <button type="button" onClick={() => setEditPhoto(null)}>Undo new photo</button>}
-              </div>
-            </div>
-
-            <div className="ix-row-gap">
-              <div className="ix-field">
-                <label htmlFor="ed-fn">First name</label>
-                <input id="ed-fn" type="text" required value={editForm.first_name} onChange={setEF("first_name")} />
-              </div>
-              <div className="ix-field">
-                <label htmlFor="ed-mn">Middle name</label>
-                <input id="ed-mn" type="text" value={editForm.middle_name} onChange={setEF("middle_name")} />
-              </div>
-            </div>
-            <div className="ix-field">
-              <label htmlFor="ed-ln">Last name</label>
-              <input id="ed-ln" type="text" required value={editForm.last_name} onChange={setEF("last_name")} />
-            </div>
-
-            <div className="ix-field">
-              <label htmlFor="ed-email">Email</label>
-              <input id="ed-email" type="email" required value={editForm.email} onChange={setEF("email")} />
-            </div>
-
-            {editIsIntern && (
-              <div className="ix-field">
-                <label htmlFor="ed-sid">Student ID</label>
-                <input id="ed-sid" type="text" value={editForm.student_id} onChange={setEF("student_id")} />
-              </div>
-            )}
-            <div className="ix-field">
-              <label htmlFor="ed-contact">Contact number</label>
-              <input id="ed-contact" type="tel" value={editForm.contact_number} onChange={setEF("contact_number")} />
-            </div>
-            <div className="ix-field">
-              <label htmlFor="ed-addr">Address</label>
-              <input id="ed-addr" type="text" value={editForm.address} onChange={setEF("address")} />
-            </div>
-
-            {editIsIntern && (
-              <>
-                <div className="ix-row-gap">
-                  <div className="ix-field">
-                    <label htmlFor="ed-prog">Program</label>
-                    <select id="ed-prog" value={editForm.program} onChange={setEF("program")}>
-                      <option value="">Select program</option>
-                      <option value="BSIT - 4">BSIT - 4</option>
-                      <option value="BSCS - 4">BSCS - 4</option>
-                      <option value="BSIS - 4">BSIS - 4</option>
-                    </select>
-                  </div>
-                  <div className="ix-field">
-                    <label htmlFor="ed-sem">Semester</label>
-                    <select id="ed-sem" value={editForm.semester} onChange={setEF("semester")}>
-                      <option value="">Select semester</option>
-                      <option value="1st Semester">1st Semester</option>
-                      <option value="2nd Semester">2nd Semester</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="ix-field">
-                  <label htmlFor="ed-college">College</label>
-                  <input id="ed-college" type="text" value="CCIS" readOnly disabled />
-                </div>
-
-                <div className="ix-field">
-                  <label htmlFor="ed-place">Placement</label>
-                  <input id="ed-place" type="text" value={editForm.placement} onChange={setEF("placement")} />
-                </div>
-
-                <div className="ix-row-gap">
-                  <div className="ix-field">
-                    <label htmlFor="ed-wm">Work mode</label>
-                    <select id="ed-wm" value={editForm.work_mode} onChange={setEF("work_mode")}>
-                      <option value="onsite">Onsite</option>
-                      <option value="offsite">Offsite (WFH)</option>
-                    </select>
-                  </div>
-                  <div className="ix-field">
-                    <label htmlFor="ed-tt">Tracking type</label>
-                    <select id="ed-tt" value={editForm.tracking_type} onChange={setEF("tracking_type")}>
-                      <option value="hours">Hours-based</option>
-                      <option value="output">Output-based</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="ix-field">
-                  <label htmlFor="ed-uid">NFC card UID</label>
-                  <input id="ed-uid" type="text" placeholder="Type the UID" value={editForm.uid} onChange={setEF("uid")} />
-                  <div className="ix-hint">Clear this field to unlink the card.</div>
-                </div>
-              </>
-            )}
-
-            <div className="ix-form-actions">
-              <button type="button" className="ix-b ghost" onClick={closeEdit} disabled={savingEdit}>Cancel</button>
-              <button type="submit" className="ix-b primary" disabled={savingEdit}>{savingEdit ? "Saving..." : "Save changes"}</button>
-            </div>
+            <UserForm
+              mode="edit"
+              f={editForm}
+              set={setEF}
+              isIntern={editIsIntern}
+              title={editUser.name}
+              sub="Click the photo to change it."
+              header={
+                <label className="ix-photo-box" style={{ width: 84, height: 84, borderRadius: "50%" }}>
+                  <input type="file" accept="image/*" onChange={pickEditPhoto} />
+                  {editPreview
+                    ? <img src={editPreview} alt="New profile" />
+                    : <Avatar name={editUser.name} photo={editUser.photo} size={84} />}
+                  <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
+                </label>
+              }
+              uidField={
+                <>
+                  <input className="uf-input" type="text" placeholder="Type the UID" value={editForm.uid} onChange={setEF("uid")} />
+                  <small className="uf-hint">Clear this field to unlink the card.</small>
+                </>
+              }
+              actions={
+                <>
+                  <button type="button" className="ix-b ghost" onClick={closeEdit} disabled={savingEdit}>Cancel</button>
+                  <button type="submit" className="ix-b primary" disabled={savingEdit}>{savingEdit ? "Saving..." : "Save changes"}</button>
+                </>
+              }
+            />
           </form>
         </Modal>
       )}
@@ -909,137 +896,187 @@ function Accounts({ users, onRefresh }) {
   );
 }
 
+/* ───────── Searchable intern picker (name / email / student ID) ───────── */
+function InternSearch({ interns, selected, onSelect }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const wrap = useRef(null);
+
+  // close when clicking outside
+  useEffect(() => {
+    const h = (e) => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const sq = q.trim().toLowerCase();
+  const matches = interns
+    .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(sq))
+    .slice(0, 8);
+
+  const pick = (u) => { onSelect(String(u.id)); setQ(""); setOpen(false); };
+
+  const onKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHi((i) => Math.min(i + 1, matches.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi((i) => Math.max(i - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); if (open && matches[hi]) pick(matches[hi]); }
+    else if (e.key === "Escape") setOpen(false);
+  };
+
+  return (
+    <div className="dtr-search" ref={wrap}>
+      <Icon name="search" size={15} />
+      <input
+        type="text"
+        placeholder="Search name, email or student ID…"
+        value={open ? q : selected?.name || ""}
+        onFocus={() => { setOpen(true); setQ(""); setHi(0); }}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); setHi(0); }}
+        onKeyDown={onKeyDown}
+        aria-label="Search intern"
+        autoComplete="off"
+      />
+      {selected && !open && (
+        <button type="button" className="dtr-search-clear" onClick={() => onSelect("")} aria-label="Clear intern">×</button>
+      )}
+      {open && (
+        <ul className="dtr-search-list">
+          {matches.length === 0 ? (
+            <li className="dtr-search-empty">No interns found.</li>
+          ) : matches.map((u, i) => (
+            <li
+              key={u.id}
+              className={i === hi ? "active" : ""}
+              onMouseEnter={() => setHi(i)}
+              onMouseDown={(e) => { e.preventDefault(); pick(u); }}
+            >
+              <Avatar name={u.name} photo={u.photo} size={28} />
+              <div>
+                <strong>{u.name}</strong>
+                <small>{u.email}{u.student_id ? ` · ${u.student_id}` : ""}</small>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ───────────────────────── DTR ───────────────────────── */
+// Same CS Form 48 design as the intern's "My DTR", but with an intern picker.
 export function DTR({ interns, records }) {
+  const nowManila = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
   const [selectedId, setSelectedId] = useState("");
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [year, setYear] = useState(nowManila.slice(0, 4));
+  const [mon, setMon] = useState(nowManila.slice(5, 7));
+  const [period, setPeriod] = useState("full"); // "first" | "second" | "full"
 
   const intern = interns.find((u) => u.id === parseInt(selectedId));
-  const filtered = records.filter((r) => r.user_id === parseInt(selectedId) && r.date?.startsWith(month));
+  const month = `${year}-${mon}`;
+  const lastDay = new Date(Number(year), Number(mon), 0).getDate(); // days in that month
+  const PERIODS = [
+    { key: "first", label: "1–15", from: 1, to: 15 },
+    { key: "second", label: `16–${lastDay}`, from: 16, to: lastDay },
+    { key: "full", label: `1–${lastDay}`, from: 1, to: lastDay },
+  ];
+  const range = PERIODS.find((p) => p.key === period) || PERIODS[2];
+  const MONTHS = Array.from({ length: 12 }, (_, i) => ({
+    value: String(i + 1).padStart(2, "0"),
+    label: new Date(2000, i, 1).toLocaleDateString("en-US", { month: "long" }),
+  }));
+  const years = [...new Set([nowManila.slice(0, 4), year, ...records.map((r) => String(r.date || "").slice(0, 4)).filter(Boolean)])]
+    .sort((a, b) => b.localeCompare(a));
 
+  // first check-in and first check-out for each day of the chosen period
   const byDate = {};
-  filtered.forEach((r) => {
-    if (!byDate[r.date]) byDate[r.date] = { in: null, out: null };
-    if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
-    if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
+  if (intern) {
+    records.filter((r) => {
+      if (r.user_id !== intern.id || !r.date?.startsWith(month)) return false;
+      const d = Number(r.date.slice(8, 10));
+      return d >= range.from && d <= range.to;
+    }).forEach((r) => {
+      if (!byDate[r.date]) byDate[r.date] = { in: null, out: null };
+      if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
+      if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
+    });
+  }
+  const rows = Object.entries(byDate).sort();
+  const hoursOf = (t) => (t.in && t.out ? Math.max((new Date(t.out) - new Date(t.in)) / 3600000, 0) : 0);
+  const totalHrs = Math.round(rows.reduce((a, [, t]) => a + hoursOf(t), 0) * 10) / 10;
+  const monthName = MONTHS.find((m) => m.value === mon)?.label || "";
+  const monthLabel = `${monthName} ${year}`;
+  const periodLabel = `${monthName} ${range.from} - ${range.to}, ${year}`;
+  const office = "Caraga State University - MAIN";
+
+  // one table row per calendar day in the period
+  const formRows = Array.from({ length: range.to - range.from + 1 }, (_, i) => {
+    const d = range.from + i;
+    const iso = `${month}-${String(d).padStart(2, "0")}`;
+    const t = byDate[iso];
+    const wi = weekdayIdx(iso);
+    if (!(t && (t.in || t.out)) && wi >= 5) return { d, weekend: wi === 5 ? "SATURDAY" : "SUNDAY" };
+    return { d, in: t?.in ? t12(t.in) : "", out: t?.out ? t12(t.out) : "" };
   });
 
-  let totalHrs = 0;
-  Object.values(byDate).forEach(({ in: i, out: o }) => { if (i && o) totalHrs += (new Date(o) - new Date(i)) / 3600000; });
-  totalHrs = Math.round(totalHrs * 10) / 10;
-
-  const monthLabel = new Date(month + "-01").toLocaleDateString("en-PH", { month: "long", year: "numeric" });
+  const formHtml = intern
+    ? dtrFormHtml({ name: intern.name, office, periodLabel, rows: formRows, totalHrs })
+    : "";
 
   const handlePrint = () => {
     const w = window.open("", "_blank");
+    if (!w) return;
     w.document.write(`<html><head><title>DTR - ${esc(intern?.name)}</title><style>
-      body{font-family:'Times New Roman',serif;padding:40px;color:#000;}
-      h2,h3{text-align:center;margin:0;}
-      p{text-align:center;font-size:13px;margin:2px 0;}
-      table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;}
-      th,td{border:1px solid #000;padding:6px 10px;text-align:center;}
-      th{background:#f0f0f0;font-weight:bold;}
-      .total{text-align:right;margin-top:10px;font-weight:bold;font-size:13px;}
-      .sig{display:flex;justify-content:space-between;margin-top:50px;}
-      .sig-line{width:200px;text-align:center;}
-      .sig-line .line{border-top:1px solid #000;padding-top:4px;font-size:12px;}
-    </style></head><body>
-      <h2>CARAGA STATE UNIVERSITY</h2>
-      <p>Butuan City, Agusan del Norte</p>
-      <h3 style="margin-top:10px;">DAILY TIME RECORD (OJT Attendance)</h3>
-      <hr style="margin:12px 0"/>
-      <table style="border:none;margin-top:0;">
-        <tr style="border:none;">
-          <td style="border:none;text-align:left;padding:3px 0;"><strong>Name:</strong> ${esc(intern?.name)}</td>
-          <td style="border:none;text-align:right;padding:3px 0;"><strong>Month:</strong> ${monthLabel}</td>
-        </tr>
-        <tr style="border:none;">
-          <td style="border:none;text-align:left;padding:3px 0;"><strong>Email:</strong> ${esc(intern?.email)}</td>
-          <td style="border:none;text-align:right;padding:3px 0;"><strong>Required Hours:</strong> ${REQUIRED_HOURS} hours</td>
-        </tr>
-      </table>
-      <table>
-        <thead><tr><th>Date</th><th>Day</th><th>A.M. In</th><th>A.M. Out</th><th>P.M. In</th><th>P.M. Out</th><th>Hours</th><th>Remarks</th></tr></thead>
-        <tbody>
-          ${Object.entries(byDate).sort().map(([date, t]) => {
-            const hrs = t.in && t.out ? ((new Date(t.out) - new Date(t.in)) / 3600000).toFixed(2) : "—";
-            const day = new Date(date).toLocaleDateString("en-PH", { weekday: "short" });
-            const remark = !t.in ? "Absent" : !t.out ? "No checkout" : "";
-            return `<tr>
-              <td>${date}</td><td>${day}</td>
-              <td>${t.in ? new Date(t.in).toLocaleTimeString("en-PH") : "—"}</td><td></td>
-              <td></td><td>${t.out ? new Date(t.out).toLocaleTimeString("en-PH") : "—"}</td>
-              <td>${hrs !== "—" ? hrs + " hrs" : "—"}</td>
-              <td>${remark}</td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-      <div class="total">Total Hours Rendered: ${totalHrs} hours</div>
-      <div class="sig">
-        <div class="sig-line"><div class="line">Intern's Signature</div></div>
-        <div class="sig-line"><div class="line">Supervisor's Signature</div></div>
-        <div class="sig-line"><div class="line">OJT Coordinator</div></div>
-      </div>
-    </body></html>`);
+      @page { size: A4 portrait; margin: 8mm; }
+      body { margin: 0; padding: 0; }
+      .sheet { display: flex; gap: 10mm; align-items: flex-start; }
+      .sheet .cs48 { flex: 1; }
+      ${CS48_CSS}
+    </style></head><body><div class="sheet">${formHtml}${formHtml}</div></body></html>`);
     w.document.close(); w.print();
   };
 
   return (
     <>
-      <PageHeader title="Generate DTR" sub="Daily Time Record for each intern." />
-      <div className="ix-toolbar">
-        <select className="ix-select" value={selectedId} onChange={(e) => setSelectedId(e.target.value)} style={{ minWidth: 240 }}>
-          <option value="">Select an intern…</option>
-          {interns.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-        </select>
-        <input type="month" className="ix-input" value={month} onChange={(e) => setMonth(e.target.value)} />
-        {selectedId && (
-          <button className="ix-b primary" onClick={handlePrint}><Icon name="print" size={16} /> Print DTR</button>
+      <style>{CS48_CSS}</style>
+      <PageHeader title="Generate DTR" sub="Daily Time Record for each intern. Search an intern and pick a month to view or print it." />
+      <div className="ix-card">
+        <div className="req-head">
+          <div className="dtr-filters">
+            <InternSearch interns={interns} selected={intern} onSelect={setSelectedId} />
+            <select className="dtr-sel" value={mon} onChange={(e) => setMon(e.target.value)} aria-label="Month">
+              {MONTHS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+            <select className="dtr-sel" value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year">
+              {years.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <select className="dtr-sel" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period">
+              {PERIODS.map((p) => <option key={p.key} value={p.key}>Period: {p.label}</option>)}
+            </select>
+          </div>
+          <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!intern || !rows.length}>
+            <Icon name="print" size={16} /> Print DTR
+          </button>
+        </div>
+
+        {intern ? (
+          <>
+            <div className="req-dtr-meta">
+              <span><strong>{intern.name}</strong></span>
+              <span><strong>{monthLabel}</strong> · {range.label}</span>
+              <span>{rows.length} day{rows.length === 1 ? "" : "s"} present</span>
+              <span>Total: <strong>{totalHrs}h</strong></span>
+            </div>
+            <div className="cs48-pair">
+              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: formHtml }} />
+              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: formHtml }} />
+            </div>
+          </>
+        ) : (
+          <Empty icon="file" title="Nothing to preview yet" sub="Search an intern, then choose a month and period above to preview the DTR." />
         )}
       </div>
-
-      {selectedId && intern ? (
-        <div className="ix-doc">
-          <div className="ix-doc-head">
-            <h2>CARAGA STATE UNIVERSITY</h2>
-            <p>Butuan City, Agusan del Norte</p>
-            <h3>DAILY TIME RECORD (OJT Attendance)</h3>
-          </div>
-          <div className="ix-doc-meta">
-            <div><span>Name: </span><strong>{intern.name}</strong></div>
-            <div><span>Email: </span>{intern.email}</div>
-            <div><span>Month: </span><strong>{monthLabel}</strong></div>
-          </div>
-          <div className="ix-card flush" style={{ boxShadow: "none", border: "1px solid #f3e3da" }}>
-            <Table
-              headers={["Date", "Day", "Time In", "Time Out", "Hours Worked", "Remarks"]}
-              rows={Object.entries(byDate).sort().map(([date, t]) => {
-                const hrs = t.in && t.out ? ((new Date(t.out) - new Date(t.in)) / 3600000).toFixed(2) + " hrs" : "—";
-                return [
-                  date,
-                  new Date(date).toLocaleDateString("en-PH", { weekday: "short" }),
-                  fmtTime(t.in),
-                  fmtTime(t.out),
-                  hrs,
-                  t.in && !t.out ? <Badge label="No Checkout" type="pending" /> : "",
-                ];
-              })}
-              empty="No records for this month."
-            />
-          </div>
-          <div className="ix-doc-total">Total Hours Rendered: {totalHrs} hours</div>
-          <div className="ix-doc-sigs">
-            {["Intern's Signature", "Supervisor's Signature", "OJT Coordinator"].map((l) => (
-              <div key={l} className="ix-doc-sig">{l}</div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="ix-card">
-          <Empty icon="file" title="Nothing to preview yet" sub="Select an intern and month above to preview the DTR." />
-        </div>
-      )}
     </>
   );
 }
@@ -1054,7 +1091,7 @@ export function Reports({ interns, records }) {
     const onsite = recs.filter((r) => r.uid !== "ONLINE").length;
     const online = recs.filter((r) => r.uid === "ONLINE").length;
     const total = calcHours(recs);
-    return { name: u.name, email: u.email, days, onsite, online, total, pct: Math.min(Math.round((total / REQUIRED_HOURS) * 100), 100) };
+    return { name: u.name, email: u.email, days, onsite, online, total, pct: Math.min(Math.round((total / requiredHoursFor(u.program)) * 100), 100) };
   });
 
   const monthLabel = new Date(month + "-01").toLocaleDateString("en-PH", { month: "long", year: "numeric" });
@@ -1320,6 +1357,190 @@ function Calendar() {
   );
 }
 
+/* ───────────────────────── My Profile (same design as the intern's, with editing) ───────────────────────── */
+// Uses the .ix-profile styles from internCss, which this file already loads.
+function AdminProfile({ user }) {
+  const [acct, setAcct] = useState(null);
+  const [draft, setDraft] = useState({});
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${API}/me?user_id=${user.id}`);
+      const d = await res.json();
+      if (res.ok) setAcct(d?.user || d);
+      else setMsg({ type: "error", text: d.message || "Could not load your profile." });
+    } catch {
+      setMsg({ type: "error", text: "Couldn't reach the server." });
+    }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // preview of a newly chosen photo
+  useEffect(() => {
+    if (!photoFile) { setPreview(null); return; }
+    const url = URL.createObjectURL(photoFile);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photoFile]);
+
+  const me = { ...user, ...(acct || {}) };
+  const parts = (me.name || "").trim().split(/\s+/);
+  const base = () => ({
+    first_name: me.first_name || parts[0] || "",
+    middle_name: me.middle_name || "",
+    last_name: me.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
+    contact_number: me.contact_number || "",
+    address: me.address || "",
+  });
+  const setField = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  const roleLabel = ROLE_NAME[me.role] || "Admin";
+
+  const startEdit = () => { setDraft(base()); setPhotoFile(null); setMsg(null); setEditing(true); };
+  const cancelEdit = () => { setEditing(false); setPhotoFile(null); setMsg(null); };
+
+  const pickPhoto = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!f.type.startsWith("image/") || f.size > 2 * 1024 * 1024) {
+      setMsg({ type: "error", text: "Please choose an image under 2 MB." });
+      return;
+    }
+    setMsg(null);
+    setPhotoFile(f);
+  };
+
+  const save = async () => {
+    const clean = Object.fromEntries(Object.entries(draft).map(([k, v]) => [k, String(v).trim()]));
+    if (!clean.first_name || !clean.last_name) {
+      setMsg({ type: "error", text: "First name and last name are required." });
+      return;
+    }
+    setSaving(true); setMsg(null);
+    try {
+      // 1) the details
+      const res = await fetch(`${API}/admin/users/${me.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(clean),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error((data?.errors && Object.values(data.errors)[0]?.[0]) || data?.message || "Could not save the changes.");
+      }
+
+      // 2) the photo, only if a new one was chosen
+      let photo = me.photo;
+      if (photoFile) {
+        const fd = new FormData();
+        fd.append("photo", photoFile);
+        const pr = await fetch(`${API}/admin/users/${me.id}/photo`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
+        const pd = await pr.json().catch(() => null);
+        if (!pr.ok) throw new Error(pd?.message || "Details saved, but the photo could not be uploaded.");
+        photo = pd.photo;
+      }
+
+      // keep the signed-in session (sidebar name / photo) in step
+      try {
+        const cur = JSON.parse(sessionStorage.getItem("user") || "{}");
+        sessionStorage.setItem("user", JSON.stringify({ ...cur, name: data?.name || cur.name, photo }));
+      } catch { /* ignore */ }
+
+      const changed = !!photoFile || (data?.name && data.name !== user.name);
+      setEditing(false); setPhotoFile(null);
+      setMsg({ type: "success", text: "Profile updated." });
+      await load();
+      if (changed) setTimeout(() => window.location.reload(), 700); // refresh the sidebar name / photo
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const rows = editing
+    ? [
+        { key: "first_name", label: "First name" },
+        { key: "middle_name", label: "Middle name" },
+        { key: "last_name", label: "Last name" },
+        { key: "contact_number", label: "Contact number", type: "tel" },
+        { key: "address", label: "Address" },
+        { label: "Email", view: me.email },
+        { label: "Role", view: roleLabel },
+      ]
+    : [
+        { label: "Email", view: me.email },
+        { label: "Contact number", view: me.contact_number },
+        { label: "Role", view: roleLabel },
+        { label: "Address", view: me.address },
+      ];
+
+  return (
+    <>
+      <PageHeader title="My Profile" sub="Your account information and security." />
+      <div className="ix-profile">
+        <div className="ix-card ix-profile-card">
+          {!editing && (
+            <div className="imp-tools">
+              <button type="button" className="ix-b ghost sm" onClick={startEdit}>
+                <Icon name="pencil" size={14} /> Edit
+              </button>
+            </div>
+          )}
+
+          <div className="ix-profile-avatar">
+            {editing ? (
+              <label className="ix-photo-box" style={{ width: 96, height: 96, borderRadius: "50%" }} title="Change photo">
+                <input type="file" accept="image/*" onChange={pickPhoto} />
+                {preview ? <img src={preview} alt="New profile" /> : <Avatar name={me.name} photo={me.photo} size={96} />}
+                <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
+              </label>
+            ) : (
+              <Avatar name={me.name} photo={me.photo} size={96} />
+            )}
+          </div>
+          <h2 className="ix-profile-name">{me.name}</h2>
+          {editing && <small className="uf-hint">Click the photo to change it.</small>}
+
+          <dl>
+            {rows.map((f) => (
+              <div key={f.label}>
+                <dt>{f.label}</dt>
+                <dd title={f.view ? String(f.view) : undefined}>
+                  {editing && f.key ? (
+                    <input
+                      className="imp-edit" type={f.type || "text"} value={draft[f.key] ?? ""}
+                      onChange={setField(f.key)} aria-label={f.label}
+                    />
+                  ) : (f.view || "—")}
+                </dd>
+              </div>
+            ))}
+          </dl>
+
+          {editing && (
+            <div className="imp-edit-bar">
+              <button type="button" className="ix-b ghost" disabled={saving} onClick={cancelEdit}>Cancel</button>
+              <button type="button" className="ix-b primary" disabled={saving} onClick={save}>{saving ? "Saving..." : "Save changes"}</button>
+            </div>
+          )}
+          {msg && <div style={{ marginTop: 14, textAlign: "left" }}><Msg msg={msg} /></div>}
+        </div>
+
+        <div className="ix-profile-sec">
+          <AccountSecurity user={user} />
+        </div>
+      </div>
+    </>
+  );
+}
+const cap = (s = "") => s.charAt(0).toUpperCase() + s.slice(1);
+
 /* ───────────────────────── admin styles ───────────────────────── */
 export const adminCss = `
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
@@ -1540,6 +1761,39 @@ export const adminCss = `
 .adm-duty-empty { padding: 14px 16px; border-radius: 14px; border: 1.5px dashed #f2cdb9; background: rgba(255,255,255,0.7); }
 .adm-duty-empty strong { font-size: 14.5px; color: #3a2e28; }
 .adm-duty-empty p { margin-top: 4px; font-size: 13px; color: #9a8c84; }
+
+/* ── My Profile (editable card) ── */
+.ix-content .ix-profile-card { position: relative; }
+.ix-profile-card dl dt { flex-shrink: 0; }
+.ix-profile-card dl dd { min-width: 0; text-align: right; overflow-wrap: anywhere; }
+.ix-profile-card dl dd:has(.imp-edit) { flex: 1; max-width: 62%; }
+.ix-profile-card .imp-edit { width: 100%; text-align: left; }
+.ix-profile-card .imp-edit-bar { justify-content: center; }
+.ix-profile-card .ix-photo-box { margin: 0 auto; }
+
+/* ── DTR intern search ── */
+.dtr-search { position: relative; min-width: 260px; display: flex; align-items: center; }
+.dtr-search > svg { position: absolute; left: 12px; color: #a1857a; pointer-events: none; }
+.dtr-search input {
+  width: 100%; padding: 10px 34px 10px 36px; border-radius: 14px; border: 1px solid #f1e2d9;
+  background: #fff; font: inherit; font-size: 13.5px; color: #3a2e28; outline: none;
+}
+.dtr-search input:focus { border-color: #e8582a; }
+.dtr-search-clear {
+  position: absolute; right: 8px; width: 22px; height: 22px; border: 0; border-radius: 50%;
+  background: #f6ebe4; color: #7a6c64; cursor: pointer; font-size: 15px; line-height: 1;
+}
+.dtr-search-clear:hover { background: #fdeee7; color: #e8582a; }
+.dtr-search-list {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; margin: 0; padding: 6px;
+  list-style: none; max-height: 320px; overflow-y: auto; background: #fff;
+  border: 1px solid #f1e2d9; border-radius: 16px; box-shadow: 0 16px 36px rgba(150,52,20,0.16);
+}
+.dtr-search-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; cursor: pointer; }
+.dtr-search-list li.active { background: #fff3ec; }
+.dtr-search-list li strong { display: block; font-size: 13.5px; color: #3a2e28; }
+.dtr-search-list li small { display: block; font-size: 11.5px; color: #9a8c84; }
+.dtr-search-list li.dtr-search-empty { cursor: default; justify-content: center; color: #9a8c84; font-size: 13px; }
 
 /* ═════════ RESPONSIVE ═════════ */
 @media (max-width: 1100px) {
