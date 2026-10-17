@@ -4,26 +4,120 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker,
   InternMonitor, AccountSecurity, UserDetails, UserForm, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
+  DTR_MODES, dtrModeOf,
 } from "../components/DashKit.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
-import { internCss, cardUnify, CS48_CSS, dtrFormHtml, t12, weekdayIdx } from "./InternDashboard.jsx";
-
+import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS } from "./InternDashboard.jsx";
+import { PrintCards } from "../components/NfcCards.jsx";
 const API = "http://localhost:8000/api";
+const STORAGE = "http://localhost:8000/storage/";
+
 const NAV = [
-  { path: "/admin",          label: "Home",                icon: "home" },
-  { path: "/admin/interns",  label: "Monitor Interns",     icon: "users" },
-  { path: "/admin/records",  label: "Attendance Records",  icon: "list" },
-  { path: "/admin/accounts", label: "Manage Accounts",     icon: "settings" },
-  { path: "/admin/dtr",      label: "Generate DTR",        icon: "file" },
-  { path: "/admin/reports",  label: "Consolidated Report", icon: "chart" },
-  { path: "/admin/calendar", label: "Calendar",            icon: "calendar" },
-  { path: "/admin/profile", label: "My Profile", icon: "user" },
+  { path: "/admin",          label: "Dashboard",  icon: "home" },
+  { path: "/admin/interns",  label: "Interns",    icon: "users" },
+  { path: "/admin/reports",  label: "Reports",    icon: "chart" },
+  { path: "/admin/accounts", label: "Accounts",   icon: "settings" },
+  { path: "/admin/calendar", label: "Calendar",   icon: "calendar" },
+  { path: "/admin/profile",  label: "My Profile", icon: "user" },
 ];
+
+/* Pages that hold several tabs. The open tab is in the address, e.g. /admin/accounts?tab=cards,
+   so a link can open the right tab directly. The first tab is the default. */
+const GROUPS = {
+  "/admin/interns": {
+    title: "Interns",
+    live: true,
+    tabs: [
+      { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of all interns." },
+      { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete system-wide attendance log." },
+    ],
+  },
+  "/admin/accounts": {
+    title: "Accounts",
+    tabs: [
+      { key: "users", label: "Manage Accounts", icon: "settings", sub: "Add, view, edit or remove users from the system." },
+      { key: "cards", label: "Print ID Cards",  icon: "card",     sub: "Print the cards of interns whose NFC card request was approved." },
+    ],
+  },
+  "/admin/reports": {
+    title: "Reports",
+    tabs: [
+      { key: "dtr",     label: "Generate DTR",        icon: "file",  sub: "Daily Time Record for each intern. Search an intern and pick a month to view or print it." },
+      { key: "summary", label: "Consolidated Report", icon: "chart", sub: "Monthly attendance summary for all interns." },
+    ],
+  },
+};
+
+// The old addresses still work (bookmarks): they open the matching tab.
+const OLD_PATHS = {
+  "/admin/records": "/admin/interns?tab=records",
+  "/admin/cards":   "/admin/accounts?tab=cards",
+  "/admin/dtr":     "/admin/reports?tab=dtr",
+  "/admin/hours":   "/admin",
+};
+
+/* ───────── Page with tabs (one title, a row of tabs, then the open tab) ─────────
+   The open tab's own title is hidden (the group title + the tab's description replace it);
+   a button the tab had in its header (e.g. "Add New User") stays, on the right. */
+function GroupPage({ group, tab, onPick, children }) {
+  return (
+    <>
+      <style>{grpCss}</style>
+      <PageHeader title={group.title} sub={tab.sub} live={group.live} />
+      <div className="grp-tabs" role="tablist" aria-label={group.title}>
+        {group.tabs.map((t) => (
+          <button
+            key={t.key} type="button" role="tab"
+            aria-selected={t.key === tab.key}
+            className={t.key === tab.key ? "grp-tab active" : "grp-tab"}
+            onClick={() => onPick(t.key)}
+          >
+            <Icon name={t.icon} size={16} />
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="grp-body" role="tabpanel">{children}</div>
+    </>
+  );
+}
+
+const grpCss = `
+/* the tab row only scrolls sideways on small screens, and never shows a scrollbar */
+.ix-page .grp-tabs {
+  display: flex; gap: 4px; margin: -4px 0 18px; box-shadow: inset 0 -1px 0 #ece4df;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none;
+}
+.ix-page .grp-tabs::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.grp-tab {
+  position: relative; display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 11px 14px 12px; border: none; background: none; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 14px; font-weight: 600; color: #6b7280; border-radius: 8px 8px 0 0;
+  transition: color .15s, background .15s;
+}
+.grp-tab:hover { color: #ea580c; background: #fff7f2; }
+.grp-tab.active { color: #ea580c; }
+.grp-tab.active::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0; background: #f97316; }
+.grp-tab:focus-visible { outline: 2px solid #f97316; outline-offset: -2px; }
+
+/* Manage Accounts: search, role filter and count on the left, "Add New User" on the right, one row */
+.ix-page .acc-role { min-width: 170px; }
+.ix-page .acc-add { margin-left: auto; }
+@media (max-width: 700px) { .ix-page .acc-add { margin-left: 0; width: 100%; justify-content: center; } }
+
+/* the tab's own title is replaced by the group title above the tabs */
+.grp-body > .ix-ph { display: none; }
+/* ...but keep a button it had there (e.g. "Add New User"), on the right */
+.grp-body > .ix-ph:has(.ix-ph-right .ix-b) { display: flex; justify-content: flex-end; margin: 0 0 14px; }
+.grp-body > .ix-ph:has(.ix-ph-right .ix-b) > div:first-child,
+.grp-body > .ix-ph:has(.ix-ph-right .ix-b) .ix-live { display: none; }
+`;
 
 export default function AdminDashboard() {
   const user = JSON.parse(sessionStorage.getItem("user") || "{}");
-  const { pathname: path } = useLocation();
+  const { pathname: path, search, state } = useLocation();
+  const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +146,18 @@ export default function AdminDashboard() {
   const interns = users.filter((u) => u.role === "intern");
   const coordinators = users.filter((u) => u.role === "ojt_coordinator");
 
+  // old address -> the new page + tab (keeps the "View all records" search, if any)
+  useEffect(() => {
+    if (OLD_PATHS[path]) navigate(OLD_PATHS[path], { replace: true, state });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
+
+  // which tab is open on a grouped page
+  const group = GROUPS[path];
+  const asked = new URLSearchParams(search).get("tab");
+  const tab = group ? (group.tabs.find((t) => t.key === asked) || group.tabs[0]) : null;
+  const pickTab = (key) => navigate(`${path}?tab=${key}`, { replace: true });
+
   return (
     <Shell navItems={NAV} user={user}>
       <style>{adminCss}</style>
@@ -61,12 +167,27 @@ export default function AdminDashboard() {
       <style>{cardUnify}</style>
       <style>{adminMatch}</style>
       {path === "/admin" && <Home user={user} records={records} interns={interns} coordinators={coordinators} loading={loading} />}
-      {path === "/admin/interns" && <InternMonitor interns={interns} records={records} loading={loading} onRefresh={fetchAll} recordsPath="/admin/records" />}
-      {path === "/admin/records" && <Records records={records} loading={loading} />}
-      {path === "/admin/accounts" && <Accounts users={users} onRefresh={fetchAll} />}
+
+      {group && (
+        <GroupPage group={group} tab={tab} onPick={pickTab}>
+          {/* Interns */}
+          {tab.key === "monitor" && (
+            <InternMonitor
+              interns={interns} records={records} loading={loading} onRefresh={fetchAll}
+              recordsPath="/admin/interns?tab=records"
+            />
+          )}
+          {tab.key === "records" && <Records records={records} loading={loading} />}
+          {/* Accounts */}
+          {tab.key === "users" && <Accounts users={users} onRefresh={fetchAll} />}
+          {tab.key === "cards" && <PrintIdCards interns={interns} />}
+          {/* Reports */}
+          {tab.key === "dtr" && <DTR interns={interns} records={records} />}
+          {tab.key === "summary" && <Reports interns={interns} records={records} />}
+        </GroupPage>
+      )}
+
       {path === "/admin/calendar" && <Calendar />}
-      {path === "/admin/dtr" && <DTR interns={interns} records={records} />}
-      {path === "/admin/reports" && <Reports interns={interns} records={records} />}
       {path === "/admin/profile" && <AdminProfile user={user} />}
     </Shell>
   );
@@ -95,7 +216,7 @@ function Home({ user, records, interns, coordinators, loading }) {
   const go = useNavigate();
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
-  const inNowAll = todayRecs.filter((r) => r.action === "CHECK_IN" && !r.checked_out_at);
+  const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
   // one entry per person, in case someone has more than one open check-in
   const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
   const checkedIn = inNow.length;
@@ -112,8 +233,8 @@ function Home({ user, records, interns, coordinators, loading }) {
 
   const quick = [
     { icon: "users", label: "Monitor", to: "/admin/interns" },
-    { icon: "list", label: "Records", to: "/admin/records" },
-    { icon: "file", label: "DTR", to: "/admin/dtr" },
+    { icon: "list", label: "Records", to: "/admin/interns?tab=records" },
+    { icon: "file", label: "DTR", to: "/admin/reports?tab=dtr" },
   ];
 
   return (
@@ -384,120 +505,13 @@ export function Records({ records, loading }) {
   );
 }
 
-/* ───────────────────────── MOV Submissions ───────────────────────── */
-export function Submissions({ movs, user, onRefresh }) {
-  const [processing, setProcessing] = useState(null);
-  const [remarks, setRemarks] = useState({});
-  const [msg, setMsg] = useState(null);
-  const [fPhase, setFPhase] = useState("all");   // all | pre | post
-  const [fStatus, setFStatus] = useState("all"); // all | pending | approved | rejected
-
-  const reqLabel = (m) => {
-    if (!m.requirement || m.requirement === "others") return "Others";
-    const hit = [...PRE_REQUIREMENTS, ...POST_REQUIREMENTS].find((r) => r.key === m.requirement);
-    return hit ? hit.label : m.requirement;
-  };
-  const shown = movs.filter((m) =>
-    (fPhase === "all" || (m.phase || "pre") === fPhase) && (fStatus === "all" || m.status === fStatus));
-
-  const handleReview = async (id, status) => {
-    setProcessing(id + status);
-    try {
-      const res = await fetch(`${API}/coordinator/movs/${id}/review`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, remarks: remarks[id] || "", reviewer_id: user.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
-      setMsg({ type: "success", text: data.message });
-      onRefresh();
-    } catch (err) {
-      setMsg({ type: "error", text: err.message });
-    } finally {
-      setProcessing(null);
-    }
-  };
-
-  return (
-    <>
-      <PageHeader title="MOV Submissions" sub="Review intern-submitted documents (MOVs, forms, certificates)." live />
-      <Msg msg={msg} />
-      {movs.length > 0 && (
-        <div className="ix-toolbar" style={{ marginBottom: 14 }}>
-          <select className="ix-select" value={fPhase} onChange={(e) => setFPhase(e.target.value)} aria-label="Filter by phase">
-            <option value="all">All phases</option>
-            <option value="pre">Pre-internship</option>
-            <option value="post">Post-internship</option>
-          </select>
-          <select className="ix-select" value={fStatus} onChange={(e) => setFStatus(e.target.value)} aria-label="Filter by status">
-            <option value="all">All statuses</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-          <span style={{ color: "#8a7468", fontSize: 13 }}>{shown.length} of {movs.length}</span>
-        </div>
-      )}
-      {movs.length === 0 ? (
-        <div className="ix-card"><Empty icon="inbox" title="No submissions yet" sub="Interns' uploaded documents will show up here." /></div>
-      ) : shown.length === 0 ? (
-        <div className="ix-card"><Empty icon="inbox" title="Nothing matches" sub="Try a different phase or status." /></div>
-      ) : (
-        <div className="ix-list">
-          {shown.map((m) => (
-            <div key={m.id} className="ix-sub">
-              <div className="ix-sub-top">
-                <Avatar name={m.intern_name} photo={m.intern_photo} />
-                <div className="ix-ic-id">
-                  <strong>{m.intern_name}</strong>
-                  <span>{m.intern_email}</span>
-                </div>
-                <Badge
-                  label={m.status.charAt(0).toUpperCase() + m.status.slice(1)}
-                  type={m.status === "approved" ? "approved" : m.status === "rejected" ? "rejected" : "pending"}
-                />
-              </div>
-              <div className="ix-sub-title">{m.title}</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "2px 0 8px" }}>
-                <Badge label={(m.phase || "pre") === "post" ? "Post-internship" : "Pre-internship"} type={(m.phase || "pre") === "post" ? "online" : "onsite"} />
-                <Badge label={reqLabel(m)} type="none" />
-              </div>
-              <a className="ix-file" href={`http://localhost:8000/storage/${m.file_path}`} target="_blank" rel="noopener noreferrer">
-                <Icon name="clip" size={16} /> {m.original_name}
-              </a>
-
-              {m.status === "pending" && (
-                <div className="ix-review">
-                  <input
-                    type="text" className="ix-input" placeholder="Add remarks (optional)"
-                    value={remarks[m.id] || ""}
-                    onChange={(e) => setRemarks((r) => ({ ...r, [m.id]: e.target.value }))}
-                  />
-                  <button className="ix-b danger" onClick={() => handleReview(m.id, "rejected")} disabled={!!processing}>
-                    {processing === m.id + "rejected" ? "..." : "Reject"}
-                  </button>
-                  <button className="ix-b ok" onClick={() => handleReview(m.id, "approved")} disabled={!!processing}>
-                    {processing === m.id + "approved" ? "..." : "Approve"}
-                  </button>
-                </div>
-              )}
-              {m.remarks && <div className="ix-remarks">Remarks: {m.remarks}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
 /* ───────────────────────── Manage Accounts ───────────────────────── */
 const BLANK_FORM = {
   first_name: "", middle_name: "", last_name: "",
   email: "", password: "", date_of_birth: "", role: "intern",
   student_id: "", contact_number: "", address: "",
   placement: "", semester: "1st Semester", program: "BSIT - 4",
-  uid: "", work_mode: "onsite", tracking_type: "hours", photo: null,
+  uid: "", work_mode: "onsite", tracking_type: "hours", dtr_mode: "two", photo: null,
   emergency_contact_name: "", emergency_contact_relation: "",
   emergency_contact_number: "", emergency_contact_address: "",
 };
@@ -627,6 +641,7 @@ function Accounts({ users, onRefresh }) {
       placement: u.placement || "",
       work_mode: u.work_mode || "onsite",
       tracking_type: u.tracking_type || "hours",
+      dtr_mode: dtrModeOf(u),
       uid: u.nfc_uid || "",
       date_of_birth: u.date_of_birth ? String(u.date_of_birth).slice(0, 10) : "",
       password: "",
@@ -726,9 +741,7 @@ function Accounts({ users, onRefresh }) {
 
   return (
     <>
-      <PageHeader title="Manage Accounts" sub="Add, view, edit or remove users from the system.">
-        <button className="ix-b primary" onClick={openModal}><Icon name="plus" size={16} /> Add New User</button>
-      </PageHeader>
+      <PageHeader title="Manage Accounts" sub="Add, view, edit or remove users from the system." />
 
       {!showForm && !editUser && !vu && <Msg msg={msg} />}
 
@@ -742,20 +755,21 @@ function Accounts({ users, onRefresh }) {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        {/* who to show: All / Interns / Admins / Supervisors / Coordinators */}
+        <select
+          className="ix-select acc-role"
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value)}
+          aria-label="Show users by role"
+        >
+          {ROLE_TABS.map((t) => (
+            <option key={t.key} value={t.key}>
+              {t.label} ({t.key === "all" ? users.length : users.filter((u) => u.role === t.key).length})
+            </option>
+          ))}
+        </select>
         <span className="ix-chip">{shownUsers.length} of {users.length}</span>
-      </div>
-
-      <div className="ix-pills">
-        {ROLE_TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            className={roleFilter === t.key ? "ix-pill active" : "ix-pill"}
-            onClick={() => setRoleFilter(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
+        <button className="ix-b primary acc-add" onClick={openModal}><Icon name="plus" size={16} /> Add New User</button>
       </div>
 
       <div className="ix-card flush">
@@ -896,6 +910,39 @@ function Accounts({ users, onRefresh }) {
   );
 }
 
+/* ───────────────────────── Print ID Cards ─────────────────────────
+   Only interns whose NFC card request the coordinator approved (or whose card is already linked). */
+function PrintIdCards({ interns }) {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API}/supervisor/nfc-requests`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setRequests(d); else setError(d?.message || "Couldn't load card requests."); })
+      .catch(() => setError("Couldn't reach the server."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // newest request of each intern (the list comes newest first within each status)
+  const latest = {};
+  [...requests].sort((a, b) => b.id - a.id).forEach((r) => { if (!latest[r.user_id]) latest[r.user_id] = r; });
+
+  const ready = interns.filter((u) => u.nfc_uid || ["approved", "issued"].includes(latest[u.id]?.status));
+  const statusOf = (u) => (u.nfc_uid
+    ? <><i /> Card linked</>
+    : "Approved · link the card after printing");
+
+  return (
+    <>
+      <PageHeader title="Print ID Cards" sub="Print the cards of interns whose NFC card request was approved." />
+      {error && <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>}
+      {loading ? <Spinner /> : <PrintCards interns={ready} statusOf={statusOf} />}
+    </>
+  );
+}
+
 /* ───────── Searchable intern picker (name / email / student ID) ───────── */
 function InternSearch({ interns, selected, onSelect }) {
   const [q, setQ] = useState("");
@@ -966,6 +1013,7 @@ function InternSearch({ interns, selected, onSelect }) {
 
 /* ───────────────────────── DTR ───────────────────────── */
 // Same CS Form 48 design as the intern's "My DTR", but with an intern picker.
+// The columns follow each intern's DTR type (2 taps or 4 taps).
 export function DTR({ interns, records }) {
   const nowManila = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
   const [selectedId, setSelectedId] = useState("");
@@ -989,39 +1037,17 @@ export function DTR({ interns, records }) {
   const years = [...new Set([nowManila.slice(0, 4), year, ...records.map((r) => String(r.date || "").slice(0, 4)).filter(Boolean)])]
     .sort((a, b) => b.localeCompare(a));
 
-  // first check-in and first check-out for each day of the chosen period
-  const byDate = {};
-  if (intern) {
-    records.filter((r) => {
-      if (r.user_id !== intern.id || !r.date?.startsWith(month)) return false;
-      const d = Number(r.date.slice(8, 10));
-      return d >= range.from && d <= range.to;
-    }).forEach((r) => {
-      if (!byDate[r.date]) byDate[r.date] = { in: null, out: null };
-      if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
-      if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
-    });
-  }
-  const rows = Object.entries(byDate).sort();
-  const hoursOf = (t) => (t.in && t.out ? Math.max((new Date(t.out) - new Date(t.in)) / 3600000, 0) : 0);
-  const totalHrs = Math.round(rows.reduce((a, [, t]) => a + hoursOf(t), 0) * 10) / 10;
+  const mode = dtrModeOf(intern);
+  const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } = intern
+    ? buildDtr({ records: records.filter((r) => r.user_id === intern.id), month, from: range.from, to: range.to, mode })
+    : { formRows: [], totalHrs: 0, daysPresent: 0, tardyMin: 0, undertimeMin: 0 };
   const monthName = MONTHS.find((m) => m.value === mon)?.label || "";
   const monthLabel = `${monthName} ${year}`;
   const periodLabel = `${monthName} ${range.from} - ${range.to}, ${year}`;
   const office = "Caraga State University - MAIN";
 
-  // one table row per calendar day in the period
-  const formRows = Array.from({ length: range.to - range.from + 1 }, (_, i) => {
-    const d = range.from + i;
-    const iso = `${month}-${String(d).padStart(2, "0")}`;
-    const t = byDate[iso];
-    const wi = weekdayIdx(iso);
-    if (!(t && (t.in || t.out)) && wi >= 5) return { d, weekend: wi === 5 ? "SATURDAY" : "SUNDAY" };
-    return { d, in: t?.in ? t12(t.in) : "", out: t?.out ? t12(t.out) : "" };
-  });
-
   const formHtml = intern
-    ? dtrFormHtml({ name: intern.name, office, periodLabel, rows: formRows, totalHrs })
+    ? dtrFormHtml({ name: intern.name, office, periodLabel, officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin })
     : "";
 
   const handlePrint = () => {
@@ -1055,7 +1081,7 @@ export function DTR({ interns, records }) {
               {PERIODS.map((p) => <option key={p.key} value={p.key}>Period: {p.label}</option>)}
             </select>
           </div>
-          <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!intern || !rows.length}>
+          <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!intern || !daysPresent}>
             <Icon name="print" size={16} /> Print DTR
           </button>
         </div>
@@ -1065,7 +1091,8 @@ export function DTR({ interns, records }) {
             <div className="req-dtr-meta">
               <span><strong>{intern.name}</strong></span>
               <span><strong>{monthLabel}</strong> · {range.label}</span>
-              <span>{rows.length} day{rows.length === 1 ? "" : "s"} present</span>
+              <span>{DTR_MODES[mode]}</span>
+              <span>{daysPresent} day{daysPresent === 1 ? "" : "s"} present</span>
               <span>Total: <strong>{totalHrs}h</strong></span>
             </div>
             <div className="cs48-pair">
@@ -1083,7 +1110,17 @@ export function DTR({ interns, records }) {
 
 /* ───────────────────────── Reports ───────────────────────── */
 export function Reports({ interns, records }) {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const nowManila = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const [year, setYear] = useState(nowManila.slice(0, 4));
+  const [mon, setMon] = useState(nowManila.slice(5, 7));
+  const month = `${year}-${mon}`; // "YYYY-MM", same format the rest of the report uses
+
+  const MONTHS = Array.from({ length: 12 }, (_, i) => ({
+    value: String(i + 1).padStart(2, "0"),
+    label: new Date(2000, i, 1).toLocaleDateString("en-US", { month: "long" }),
+  }));
+  const years = [...new Set([nowManila.slice(0, 4), year, ...records.map((r) => String(r.date || "").slice(0, 4)).filter(Boolean)])]
+    .sort((a, b) => b.localeCompare(a));
 
   const data = interns.map((u) => {
     const recs = records.filter((r) => r.user_id === u.id && r.date?.startsWith(month));
@@ -1137,7 +1174,12 @@ export function Reports({ interns, records }) {
     <>
       <PageHeader title="Consolidated Report" sub="Monthly attendance summary for all interns." />
       <div className="ix-toolbar">
-        <input type="month" className="ix-input" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <select className="dtr-sel" value={mon} onChange={(e) => setMon(e.target.value)} aria-label="Month">
+          {MONTHS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+        <select className="dtr-sel" value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year">
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
         <button className="ix-b primary" onClick={handlePrint}><Icon name="print" size={16} /> Print Report</button>
       </div>
 
@@ -1359,7 +1401,7 @@ function Calendar() {
 
 /* ───────────────────────── My Profile (same design as the intern's, with editing) ───────────────────────── */
 // Uses the .ix-profile styles from internCss, which this file already loads.
-function AdminProfile({ user }) {
+export function AdminProfile({ user }) {
   const [acct, setAcct] = useState(null);
   const [draft, setDraft] = useState({});
   const [editing, setEditing] = useState(false);

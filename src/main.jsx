@@ -51,21 +51,25 @@ const internRoutes = [
   "/intern/movs",
   "/intern/nfc",
   "/intern/calendar",
-  "/intern/profile",
   "/intern/notifications",
+  "/intern/profile",
 ];
 
 const coordinatorRoutes = [
   "/coordinator",
+  "/coordinator/approvals",
+  // old addresses below still work: they open the matching tab
   "/coordinator/pending",
   "/coordinator/submissions",
+  "/coordinator/overtime",
+  "/coordinator/corrections",
   "/coordinator/interns",
   "/coordinator/records",
-  "/coordinator/hours",
   "/coordinator/nfc",
   "/coordinator/dtr",
   "/coordinator/reports",
   "/coordinator/announcements",
+  "/coordinator/hours",
   "/coordinator/profile",
 ];
 
@@ -73,8 +77,9 @@ const adminRoutes = [
   "/admin",
   "/admin/interns",
   "/admin/records",
-  "/admin/hours",
   "/admin/accounts",
+  "/admin/cards",
+  "/admin/hours",
   "/admin/calendar",
   "/admin/dtr",
   "/admin/reports",

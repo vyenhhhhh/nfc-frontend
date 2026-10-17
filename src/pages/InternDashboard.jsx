@@ -3,9 +3,10 @@ import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import Shell, {
-  Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar,
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar, Modal,
   calcHours, fmtTime, greeting, esc, requiredHoursFor, programKey,
   PRE_REQUIREMENTS, POST_REQUIREMENTS, AnnouncementBoard, AccountSecurity,
+  sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, SCHEDULE,
 } from "../components/DashKit.jsx";
 
 // Home look (stats, calendar, gaps) is shared with the admin / coordinator dashboards
@@ -33,12 +34,17 @@ export default function InternDashboard() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [program, setProgram] = useState(user.program || "");
+  const [dtrMode, setDtrMode] = useState(dtrModeOf(user));
 
-  // the login response has no program, so read it from the account
+  // the login response has no program / DTR type, so read them from the account
   useEffect(() => {
     fetch(`${API}/me?user_id=${user.id}`)
       .then((r) => r.json())
-      .then((d) => setProgram(d?.program || d?.user?.program || ""))
+      .then((d) => {
+        const acct = d?.user || d || {};
+        setProgram(acct.program || "");
+        setDtrMode(dtrModeOf(acct));
+      })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -66,7 +72,7 @@ export default function InternDashboard() {
   const totalHours = calcHours(records);
   const onsite = records.filter((r) => r.uid !== "ONLINE").length;
   const online = records.filter((r) => r.uid === "ONLINE").length;
-  const lastTap = records[0];
+  const lastTap = records.find((r) => r.uid !== "ONLINE"); // latest kiosk tap
   const firstName = user.name?.split(" ")[0] || "Intern";
   const required = requiredHoursFor(program);
 
@@ -87,15 +93,15 @@ export default function InternDashboard() {
         />
       )}
       {(path === "/intern/records" || path === "/intern/hours") && (
-        <Attendance records={records} loading={loading} required={required} program={program} />
+        <Attendance user={user} records={records} loading={loading} required={required} program={program} onRefresh={fetchRecords} />
       )}
       {path === "/intern/dtr" && (
-        <MyDtr user={user} records={records} loading={loading} required={required} program={program} />
+        <MyDtr user={user} records={records} loading={loading} mode={dtrMode} />
       )}
       {path === "/intern/online" && <SubmitOnline user={user} />}
       {path === "/intern/movs" && <SubmitMov user={user} unlocked={user.tracking_type === "output" || totalHours >= required} totalHours={totalHours} required={required} />}
       {path === "/intern/nfc" && <NfcApply user={user} />}
-      {path === "/intern/profile" && <Profile user={user} program={program} />}
+      {path === "/intern/profile" && <Profile user={user} program={program} dtrMode={dtrMode} />}
     </Shell>
   );
 }
@@ -281,7 +287,51 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
 }
 
 /* ───────────────────────── My Attendance (records + total hours) ───────────────────────── */
-function Attendance({ records, loading, required, program }) {
+function Attendance({ user, records, loading, required, program, onRefresh }) {
+  // forgot to tap out → request a time correction (the coordinator approves or rejects it)
+  const [fixes, setFixes] = useState([]);
+  const [fixFor, setFixFor] = useState(null);   // { id, date, checkin } of the day being fixed
+  const [fixTime, setFixTime] = useState("17:00");
+  const [fixReason, setFixReason] = useState("");
+  const [fixBusy, setFixBusy] = useState(false);
+  const [fixMsg, setFixMsg] = useState(null);
+  const [pageMsg, setPageMsg] = useState(null);
+
+  const loadFixes = async () => {
+    try {
+      const res = await fetch(`${API}/intern/time-corrections?user_id=${user.id}`, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      if (Array.isArray(data)) setFixes(data);
+    } catch { /* keep what we have */ }
+  };
+  useEffect(() => { loadFixes(); /* eslint-disable-next-line */ }, [records.length]);
+
+  const openFix = (date, t) => {
+    setFixFor({ id: t.openId, date, checkin: t.openIn });
+    setFixTime("17:00"); setFixReason(""); setFixMsg(null);
+  };
+  const sendFix = async (e) => {
+    e.preventDefault();
+    setFixBusy(true); setFixMsg(null);
+    try {
+      const res = await fetch(`${API}/intern/time-corrections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ user_id: user.id, attendance_id: fixFor.id, time_out: fixTime, reason: fixReason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
+      setFixFor(null);
+      setPageMsg({ type: "success", text: data.message });
+      loadFixes();
+      onRefresh && onRefresh();
+    } catch (err) {
+      setFixMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally {
+      setFixBusy(false);
+    }
+  };
+  const fixOf = (attendanceId) => fixes.find((f) => f.attendance_id === attendanceId);
   const [filter, setFilter] = useState("all");
   const [month, setMonth] = useState("all"); // "all" or "YYYY-MM"
 
@@ -295,15 +345,25 @@ function Attendance({ records, loading, required, program }) {
     ? Math.max(Math.round(((nextMilestone / 100) * required - totalHours) * 10) / 10, 0)
     : 0;
 
-  // one row per day (first check-in, first check-out)
+  // one row per day: first time in, last time out, credited hours (official hours only, approved overtime, 8h cap)
+  const sessions = sessionsByDate(records);
   const byDate = {};
   records.forEach((r) => {
-    if (!byDate[r.date]) byDate[r.date] = { checkin: null, checkout: null, online: r.uid === "ONLINE" };
-    if (r.checked_in_at && !byDate[r.date].checkin) byDate[r.date].checkin = r.checked_in_at;
-    if (r.checked_out_at && !byDate[r.date].checkout) byDate[r.date].checkout = r.checked_out_at;
+    if (byDate[r.date]) return;
+    const s = sessions[r.date] || [];
+    const last = [...s].reverse().find((x) => x.out);
+    byDate[r.date] = {
+      checkin: s[0]?.in || null,
+      checkout: last?.out || null,
+      online: r.uid === "ONLINE",
+      hrs: dayHours(s),
+      ot: dayOvertime(s),
+      openId: s.find((x) => !x.out && !x.online)?.id ?? null,   // kiosk record with no time out
+      openIn: s.find((x) => !x.out && !x.online)?.in ?? null,
+    };
   });
 
-  const hoursOf = (t) => (t.checkin && t.checkout ? (new Date(t.checkout) - new Date(t.checkin)) / 3600000 : null);
+  const hoursOf = (t) => (t.checkout ? t.hrs : null);
   const allDays = Object.entries(byDate).sort((a, b) => b[0].localeCompare(a[0]));
   const months = [...new Set(allDays.map(([d]) => d.slice(0, 7)))]; // newest first
   const monthName = (m) =>
@@ -335,14 +395,35 @@ function Attendance({ records, loading, required, program }) {
         <div className="at-date"><strong>{date}</strong><small>{weekday(date)}</small></div>,
         <Badge label={t.online ? "Online" : "Onsite"} type={t.online ? "online" : "onsite"} />,
         <span className="adm-time">{fmtTime(t.checkin)}</span>,
-        t.checkout
+        // has a time out and nothing left open → just the time
+        // (a 4-tap intern can have an AM time out but a PM check-in that was never closed)
+        t.checkout && !t.openId
           ? <span className="adm-time">{fmtTime(t.checkout)}</span>
-          : <Badge label="No checkout" type="pending" />,
+          : (() => {
+              const f = t.openId && fixOf(t.openId);
+              const past = date < manilaToday();          // today you can still tap out at the kiosk
+              if (f?.status === "pending") return <Badge label="Fix requested" type="pending" />;
+              return (
+                <div className="at-fix">
+                  <Badge label={f?.status === "rejected" ? "Fix rejected" : "No checkout"} type={f?.status === "rejected" ? "rejected" : "pending"} />
+                  {past && t.openId && (
+                    <button type="button" className="at-fix-btn" onClick={() => openFix(date, t)}>Request fix</button>
+                  )}
+                </div>
+              );
+            })(),
         hrs !== null
           ? (
             <div className="at-hrs">
               <span>{hrs.toFixed(2)} hrs</span>
-              <em className="at-hrs-bar"><i style={{ width: Math.min((hrs / 8) * 100, 100) + "%" }} /></em>
+              <em className="at-hrs-bar"><i style={{ width: Math.min((hrs / SCHEDULE.dailyCap) * 100, 100) + "%" }} /></em>
+              {t.ot && (
+                <small className={`at-ot ${t.ot.status}`}>
+                  OT {fmtMinutes(t.ot.minutes)} · {t.ot.status === "approved"
+                    ? `${fmtMinutes(t.ot.approved)} credited`
+                    : t.ot.status === "pending" ? "waiting for approval" : "not credited"}
+                </small>
+              )}
             </div>
           )
           : <span className="ix-muted">—</span>,
@@ -352,6 +433,33 @@ function Attendance({ records, loading, required, program }) {
   return (
     <div className="at-stack">
       <PageHeader title="My Attendance" sub="Your attendance log and computed OJT hours, day by day." live />
+      <Msg msg={pageMsg} />
+
+      {fixFor && (
+        <Modal title="Request a time correction" sub={`You forgot to tap out on ${fixFor.date}.`} onClose={() => setFixFor(null)}>
+          <form onSubmit={sendFix} className="ix-form">
+            <Msg msg={fixMsg} />
+            <div className="ix-note" style={{ marginTop: 0 }}>
+              <Icon name="info" size={18} />
+              <span>Time in: <strong>{fmtTime(fixFor.checkin)}</strong>. Your OJT coordinator will approve or reject the time out you send.</span>
+            </div>
+            <div className="ix-field">
+              <label htmlFor="fix-time">What time did you leave?</label>
+              <input id="fix-time" type="time" required value={fixTime} max="17:00" onChange={(e) => setFixTime(e.target.value)} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="fix-reason">Reason</label>
+              <textarea id="fix-reason" rows={3} required maxLength={500} value={fixReason}
+                placeholder="e.g. I forgot to tap my card before going home."
+                onChange={(e) => setFixReason(e.target.value)} />
+            </div>
+            <div className="ix-form-actions">
+              <button type="button" className="ix-b ghost" onClick={() => setFixFor(null)} disabled={fixBusy}>Cancel</button>
+              <button type="submit" className="ix-b primary" disabled={fixBusy}>{fixBusy ? "Sending..." : "Send request"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* hero */}
       <div className="hv-hero compact">
@@ -380,7 +488,7 @@ function Attendance({ records, loading, required, program }) {
         </div>
       </div>
 
-      {/* stats + chart */}
+      {/* stats */}
       <div className="at-mid">
         <div className="hv-stats">
           {stats.map((s) => (
@@ -533,7 +641,7 @@ function SubmitOnline({ user }) {
               <label htmlFor="ix-date">Date of work</label>
               <input
                 id="ix-date" type="date" value={form.date} required
-                max={new Date().toISOString().split("T")[0]}
+                max={manilaToday()}
                 onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
               />
             </div>
@@ -825,11 +933,16 @@ export const CS48_CSS = `
 export const t12 = (iso) =>
   iso ? new Date(iso).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" }).toLowerCase() : "";
 
-export function dtrFormHtml({ name, office, periodLabel, rows, totalHrs }) {
+// Official hours printed on the form, per DTR type
+export const OFFICIAL_HOURS = { four: "8:00–12:00, 1:00–5:00", two: "8:00 AM–5:00 PM (lunch 12–1)" };
+
+// rows: { d, amIn, amOut, pmIn, pmOut } or { d, weekend: "SATURDAY" }
+export function dtrFormHtml({ name, office, periodLabel, officialHours = "", rows, totalHrs, undertimeMin = 0, tardyMin = 0 }) {
+  const hm = (m) => (m > 0 ? [Math.floor(m / 60), m % 60] : ["", ""]);
   const blank = '<tr><td class="d"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
   const body = rows.map((r) => r.weekend
     ? `<tr><td class="d">${r.d}</td><td colspan="4" class="wk">${r.weekend}</td><td>-</td><td>-</td></tr>`
-    : `<tr><td class="d">${r.d}</td><td>${r.in || ""}</td><td></td><td></td><td>${r.out || ""}</td><td>-</td><td>-</td></tr>`
+    : `<tr><td class="d">${r.d}</td><td>${r.amIn || ""}</td><td>${r.amOut || ""}</td><td>${r.pmIn || ""}</td><td>${r.pmOut || ""}</td><td>${hm(r.ut || 0)[0]}</td><td>${hm(r.ut || 0)[1]}</td></tr>`
   ).join("") + blank.repeat(Math.max(31 - rows.length, 0));
 
   return `<div class="cs48">
@@ -840,7 +953,7 @@ export function dtrFormHtml({ name, office, periodLabel, rows, totalHrs }) {
     <div class="cs-office">${esc(office || "")}</div>
     <div class="cs-cap">OFFICE</div>
     <div class="cs-row"><span>For the period of</span><span class="ln">${esc(periodLabel)}</span></div>
-    <div class="cs-row"><span>Official Hours of arrival</span><span class="ln"></span><span>(Regular days)</span><span class="ln"></span></div>
+    <div class="cs-row"><span>Official Hours of arrival</span><span class="ln">${esc(officialHours)}</span><span>(Regular days)</span><span class="ln"></span></div>
     <div class="cs-row"><span>and departure days</span><span class="ln"></span><span>(Saturdays)</span><span class="ln"></span></div>
     <table>
       <thead>
@@ -849,8 +962,8 @@ export function dtrFormHtml({ name, office, periodLabel, rows, totalHrs }) {
       </thead>
       <tbody>${body}</tbody>
       <tfoot>
-        <tr><td rowspan="2">Total</td><td colspan="4" class="l">Undertime</td><td>-</td><td>-</td></tr>
-        <tr><td colspan="4" class="l">Tardiness</td><td>-</td><td>-</td></tr>
+        <tr><td rowspan="2">Total</td><td colspan="4" class="l">Undertime</td><td>${hm(undertimeMin)[0] || "-"}</td><td>${hm(undertimeMin)[1] || "-"}</td></tr>
+        <tr><td colspan="4" class="l">Tardiness</td><td>${hm(tardyMin)[0] || "-"}</td><td>${hm(tardyMin)[1] || "-"}</td></tr>
       </tfoot>
     </table>
     <div class="cs-tot">Total hours rendered: <b>${totalHrs} hrs</b></div>
@@ -861,7 +974,64 @@ export function dtrFormHtml({ name, office, periodLabel, rows, totalHrs }) {
   </div>`;
 }
 
-function MyDtr({ user, records, loading, required, program }) {
+/* Builds the DTR rows for one intern and one period.
+   mode "two":  AM arrival + PM departure only (lunch break not counted in the hours)
+   mode "four": AM arrival / AM departure / PM arrival / PM departure
+   The times shown are the real tap times. Each day's Undertime/Tardiness column is the
+   minutes late (no grace period) plus the minutes left early, measured against SCHEDULE. */
+export function buildDtr({ records, month, from, to, mode }) {
+  const S = SCHEDULE;
+  const mins = (h) => Math.max(Math.floor(h * 60 + 1e-6), 0);   // hours → whole minutes, never negative
+  const inRange = records.filter((r) => {
+    if (!r.date?.startsWith(month)) return false;
+    const d = Number(r.date.slice(8, 10));
+    return d >= from && d <= to;
+  });
+  const byDate = sessionsByDate(inRange);
+  const totalHrs = Math.round(Object.values(byDate).reduce((s, x) => s + dayHours(x), 0) * 10) / 10;
+  let tardyMin = 0;
+  let undertimeMin = 0;
+
+  const formRows = Array.from({ length: to - from + 1 }, (_, i) => {
+    const d = from + i;
+    const iso = `${month}-${String(d).padStart(2, "0")}`;
+    const s = byDate[iso] || [];
+    const wi = weekdayIdx(iso);
+    if (!s.length) return wi >= 5 ? { d, weekend: wi === 5 ? "SATURDAY" : "SUNDAY" } : { d };
+    if (s.every((x) => x.online)) return { d, weekend: "ONLINE (approved)" };
+
+    let late = 0;
+    let early = 0;
+    let row;
+    if (mode === "two") {
+      const last = [...s].reverse().find((x) => x.out);
+      late = mins(manilaHour(s[0].in) - S.amIn);
+      if (last) early = mins(S.pmOut - manilaHour(last.out));
+      row = { d, amIn: t12(s[0].in), pmOut: last ? t12(last.out) : "" };
+    } else {
+      const am = s.find((x) => manilaHour(x.in) < 12);
+      const pm = s.find((x) => x !== am);
+      if (am) late += mins(manilaHour(am.in) - S.amIn);
+      if (am?.out) early += mins(S.amOut - manilaHour(am.out));
+      if (pm) late += mins(manilaHour(pm.in) - S.pmIn);
+      if (pm?.out) early += mins(S.pmOut - manilaHour(pm.out));
+      row = {
+        d,
+        amIn: am ? t12(am.in) : "",
+        amOut: am?.out ? t12(am.out) : "",
+        pmIn: pm ? t12(pm.in) : "",
+        pmOut: pm?.out ? t12(pm.out) : "",
+      };
+    }
+    tardyMin += late;
+    undertimeMin += early;
+    return { ...row, ut: late + early };
+  });
+
+  return { formRows, totalHrs, daysPresent: Object.keys(byDate).length, tardyMin, undertimeMin };
+}
+
+function MyDtr({ user, records, loading, mode }) {
   const nowManila = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
   const [year, setYear] = useState(nowManila.slice(0, 4));
   const [mon, setMon] = useState(nowManila.slice(5, 7));
@@ -882,37 +1052,15 @@ function MyDtr({ user, records, loading, required, program }) {
   const years = [...new Set([nowManila.slice(0, 4), year, ...records.map((r) => String(r.date || "").slice(0, 4)).filter(Boolean)])]
     .sort((a, b) => b.localeCompare(a));
 
-  // first check-in and first check-out for each day of the chosen period
-  const byDate = {};
-  records.filter((r) => {
-    if (!r.date?.startsWith(month)) return false;
-    const d = Number(r.date.slice(8, 10));
-    return d >= range.from && d <= range.to;
-  }).forEach((r) => {
-    if (!byDate[r.date]) byDate[r.date] = { in: null, out: null };
-    if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
-    if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
-  });
-  const rows = Object.entries(byDate).sort();
-  const hoursOf = (t) => (t.in && t.out ? Math.max((new Date(t.out) - new Date(t.in)) / 3600000, 0) : 0);
-  const totalHrs = Math.round(rows.reduce((a, [, t]) => a + hoursOf(t), 0) * 10) / 10;
+  const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } = buildDtr({ records, month, from: range.from, to: range.to, mode });
   const monthName = MONTHS.find((m) => m.value === mon)?.label || "";
   const monthLabel = `${monthName} ${year}`;
   const periodLabel = `${monthName} ${range.from} - ${range.to}, ${year}`;
-  const prog = programKey(program);
-  const office = `Caraga State University - MAIN`;
+  const office = "Caraga State University - MAIN";
 
-  // one table row per calendar day in the period: only time in (AM arrival) and time out (PM departure)
-  const formRows = Array.from({ length: range.to - range.from + 1 }, (_, i) => {
-    const d = range.from + i;
-    const iso = `${month}-${String(d).padStart(2, "0")}`;
-    const t = byDate[iso];
-    const wi = weekdayIdx(iso);
-    if (!(t && (t.in || t.out)) && wi >= 5) return { d, weekend: wi === 5 ? "SATURDAY" : "SUNDAY" };
-    return { d, in: t?.in ? t12(t.in) : "", out: t?.out ? t12(t.out) : "" };
+  const formHtml = dtrFormHtml({
+    name: user.name, office, periodLabel, officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin,
   });
-
-  const formHtml = dtrFormHtml({ name: user.name, office, periodLabel, rows: formRows, totalHrs });
 
   const handlePrint = () => {
     const w = window.open("", "_blank");
@@ -944,13 +1092,14 @@ function MyDtr({ user, records, loading, required, program }) {
               {PERIODS.map((p) => <option key={p.key} value={p.key}>Period: {p.label}</option>)}
             </select>
           </div>
-          <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!rows.length}>
+          <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!daysPresent}>
             <Icon name="print" size={16} /> Print DTR
           </button>
         </div>
         <div className="req-dtr-meta">
           <span><strong>{monthLabel}</strong> · {range.label}</span>
-          <span>{rows.length} day{rows.length === 1 ? "" : "s"} present</span>
+          <span>{DTR_MODES[mode]}</span>
+          <span>{daysPresent} day{daysPresent === 1 ? "" : "s"} present</span>
           <span>Total: <strong>{totalHrs}h</strong></span>
         </div>
         {loading ? <Spinner /> : (
@@ -1153,7 +1302,7 @@ function NfcApply({ user }) {
 }
 
 /* ───────────────────────── Profile ───────────────────────── */
-function Profile({ user, program }) {
+function Profile({ user, program, dtrMode }) {
   const [acct, setAcct] = useState({});
 
   // pull the full account so student ID / year level show up even if login didn't return them
@@ -1174,7 +1323,11 @@ function Profile({ user, program }) {
   };
 
   const studentId = pick("student_id", "studentId", "id_number", "student_no");
-  const rawYear = String(pick("year_level", "yearLevel", "year")).trim();
+
+  // the year lives inside the program, e.g. "BSIT - 4"
+  const progYear = String(pick("program", "course") || program || "").split(/\s*-\s*/)[1] || "";
+  const rawYear = String(pick("year_level", "yearLevel", "year") || progYear).trim();
+
   const yearLevel = /^[1-9]$/.test(rawYear)
     ? `${rawYear}${["th", "st", "nd", "rd"][Number(rawYear) <= 3 ? Number(rawYear) : 0]} Year`
     : rawYear;
@@ -1188,6 +1341,8 @@ function Profile({ user, program }) {
     ["Student ID", studentId],
     ["Year level", yearLevel],
     ["Program", prog],
+    ["Required hours", `${requiredHoursFor(program)}h`],
+    ["DTR type", dtrMode === "four" ? "4 taps" : "2 taps"],
     ["Status", status],
   ];
 
@@ -1212,6 +1367,7 @@ function Profile({ user, program }) {
     </>
   );
 }
+
 /* ───────── ONE PLACE TO CHANGE ALL CARD BORDERS ─────────
    Change --card-border below and every page follows (Home, DTR, Submit Online,
    Submit MOV, NFC Card, Profile).
@@ -1263,6 +1419,27 @@ export const cardUnify = `
   border-radius: 8px;
   box-shadow: none;
 }
+
+/* ═════ Hero: dark brown → orange gradient (all users) ═════ */
+.ix-content .hv-hero {
+  background:
+    radial-gradient(520px 260px at 88% -10%, rgba(232,120,70,.45), transparent 70%),
+    linear-gradient(110deg, #3d1509 0%, #6b2611 45%, #a8471f 80%, #c2602f 100%) !important;
+  color: #fff;
+}
+
+/* text must be light on the dark background */
+.ix-content .hv-hero h1 { color: #fff !important; }
+.ix-content .hv-hero p,
+.ix-content .hv-hero .hv-track-cap,
+.ix-content .hv-hero .at-marks { color: rgba(255,255,255,.8) !important; }
+.ix-content .hv-hero .hv-track-cap b,
+.ix-content .hv-hero .ix-ring-center strong { color: #fff !important; }
+
+/* progress bar and ring track: see-through white */
+.ix-content .hv-hero .hv-track { background: rgba(255,255,255,.2); }
+.ix-content .hv-hero .hv-track i { background: rgba(61,21,9,.6); }
+.ix-content .hv-hero svg circle:first-child { stroke: rgba(255,255,255,.2); }
 `;
 
 /* ───────────────────────── intern-only styles ─────────────────────────
@@ -1576,6 +1753,14 @@ export const internCss = `
 .at-hrs { display: flex; flex-direction: column; gap: 4px; min-width: 90px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
 .at-hrs-bar { display: block; height: 4px; border-radius: 99px; background: #fdeee7; overflow: hidden; }
 .at-hrs-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #f2864f, #e8582a); }
+.at-ot { font-size: 11px; font-weight: 600; color: #9a5b00; }
+.at-fix { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.at-fix-btn { padding: 3px 10px; border-radius: 99px; border: 1px solid #f0d9cc; background: #fff; color: #c2410c;
+  font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.at-fix-btn:hover { border-color: #e8582a; background: #fff3ec; }
+.at-fix-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
+.at-ot.approved { color: #146c3a; }
+.at-ot.rejected { color: #b42318; }
 
 
 @media (max-width: 900px) { .at-mid { grid-template-columns: 1fr; } }

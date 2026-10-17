@@ -6,11 +6,10 @@ import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../assets/logo.png";
 
 const API = "http://localhost:8000/api";
-export const REQUIRED_HOURS = 486; // fallback when an intern has no program set
+export const REQUIRED_HOURS = 460; // fallback when an intern has no program set
 
-/* ── Required OJT hours per program ──────────────────────────────
-   EXAMPLE VALUES ONLY — replace with the real numbers from the CCIS OJT office. */
-export const PROGRAM_HOURS = { BSIT: 486, BSIS: 400, BSCS: 300 };
+/* ── Required OJT hours per program (from the OJT coordinator) ── */
+export const PROGRAM_HOURS = { BSIT: 460, BSIS: 460, BSCS: 320 };
 export const PROGRAMS = Object.keys(PROGRAM_HOURS);
 export function programKey(program) {
   const p = String(program || "").toUpperCase();
@@ -20,6 +19,15 @@ export function programKey(program) {
   return null;
 }
 export const requiredHoursFor = (program) => PROGRAM_HOURS[programKey(program)] ?? REQUIRED_HOURS;
+
+/* ── DTR type, set per intern (depends on the HTI) ──
+   four = 4 taps: AM in / AM out, PM in / PM out (8–12 and 1–5)
+   two  = 2 taps: in and out (8–5), lunch break not counted            */
+export const DTR_MODES = {
+  four: "4 taps (AM in/out, PM in/out)",
+  two: "2 taps (in and out, lunch not counted)",
+};
+export const dtrModeOf = (u) => (u?.dtr_mode === "four" ? "four" : "two");
 
 /* ── Internship requirements (edit the lists here) ── */
 export const PRE_REQUIREMENTS = [
@@ -59,24 +67,88 @@ export function greeting() {
   if (h < 12) return "Good morning";
   if (h < 18) return "Good afternoon";
   return "Good evening";
-} 
+}
 
-// Total hours from a list of attendance records (first check-in / check-out per date).
-// A check-out that is not later than the check-in is ignored (this used to cause negative hours).
-export function calcHours(recs) {
-  let total = 0;
-  const byDate = {};
+/* ── Official hours (from the OJT coordinator) ──
+   Keep these the same as config/ojt.php in the Laravel app.
+   - no grace period: a tap after 8:00 AM (or 1:00 PM for a 4-tap PM check-in) is late
+   - arriving early is fine, but hours only count from 8:00 (the DTR still shows the real time)
+   - 12:00–1:00 is lunch and never counts
+   - time after 5:00 PM is overtime: it counts only after the coordinator approves it
+   - a day never credits more than dailyCap hours, overtime included                         */
+export const SCHEDULE = { amIn: 8, amOut: 12, pmIn: 13, pmOut: 17, dailyCap: 8, tapCooldownMin: 5 };
+
+const HOUR = 3600000;
+// Manila midnight of the day this time falls on
+const manilaDayStart = (iso) =>
+  new Date(new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Manila" }) + "T00:00:00+08:00").getTime();
+// Hour of the day in Manila (e.g. 13.5 = 1:30 pm)
+export const manilaHour = (iso) => (new Date(iso).getTime() - manilaDayStart(iso)) / HOUR;
+const overlap = (a, b, c, d) => Math.max(0, Math.min(b, d) - Math.max(a, c));
+
+// One in/out pair per record, grouped by date: { "2026-10-15": [{ in, out, ... }, ...] } (earliest first)
+export function sessionsByDate(recs) {
+  const map = {};
+  const seen = new Set();
   recs.forEach((r) => {
-    if (!byDate[r.date]) byDate[r.date] = {};
-    if (r.checked_in_at && !byDate[r.date].in) byDate[r.date].in = r.checked_in_at;
-    if (r.checked_out_at && !byDate[r.date].out) byDate[r.date].out = r.checked_out_at;
+    const key = `${r.user_id}|${r.checked_in_at}`;
+    if (!r.checked_in_at || seen.has(key)) return;
+    seen.add(key);
+    (map[r.date] ||= []).push({
+      id: r.id,
+      online: r.uid === "ONLINE",                      // approved online attendance (8:00–5:00)
+      in: r.checked_in_at,
+      out: r.checked_out_at || null,
+      otMinutes: Number(r.ot_minutes || 0),            // overtime found at check-out
+      otStatus: r.ot_status || null,                   // pending | approved | rejected
+      otApproved: Number(r.ot_approved_minutes || 0),  // minutes the coordinator credited
+    });
   });
-  Object.values(byDate).forEach(({ in: i, out: o }) => {
-    if (i && o) {
-      const h = (new Date(o) - new Date(i)) / 3600000;
-      if (h > 0) total += h;
-    }
-  });
+  Object.values(map).forEach((s) => s.sort((a, b) => new Date(a.in) - new Date(b.in)));
+  return map;
+}
+
+// Regular (inside 8–12 and 1–5) and overtime (after 5:00 PM) time of one pair, in ms
+export function sessionSplit({ in: i, out: o }) {
+  if (!i || !o) return { reg: 0, ot: 0 };
+  const a = new Date(i).getTime();
+  const b = new Date(o).getTime();
+  if (b <= a) return { reg: 0, ot: 0 };
+  const d = manilaDayStart(i);
+  const S = SCHEDULE;
+  const reg = overlap(a, b, d + S.amIn * HOUR, d + S.amOut * HOUR) + overlap(a, b, d + S.pmIn * HOUR, d + S.pmOut * HOUR);
+  const ot = overlap(a, b, d + S.pmOut * HOUR, d + 24 * HOUR);
+  return { reg, ot };
+}
+
+// Credited hours of one day: official-hours time + approved overtime, never above the daily cap.
+// 4 taps 8–12 + 1–5 = 8h.  2 taps 8–5 = 8h (lunch not counted).  7:30 → counts from 8:00.
+export function dayHours(sessions) {
+  let ms = 0;
+  sessions.forEach((s) => { ms += sessionSplit(s).reg + (s.otApproved || 0) * 60000; });
+  return Math.min(SCHEDULE.dailyCap * HOUR, ms) / HOUR;
+}
+
+// Overtime of one day: { minutes, status } (status = the "worst" one: pending > approved > rejected)
+export function dayOvertime(sessions) {
+  const withOt = sessions.filter((s) => s.otStatus);
+  if (!withOt.length) return null;
+  const minutes = withOt.reduce((n, s) => n + s.otMinutes, 0);
+  const approved = withOt.reduce((n, s) => n + s.otApproved, 0);
+  const status = withOt.some((s) => s.otStatus === "pending") ? "pending"
+    : withOt.some((s) => s.otStatus === "approved") ? "approved" : "rejected";
+  return { minutes, approved, status };
+}
+
+// "1h 15m"
+export const fmtMinutes = (m) => {
+  const n = Math.max(Math.round(m || 0), 0);
+  return n >= 60 ? `${Math.floor(n / 60)}h${n % 60 ? ` ${n % 60}m` : ""}` : `${n}m`;
+};
+
+// Total credited hours from a list of attendance records
+export function calcHours(recs) {
+  const total = Object.values(sessionsByDate(recs)).reduce((s, day) => s + dayHours(day), 0);
   return Math.round(total * 10) / 10;
 }
 
@@ -305,6 +377,32 @@ function SquarePhoto({ name, photo }) {
     <div className="ix-side-photo">
       {src && !bad
         ? <img src={src} alt={name || "Profile photo"} onError={() => setBad(true)} />
+        : <span>{name?.charAt(0).toUpperCase() || "?"}</span>}
+    </div>
+  );
+}
+
+// Filled icons for the navbar (bell + account circle)
+const BellFill = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z" />
+  </svg>
+);
+const AccountFill = () => (
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 4a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Zm0 14a8 8 0 0 1-6.16-2.9C6.9 15.3 9.3 14.5 12 14.5s5.1.8 6.16 2.6A8 8 0 0 1 12 20Z" />
+  </svg>
+);
+
+// Small square photo in the account menu
+function MenuPhoto({ name, photo }) {
+  const [bad, setBad] = useState(false);
+  const src = photoUrl(photo);
+  useEffect(() => setBad(false), [photo]);
+  return (
+    <div className="ix-acct-photo">
+      {src && !bad
+        ? <img src={src} alt="" onError={() => setBad(true)} />
         : <span>{name?.charAt(0).toUpperCase() || "?"}</span>}
     </div>
   );
@@ -645,7 +743,7 @@ export function MyProfile({ user }) {
    Personal details live in Manage Accounts (View). */
 function InternProfile({ u, records, today, onClose, onViewRecords }) {
   const recs = records.filter((r) => r.user_id === u.id);
-  const isIn = recs.some((r) => r.date === today && r.action === "CHECK_IN" && !r.checked_out_at);
+  const isIn = recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
   const days = [...new Set(recs.map((r) => r.date))].length;
   const total = calcHours(recs);
   const outputBased = u.tracking_type === "output";
@@ -656,9 +754,10 @@ function InternProfile({ u, records, today, onClose, onViewRecords }) {
   const online = recs.filter((r) => r.uid === "ONLINE").length;
   const studentId = u.student_id || u.student_number || "—";
 
-  const todayRecs = recs.filter((r) => r.date === today);
-  const tIn = todayRecs.find((r) => r.checked_in_at)?.checked_in_at;
-  const tOut = todayRecs.find((r) => r.checked_out_at)?.checked_out_at;
+  // first time in and last time out of today
+  const todaySessions = sessionsByDate(recs.filter((r) => r.date === today))[today] || [];
+  const tIn = todaySessions[0]?.in;
+  const tOut = [...todaySessions].reverse().find((s) => s.out)?.out;
   const lastDate = recs.map((r) => r.date).sort().pop();
   const fmtDate = (d) => {
     const x = new Date(d + "T00:00:00");
@@ -686,6 +785,7 @@ function InternProfile({ u, records, today, onClose, onViewRecords }) {
             <span>Student ID <strong>{studentId}</strong></span>
             {u.program && <span>{u.program}</span>}
             {u.placement && <span>{u.placement}</span>}
+            <span>{DTR_MODES[dtrModeOf(u)]}</span>
           </div>
           <Badge label={isIn ? "Present Now" : "Not In"} type={isIn ? "in" : "out"} />
         </div>
@@ -699,7 +799,7 @@ function InternProfile({ u, records, today, onClose, onViewRecords }) {
         <h3 className="ipv-title">Today</h3>
         <div className="ipv-grid c3">
           {cell("Time in", tIn ? fmtTime(tIn) : "Not in yet")}
-          {cell("Time out", tOut ? fmtTime(tOut) : tIn ? <Badge label="Still in" type="in" /> : "—")}
+          {cell("Time out", isIn ? <Badge label="Still in" type="in" /> : tOut ? fmtTime(tOut) : "—")}
           {cell("Last record", lastDate ? fmtDate(lastDate) : "—")}
         </div>
       </div>
@@ -808,7 +908,9 @@ export function UserDetails({ u }) {
               {cell("Placement", u.placement)}
               {cell("Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite")}
               {cell("Tracking", u.tracking_type === "output" ? "Output-based" : "Hours-based")}
-              {cell("NFC UID", u.nfc_uid || "Not linked", true)}
+              {cell("DTR type", DTR_MODES[dtrModeOf(u)])}
+              {cell("Required hours", `${requiredHoursFor(u.program)}h`)}
+              {cell("NFC UID", u.nfc_uid || "Not linked")}
             </div>
           </div>
 
@@ -830,7 +932,7 @@ export function UserDetails({ u }) {
 /* Shared form for "Add New User" and "Edit User" (same look as the View window) */
 export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions }) {
   const add = mode === "add";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayManila();
 
   const cell = (label, control, { full = false, hint, plain = false } = {}) => {
     const Tag = plain ? "div" : "label";
@@ -907,7 +1009,7 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                   <option value="BSCS - 4">BSCS - 4</option>
                   <option value="BSIS - 4">BSIS - 4</option>
                 </select>
-              ))}
+              ), { hint: `Required hours: ${requiredHoursFor(f.program)}h` })}
               {cell("Semester", (
                 <select className="uf-input" value={f.semester} onChange={set("semester")}>
                   {!add && <option value="">Select semester</option>}
@@ -928,7 +1030,13 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                   <option value="output">Output-based</option>
                 </select>
               ))}
-              {cell("NFC card UID", uidField, { plain: true })}
+              {cell("DTR type", (
+                <select className="uf-input" value={f.dtr_mode || "two"} onChange={set("dtr_mode")}>
+                  <option value="two">{DTR_MODES.two}</option>
+                  <option value="four">{DTR_MODES.four}</option>
+                </select>
+              ), { hint: "Depends on the intern's HTI." })}
+              {cell("NFC card UID", uidField, { plain: true, full: true })}
             </div>
           </div>
 
@@ -1028,7 +1136,7 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
       const recs = records.filter((r) => r.user_id === u.id);
       return {
         u,
-        isIn: recs.some((r) => r.date === today && r.action === "CHECK_IN" && !r.checked_out_at),
+        isIn: recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at),
         days: [...new Set(recs.map((r) => r.date))].length,
         last: recs[0]?.date,
       };
@@ -1339,7 +1447,21 @@ function useNotifications(userId) {
 
   const markAllRead = () => items.filter((n) => !n.is_read).forEach((n) => markRead(n.id));
 
-  return { items, markRead, markAllRead };
+  const remove = async (id) => {
+    setItems((prev) => prev.filter((n) => n.id !== id));   // instant
+    try {
+      await fetch(`${API}/notifications/${id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+    } catch { /* ignore */ }
+  };
+
+  const clearAll = async () => {
+    setItems([]);
+    try {
+      await fetch(`${API}/notifications`, { method: "DELETE", headers: { Accept: "application/json" } });
+    } catch { /* ignore */ }
+  };
+
+  return { items, markRead, markAllRead, remove, clearAll };
 }
 
 export default function Shell({ navItems, user, children }) {
@@ -1351,6 +1473,8 @@ export default function Shell({ navItems, user, children }) {
   const [isFull, setIsFull] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
+  const [acctOpen, setAcctOpen] = useState(false);
+  const acctRef = useRef(null);
 
   // student / employee ID and program are not in the login response, so read them from the account
   const [me, setMe] = useState(null);
@@ -1366,7 +1490,7 @@ export default function Shell({ navItems, user, children }) {
     return prog ? (n ? `${prog} · ${n}${sfx} Year` : prog) : "";
   };
 
-  const { items: notifications, markRead, markAllRead } = useNotifications(user?.id);
+  const { items: notifications, markRead, markAllRead, remove, clearAll } = useNotifications(user?.id);
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   // One login page for everyone (it has the Intern / Employee picker)
@@ -1382,10 +1506,12 @@ export default function Shell({ navItems, user, children }) {
       if (e.key === "Escape") {
         if (isMobile()) setMenuOpen(false);   // on phones the menu is an overlay
         setNotifOpen(false);
+        setAcctOpen(false);
       }
     };
     const onClick = (e) => {
       if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
+      if (acctRef.current && !acctRef.current.contains(e.target)) setAcctOpen(false);
     };
     const onFs = () => setIsFull(!!document.fullscreenElement);
     window.addEventListener("keydown", onKey);
@@ -1408,6 +1534,7 @@ export default function Shell({ navItems, user, children }) {
   useEffect(() => {
     if (isMobile()) setMenuOpen(false);
     setNotifOpen(false);
+    setAcctOpen(false);
   }, [path]);
 
   const logout = () => {
@@ -1446,11 +1573,11 @@ export default function Shell({ navItems, user, children }) {
           <div className="ix-notification-wrap" ref={notifRef}>
             <button
               className="ix-notification-btn"
-              onClick={() => setNotifOpen((o) => !o)}
+              onClick={() => { setNotifOpen((o) => !o); setAcctOpen(false); }}
               aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
               aria-expanded={notifOpen}
             >
-              <Icon name="bell" size={19} />
+              <BellFill />
               {unreadCount > 0 && <span className="ix-notification-count">{unreadCount > 9 ? "9+" : unreadCount}</span>}
             </button>
 
@@ -1458,9 +1585,14 @@ export default function Shell({ navItems, user, children }) {
               <div className="ix-notification-dropdown">
                 <div className="ix-notification-header">
                   <strong>Notifications</strong>
-                  {unreadCount > 0
-                    ? <button type="button" className="ix-notification-all" onClick={markAllRead}>Mark all read</button>
-                    : <span>All caught up</span>}
+                  <span className="ix-notification-actions">
+                    {unreadCount > 0 && (
+                      <button type="button" className="ix-notification-all" onClick={markAllRead}>Mark all read</button>
+                    )}
+                    {notifications.length > 0
+                      ? <button type="button" className="ix-notification-all danger" onClick={clearAll}>Clear all</button>
+                      : <span>All caught up</span>}
+                  </span>
                 </div>
 
                 <div className="ix-notification-list">
@@ -1468,19 +1600,29 @@ export default function Shell({ navItems, user, children }) {
                     <div className="ix-no-notifications">No notifications yet.</div>
                   ) : (
                     notifications.map((n) => (
-                      <button
-                        key={n.id}
-                        type="button"
-                        className={`ix-notification-item ${n.is_read ? "read" : ""}`}
-                        onClick={() => !n.is_read && markRead(n.id)}
-                      >
-                        <span className="ix-notification-dot" />
-                        <span className="ix-notification-content">
-                          <strong>{n.title}</strong>
-                          <span>{n.message}</span>
-                          <small>{timeAgo(n.created_at)}</small>
-                        </span>
-                      </button>
+                      <div key={n.id} className={`ix-notification-item ${n.is_read ? "read" : ""}`}>
+                        <button
+                          type="button"
+                          className="ix-notification-main"
+                          onClick={() => !n.is_read && markRead(n.id)}
+                        >
+                          <span className="ix-notification-dot" />
+                          <span className="ix-notification-content">
+                            <strong>{n.title}</strong>
+                            <span>{n.message}</span>
+                            <small>{timeAgo(n.created_at)}</small>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="ix-notification-x"
+                          onClick={() => remove(n.id)}
+                          aria-label={`Delete notification: ${n.title}`}
+                          title="Delete"
+                        >
+                          <Icon name="x" size={14} />
+                        </button>
+                      </div>
                     ))
                   )}
                 </div>
@@ -1488,10 +1630,34 @@ export default function Shell({ navItems, user, children }) {
             )}
           </div>
 
-          <button className="ix-logout" onClick={logout}>
-            <Icon name="logout" size={17} />
-            <span>Logout</span>
-          </button>
+          {/* account button: opens a small menu with the photo, name, ID and Sign-Out */}
+          <div className="ix-acct-wrap" ref={acctRef}>
+            <button
+              className={acctOpen ? "ix-acct-btn open" : "ix-acct-btn"}
+              onClick={() => { setAcctOpen((o) => !o); setNotifOpen(false); }}
+              aria-label="Account menu"
+              aria-haspopup="menu"
+              aria-expanded={acctOpen}
+            >
+              <AccountFill />
+            </button>
+
+            {acctOpen && (
+              <div className="ix-acct-menu" role="menu">
+                <div className="ix-acct-who">
+                  <MenuPhoto name={user?.name} photo={user?.photo} />
+                  <div className="ix-acct-text">
+                    <strong>{(user?.name || "User").toUpperCase()}</strong>
+                    <span>{me?.student_id || ROLE_LABEL[user?.role] || "Staff"}</span>
+                  </div>
+                </div>
+                <button type="button" className="ix-logout" role="menuitem" onClick={logout}>
+                  <Icon name="logout" size={20} />
+                  <span>Sign-Out</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1508,6 +1674,7 @@ export default function Shell({ navItems, user, children }) {
               {user?.role === "intern" && me?.program && <span className="ix-side-meta">{yearLabel(me.program)}</span>}
             </div>
           </div>
+          <nav className="ix-side-menu">
           {navItems.map((it) => (
             <button
               key={it.path}
@@ -1520,6 +1687,7 @@ export default function Shell({ navItems, user, children }) {
               <span className="ix-side-label">{it.label}</span>
             </button>
           ))}
+          </nav>
           <div className="ix-side-foot">CSU CCIS OJT</div>
         </aside>
 
@@ -1536,6 +1704,9 @@ export default function Shell({ navItems, user, children }) {
 /* ───────────────────────── styles ───────────────────────── */
 const css = `
   .ix-page, .ix-page * { box-sizing: border-box; }
+  /* The app is always light. Without this, a computer in dark mode paints the text boxes, dropdowns
+     and date pickers dark (index.css has "color-scheme: light dark"). */
+  .ix-page, .ix-modal-wrap { color-scheme: light; }
   html, body, #root { height: 100%; width: 100%; margin: 0; }
   .ix-page { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #0f172a; }
   .ix-page h1, .ix-page h2, .ix-page p, .ix-page dl, .ix-page dd { margin: 0; }
@@ -1551,12 +1722,12 @@ const css = `
   .ix-brand-name.show { max-width: 170px; opacity: 1; margin-left: 10px; }
   .ix-icon-btn { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 8px; display: flex; color: #1e293b; transition: background .15s, color .15s; }
   .ix-icon-btn:hover { background: #fdeee7; color: #e8582a; }
-  .ix-nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .ix-nav-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 
   /* notifications */
   .ix-notification-wrap { position: relative; }
-  .ix-notification-btn { position: relative; width: 40px; height: 40px; border: 1.5px solid #e2e8f0; border-radius: 10px; background: #fff; color: #334155; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s; }
-  .ix-notification-btn:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; }
+  .ix-notification-btn { position: relative; width: 44px; height: 44px; border: none; border-radius: 50%; background: none; color: #f97316; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s, color .15s; }
+  .ix-notification-btn:hover, .ix-notification-btn[aria-expanded="true"] { background: #fff1e6; color: #ea580c; }
   .ix-notification-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
   .ix-notification-btn:has(.ix-notification-count) svg { animation: ix-ring 3.2s ease-in-out infinite; transform-origin: 50% 10%; }
   .ix-notification-count { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 99px; background: #e8582a; color: #fff; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; animation: ix-pulse 2s ease-out infinite; }
@@ -1579,8 +1750,20 @@ const css = `
   .ix-no-notifications { padding: 30px 16px; text-align: center; font-size: 12px; color: #94a3b8; }
 
   .ix-avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 6px 14px rgba(232,88,42,0.35); }
-  .ix-logout { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 10px; cursor: pointer; background: #fff; border: 1.5px solid #e2e8f0; color: #334155; font-size: 13px; font-weight: 600; transition: all .15s; }
-  .ix-logout:hover { border-color: #e8582a; color: #e8582a; background: #fdeee7; transform: translateY(-1px); box-shadow: 0 8px 16px rgba(232,88,42,0.2); }
+  /* account button + menu (photo, name, ID, Sign-Out) */
+  .ix-acct-wrap { position: relative; }
+  .ix-acct-btn { width: 50px; height: 50px; border: none; border-radius: 50%; background: none; color: #f97316; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s, color .15s; }
+  .ix-acct-btn:hover, .ix-acct-btn.open { background: #fde3cf; color: #ea580c; }
+  .ix-acct-btn:focus-visible, .ix-notification-btn:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
+  .ix-acct-menu { position: absolute; top: calc(100% + 8px); right: 0; width: 310px; background: #fff; border-radius: 6px; box-shadow: 0 10px 30px rgba(15,23,42,0.16); overflow: hidden; z-index: 100; animation: ix-pop .18s ease-out; }
+  .ix-acct-who { display: flex; align-items: center; gap: 14px; padding: 22px 22px 20px; border-bottom: 1px solid #e5e7eb; }
+  .ix-acct-photo { width: 60px; height: 60px; flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #334155; color: #fff; font-size: 24px; font-weight: 700; }
+  .ix-acct-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ix-acct-text { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .ix-acct-text strong { font-size: 14.5px; font-weight: 500; color: #111827; line-height: 1.3; overflow-wrap: anywhere; }
+  .ix-acct-text span { font-size: 13.5px; color: #9ca3af; }
+  .ix-logout { width: 100%; display: flex; align-items: center; gap: 10px; padding: 16px 22px; border: none; background: none; cursor: pointer; color: #1f2937; font-size: 14.5px; font-weight: 600; letter-spacing: .02em; text-align: left; transition: background .15s, color .15s; }
+  .ix-logout:hover { background: #fff1e6; color: #ea580c; }
   .ix-icon-btn:focus-visible, .ix-logout:focus-visible, .ix-logo-btn:focus-visible, .ix-side-item:focus-visible, .ix-b:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
 
   /* ───── Sidebar (white, pushes the page) ───── */
@@ -1647,7 +1830,7 @@ const css = `
 
   /* calmer top bar */
   .ix-nav { height: 64px; box-shadow: none; border-bottom: 1px solid #e5e7eb; }
-  .ix-nav::after { height: 2px; background: #e8582a; animation: none; }
+  .ix-nav::after { height: 2px; background: #f97316; animation: none; }   /* orange line under the navbar */
   .ix-nav-logo { height: 36px; }
 
   /* ───── Main ───── */
@@ -1740,7 +1923,12 @@ const css = `
   .sec-change:hover { background: #d97706; }
   .sec-form { display: flex; flex-direction: column; gap: 14px; }
   .sec-pw { position: relative; }
-  .sec-pw input { width: 100%; padding: 14px 44px 14px 14px; border: 1.5px solid #e2e8f0; border-radius: 12px; font-size: 14px; font-family: inherit; }
+  .sec-pw input { width: 100%; padding: 14px 44px 14px 14px; border: 1.5px solid #e2e8f0; border-radius: 12px; font-size: 14px; font-family: inherit; background: #fff; color: #0f172a; }
+  .sec-pw input::placeholder { color: #94a3b8; }
+  /* the browser's saved-password fill would paint it grey/blue: keep it white */
+  .sec-pw input:-webkit-autofill, .sec-pw input:-webkit-autofill:hover, .sec-pw input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 1000px #fff inset !important; -webkit-text-fill-color: #0f172a !important; caret-color: #0f172a;
+  }
   .sec-pw input:focus { outline: none; border-color: #e8582a; box-shadow: 0 0 0 4px rgba(232,88,42,.12); }
   .sec-pw button { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: #64748b; cursor: pointer; padding: 6px; display: inline-flex; }
   .ix-badge.none { background: #f1f5f9; color: #64748b; }
@@ -2036,6 +2224,22 @@ const css = `
   .uf-input.scanning { color: #d94a1c; }
   .uf-hint { font-size: 11px; font-weight: 400; line-height: 1.4; color: #94a3b8; }
 
+  /* ───── Notification list: red thin scrollbar + delete button ───── */
+  .ix-notification-list { scrollbar-width: thin; scrollbar-color: #dc5d26 #fdeae2; }
+  .ix-notification-list::-webkit-scrollbar { width: 5px; }
+  .ix-notification-list::-webkit-scrollbar-track { background: #fdeee2; border-radius: 99px; }
+  .ix-notification-list::-webkit-scrollbar-thumb { background: #dc7526; border-radius: 99px; }
+  .ix-notification-list::-webkit-scrollbar-thumb:hover { background: #ec650b; }
+
+  .ix-notification-item { padding: 0; align-items: stretch; cursor: default; }
+  .ix-notification-main { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 10px; padding: 13px 4px 13px 16px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+  .ix-notification-item.read .ix-notification-main { cursor: default; }
+  .ix-notification-x { flex-shrink: 0; align-self: flex-start; margin: 10px 10px 0 0; width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; color: #94a3b8; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s, color .15s; }
+  .ix-notification-x:hover { background: #fdeee2; color: #dc6c26; }
+  .ix-notification-x:focus-visible { outline: 2px solid #dc5726; outline-offset: 1px; }
+  .ix-notification-actions { display: flex; align-items: center; gap: 12px; }
+  .ix-notification-all.danger { color: #dc5a26; }
+
   /* ───── Motion ───── */
   @keyframes ix-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
   @keyframes ix-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -2060,9 +2264,8 @@ const css = `
     .ix-fs-btn { display: none; }
     .ix-main { padding: 20px 16px 32px; }
   }
-  @media (max-width: 600px) { 
-    .ix-logout span { display: none; }
-    .ix-logout { padding: 9px; }
+  @media (max-width: 600px) {
+    .ix-acct-menu { position: fixed; top: 70px; right: 12px; width: min(310px, calc(100vw - 24px)); }
     .ix-notification-dropdown { position: fixed; top: 80px; left: 12px; right: 12px; width: auto; }
     .ix-hero { padding: 22px; }
     .ix-hero h1 { font-size: 22px; }
@@ -2071,4 +2274,46 @@ const css = `
     .ix-intern-grid, .ix-hours-grid { grid-template-columns: 1fr; }
     .ix-doc { padding: 20px; }
   }
+
+  /* ───── One scrollbar design for every dashboard (thin, orange) ───── */
+  .ix-page, .ix-modal-wrap {
+    --sb-thumb: #e8582a;
+    --sb-thumb-hover: #d94a1c;
+    --sb-track: #fdeee7;
+  }
+
+  /* Firefox */
+  .ix-page *, .ix-modal-wrap * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sb-thumb) var(--sb-track);
+  }
+
+  /* Chrome, Edge, Safari */
+  .ix-page *::-webkit-scrollbar, .ix-modal-wrap *::-webkit-scrollbar { width: 6px; height: 6px; }
+  .ix-page *::-webkit-scrollbar-track, .ix-modal-wrap *::-webkit-scrollbar-track { background: var(--sb-track); border-radius: 99px; }
+  .ix-page *::-webkit-scrollbar-thumb, .ix-modal-wrap *::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 99px; }
+  .ix-page *::-webkit-scrollbar-thumb:hover, .ix-modal-wrap *::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+  .ix-page *::-webkit-scrollbar-corner, .ix-modal-wrap *::-webkit-scrollbar-corner { background: transparent; }
+
+  /* ───── Sidebar: the photo/name stay at the top, only the page list scrolls ───── */
+  .ix-page .ix-side { overflow: hidden; }
+  .ix-page .ix-side-profile, .ix-page .ix-side-foot { flex-shrink: 0; }
+  .ix-page .ix-side-foot { margin-top: 0; }
+
+  /* the page list fills the space left and scrolls when the pages don't fit (e.g. the coordinator) */
+  .ix-page .ix-side-menu { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 4px 0 12px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  .ix-page .ix-side.open .ix-side-menu { border-top: 1px solid #eceef1; }
+
+  /* every role gets the same 42px rows and 4px gaps (the buttons never squeeze) */
+  .ix-page .ix-side-item { flex: 0 0 42px; height: 42px; min-height: 42px; margin: 2px 8px; }
+  .ix-page .ix-side-item:last-of-type { margin-bottom: 2px; }
+
+  /* orange scrollbar on the right of the list (same as the page scrollbar), shown only while the sidebar is open */
+  .ix-page .ix-side-menu { scrollbar-width: none; }
+  .ix-page .ix-side-menu::-webkit-scrollbar { width: 0; }
+  .ix-page .ix-side.open .ix-side-menu { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) var(--sb-track); }
+  .ix-page .ix-side.open .ix-side-menu::-webkit-scrollbar { width: 6px; }
+  .ix-page .ix-side.open .ix-side-menu::-webkit-scrollbar-track { background: var(--sb-track); border-radius: 99px; }
+  .ix-page .ix-side.open .ix-side-menu::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 99px; }
+  .ix-page .ix-side.open .ix-side-menu::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
 `;

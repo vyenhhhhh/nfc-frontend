@@ -1,11 +1,12 @@
 // components/NfcCards.jsx
-// Supervisor page: review NFC card requests from interns, link the card, and print intern cards.
+// Coordinator page: review NFC card requests and see the request history.
+// PrintCards (exported) is used by the admin's "Print ID Cards" page.
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import logo from "../assets/logo.png";
-import { Spinner, PageHeader, Badge, Empty, Msg, Avatar, Icon, photoUrl } from "./DashKit.jsx";
-
+import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl } from "./DashKit.jsx";
 const API = "http://localhost:8000/api";
+
 
 const STATUS = {
   pending:  { label: "Pending",     type: "pending" },
@@ -18,6 +19,11 @@ const friendly = (e) =>
   e instanceof SyntaxError || e instanceof TypeError
     ? "Couldn't reach the NFC card service. Check that the backend routes are set up."
     : e.message;
+
+const fmtDate = (v) => {
+  const d = new Date(v);
+  return !v || isNaN(d) ? "—" : d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+};
 
 /* ───────────────────────── page ───────────────────────── */
 export default function NfcCards({ user, interns, onRefresh }) {
@@ -42,38 +48,43 @@ export default function NfcCards({ user, interns, onRefresh }) {
 
   useEffect(() => {
     fetchRequests();
-    const iv = setInterval(fetchRequests, 5000);
+    const iv = setInterval(() => { if (!document.hidden) fetchRequests(); }, 10000);
     return () => clearInterval(iv);
   }, []);
 
+  const open = requests.filter((r) => r.status === "pending" || r.status === "approved");
+  const closed = requests.filter((r) => r.status === "issued" || r.status === "rejected");
   const pendingCount = requests.filter((r) => r.status === "pending").length;
 
   return (
     <>
       <style>{nfcCss}</style>
-      <PageHeader title="NFC Cards" sub="Review card requests and print intern cards." />
+      <PageHeader title="NFC Cards" sub="Review card requests and check the history. ID cards are printed by the admin." />
       <div className="ix-pills">
         <button className={tab === "requests" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("requests")}>
           Card Requests {pendingCount > 0 && <span className="ix-pill-count">{pendingCount}</span>}
         </button>
-        <button className={tab === "print" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("print")}>
-          Print Cards
+        <button className={tab === "history" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("history")}>
+          History <span className="ix-pill-count">{closed.length}</span>
         </button>
       </div>
 
-      {tab === "requests" ? (
+      {error && (
+        <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>
+      )}
+
+      {tab === "requests" && (
         <Requests
-          user={user} requests={requests} loading={loading} error={error}
+          user={user} requests={open} loading={loading} error={error}
           refresh={fetchRequests} onRefresh={onRefresh}
         />
-      ) : (
-        <PrintCards interns={interns} />
       )}
+      {tab === "history" && <History requests={closed} loading={loading} />}
     </>
   );
 }
 
-/* ───────────────────────── requests tab ───────────────────────── */
+/* ───────────────────────── requests tab (pending + approved) ───────────────────────── */
 function Requests({ user, requests, loading, error, refresh, onRefresh }) {
   const [remarks, setRemarks] = useState({});
   const [uids, setUids] = useState({});
@@ -134,19 +145,17 @@ function Requests({ user, requests, loading, error, refresh, onRefresh }) {
   return (
     <>
       <Msg msg={msg} />
-      {error && (
-        <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>
-      )}
 
       {requests.length === 0 && !error ? (
-        <div className="ix-card">
-          <Empty icon="card" title="No card requests" sub="When an intern applies for an NFC card, it will show up here." />
+        <div className="ix-card ix-allgood">
+          <div className="ix-empty-icon"><Icon name="check" size={30} /></div>
+          <div className="ix-empty-title" style={{ fontSize: 17 }}>All caught up!</div>
+          <div className="ix-empty-sub">No card requests waiting. New applications will show up here.</div>
         </div>
       ) : (
         <div className="ix-list">
           {requests.map((r) => {
             const st = STATUS[r.status] || STATUS.pending;
-            const open = r.status === "pending" || r.status === "approved";
             const scanning = scanningId === r.id;
             const uid = uids[r.id] || "";
             return (
@@ -162,70 +171,57 @@ function Requests({ user, requests, loading, error, refresh, onRefresh }) {
 
                 <div className="nfc-req-meta">
                   <span className="ix-chip">{r.type || "NFC card"}</span>
-                  {r.created_at && (
-                    <span className="ix-muted">
-                      Applied {new Date(r.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" })}
-                    </span>
-                  )}
+                  {r.created_at && <span className="ix-muted">Applied {fmtDate(r.created_at)}</span>}
                 </div>
                 {r.notes && <div className="ix-desc" style={{ marginTop: 12 }}>{r.notes}</div>}
 
-                {open && (
-                  <div className="nfc-review">
-                    <div className="ix-field">
-                      <label htmlFor={`nfc-uid-${r.id}`}>
-                        Card UID {r.status === "pending" && <span className="ix-muted">(optional for now)</span>}
-                      </label>
-                      <div className="ix-row-gap">
-                        <input
-                          id={`nfc-uid-${r.id}`} type="text"
-                          className={scanning ? "scanning" : ""}
-                          placeholder="Scan the card or type the UID"
-                          value={scanning ? "Waiting for card tap..." : uid}
-                          readOnly={scanning}
-                          onChange={(e) => setUids((u) => ({ ...u, [r.id]: e.target.value }))}
-                        />
-                        <button
-                          type="button"
-                          className={scanning ? "ix-b ghost" : "ix-b primary"}
-                          onClick={(e) => { e.currentTarget.blur(); buffer.current = ""; setScanningId(scanning ? null : r.id); }}
-                        >
-                          <Icon name="nfc" size={16} /> {scanning ? "Cancel" : "Scan"}
-                        </button>
-                      </div>
-                      {scanning && <div className="ix-hint info">Keep this window focused, then tap the card on the reader.</div>}
-                    </div>
-
-                    <div className="ix-review">
+                <div className="nfc-review">
+                  <div className="ix-field">
+                    <label htmlFor={`nfc-uid-${r.id}`}>
+                      Card UID {r.status === "pending" && <span className="ix-muted">(optional for now)</span>}
+                    </label>
+                    <div className="ix-row-gap">
                       <input
-                        type="text" className="ix-input" placeholder="Add remarks (optional)"
-                        value={remarks[r.id] || ""}
-                        onChange={(e) => setRemarks((x) => ({ ...x, [r.id]: e.target.value }))}
+                        id={`nfc-uid-${r.id}`} type="text"
+                        className={scanning ? "scanning" : ""}
+                        placeholder="Scan the card or type the UID"
+                        value={scanning ? "Waiting for card tap..." : uid}
+                        readOnly={scanning}
+                        onChange={(e) => setUids((u) => ({ ...u, [r.id]: e.target.value }))}
                       />
-                      {r.status === "pending" && (
-                        <button className="ix-b danger" onClick={() => review(r, "reject")} disabled={!!processing}>
-                          {processing === r.id + "reject" ? "..." : "Reject"}
-                        </button>
-                      )}
-                      {r.status === "pending" ? (
-                        <button className="ix-b ok" onClick={() => review(r, "approve")} disabled={!!processing}>
-                          {processing === r.id + "approve" ? "..." : uid.trim() ? "Approve & link card" : "Approve"}
-                        </button>
-                      ) : (
-                        <button className="ix-b ok" onClick={() => review(r, "link")} disabled={!!processing}>
-                          {processing === r.id + "link" ? "..." : "Link card"}
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className={scanning ? "ix-b ghost" : "ix-b primary"}
+                        onClick={(e) => { e.currentTarget.blur(); buffer.current = ""; setScanningId(scanning ? null : r.id); }}
+                      >
+                        <Icon name="nfc" size={16} /> {scanning ? "Cancel" : "Scan"}
+                      </button>
                     </div>
+                    {scanning && <div className="ix-hint info">Keep this window focused, then tap the card on the reader.</div>}
                   </div>
-                )}
 
-                {!open && (r.uid || r.remarks) && (
-                  <div className="ix-remarks">
-                    {r.uid && <>Card UID: <strong style={{ fontFamily: "monospace" }}>{r.uid}</strong>{r.remarks ? " · " : ""}</>}
-                    {r.remarks && `Remarks: ${r.remarks}`}
+                  <div className="ix-review">
+                    <input
+                      type="text" className="ix-input" placeholder="Add remarks (optional)"
+                      value={remarks[r.id] || ""}
+                      onChange={(e) => setRemarks((x) => ({ ...x, [r.id]: e.target.value }))}
+                    />
+                    {r.status === "pending" && (
+                      <button className="ix-b danger" onClick={() => review(r, "reject")} disabled={!!processing}>
+                        {processing === r.id + "reject" ? "..." : "Reject"}
+                      </button>
+                    )}
+                    {r.status === "pending" ? (
+                      <button className="ix-b ok" onClick={() => review(r, "approve")} disabled={!!processing}>
+                        {processing === r.id + "approve" ? "..." : uid.trim() ? "Approve & link card" : "Approve"}
+                      </button>
+                    ) : (
+                      <button className="ix-b ok" onClick={() => review(r, "link")} disabled={!!processing}>
+                        {processing === r.id + "link" ? "..." : "Link card"}
+                      </button>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             );
           })}
@@ -235,9 +231,62 @@ function Requests({ user, requests, loading, error, refresh, onRefresh }) {
   );
 }
 
+/* ───────────────────────── history tab (issued + rejected) ───────────────────────── */
+function History({ requests, loading }) {
+  const [q, setQ] = useState("");
+  const [result, setResult] = useState("all");
+  const sq = q.trim().toLowerCase();
+
+  const shown = requests
+    .filter((r) => result === "all" || r.status === result)
+    .filter((r) => `${r.intern_name} ${r.intern_email} ${r.uid || ""}`.toLowerCase().includes(sq))
+    .sort((a, b) => String(b.reviewed_at || b.updated_at).localeCompare(String(a.reviewed_at || a.updated_at)));
+
+  if (loading) return <Spinner />;
+
+  return (
+    <>
+      <div className="ix-toolbar">
+        <div className="ix-search">
+          <Icon name="search" size={16} />
+          <input type="text" placeholder="Search name or card UID..." value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="ix-select" value={result} onChange={(e) => setResult(e.target.value)} aria-label="Filter by result">
+          <option value="all">All results</option>
+          <option value="issued">Card issued</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <span className="ix-chip">{shown.length} records</span>
+      </div>
+      <div className="ix-card flush">
+        <Table
+          headers={["Intern", "Request", "Result", "Card UID", "Remarks", "Reviewed by", "Reviewed"]}
+          rows={shown.map((r) => {
+            const st = STATUS[r.status] || STATUS.pending;
+            return [
+              <div className="ix-actions">
+                <Avatar name={r.intern_name} photo={r.intern_photo} size={30} />
+                <strong>{r.intern_name}</strong>
+              </div>,
+              <span className="ix-chip">{r.type || "NFC card"}</span>,
+              <Badge label={st.label} type={st.type} />,
+              r.uid ? <span className="ix-mono">{r.uid}</span> : <span className="ix-muted">—</span>,
+              <span className="os-remarks">{r.remarks || "—"}</span>,
+              r.reviewer_name || "—",
+              fmtDate(r.reviewed_at || r.updated_at),
+            ];
+          })}
+          empty="No closed requests yet."
+        />
+      </div>
+    </>
+  );
+}
+
 /* ───────────────────────── the card itself ───────────────────────── */
 function CardFace({ u }) {
   const src = photoUrl(u.photo);
+  // the card UID is never printed: anyone who saw it could use it to tap for this intern
   return (
     <div className="nfc-card">
       <div className="nfc-card-head">
@@ -256,8 +305,8 @@ function CardFace({ u }) {
           <strong className="nfc-name">{u.name}</strong>
           <span className="nfc-mail">{u.email}</span>
           <div className="nfc-uid">
-            <small>NFC UID</small>
-            <code>{u.uid || "Not linked yet"}</code>
+            <small>ID NO.</small>
+            <code>{u.student_id || "—"}</code>
           </div>
         </div>
       </div>
@@ -268,8 +317,9 @@ function CardFace({ u }) {
   );
 }
 
-/* ───────────────────────── print tab ───────────────────────── */
-function PrintCards({ interns }) {
+/* ───────────────────────── printing (admin) ─────────────────────────
+   interns = the interns allowed to get a card; statusOf(u) = optional label for the chip */
+export function PrintCards({ interns, statusOf }) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState([]);
   const [printList, setPrintList] = useState([]);
@@ -299,6 +349,7 @@ function PrintCards({ interns }) {
 
   return (
     <>
+      <style>{nfcCss}</style>
       <div className="ix-toolbar">
         <div className="ix-search">
           <Icon name="search" size={16} />
@@ -316,7 +367,7 @@ function PrintCards({ interns }) {
       </div>
 
       {list.length === 0 ? (
-        <div className="ix-card"><Empty icon="card" title="No interns found" /></div>
+        <div className="ix-card"><Empty icon="card" title="No cards to print" sub="Interns appear here once the OJT coordinator approves their NFC card request." /></div>
       ) : (
         <div className="nfc-grid">
           {list.map((u) => (
@@ -327,8 +378,8 @@ function PrintCards({ interns }) {
               </label>
               <CardFace u={u} />
               <div className="nfc-item-foot">
-                <span className={u.uid ? "ix-chip green" : "ix-chip"}>
-                  {u.uid ? <><i /> Card linked</> : "No card yet"}
+                <span className={u.nfc_uid ? "ix-chip green" : "ix-chip"}>
+                  {statusOf ? statusOf(u) : u.nfc_uid ? <><i /> Card linked</> : "No card yet"}
                 </span>
                 <button className="ix-b ghost sm" onClick={() => doPrint([u])}>
                   <Icon name="print" size={14} /> Print

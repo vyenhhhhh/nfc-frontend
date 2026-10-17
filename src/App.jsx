@@ -3,461 +3,406 @@ import { useState, useEffect, useRef } from "react";
 import schoolLogo from "./assets/logo.png";
 
 const API = "http://localhost:8000/api";
+const STORAGE = "http://localhost:8000/storage/";
+const RESET_MS = 6000; // how long the result stays on screen
+// Secret that proves this screen is the real kiosk (same value as KIOSK_KEY in the Laravel .env)
+const KIOSK_KEY = import.meta.env.VITE_KIOSK_KEY || "";
+// The NFC reader "types" a whole UID in a few milliseconds. A person typing is much slower,
+// so a gap longer than this between keys means someone is typing by hand → ignore it.
+const MAX_KEY_GAP_MS = 60;
+
+const photoUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
 
 export default function App() {
-  const [status, setStatus]   = useState(null);
-  const [log, setLog]         = useState([]);
+  const [status, setStatus] = useState(null);   // last successful tap
+  const [error, setError] = useState(null);
+  const [warning, setWarning] = useState(null);  // accidental second tap within 5 minutes
+  const [log, setLog] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
-  const buffer = useRef("");
   const [time, setTime] = useState(new Date());
+  const [photoBad, setPhotoBad] = useState(false);
 
+  const buffer = useRef("");
+  const lastKey = useRef(0);
+  const busy = useRef(false);
+  const resetTimer = useRef(null);
+
+  // clock
   useEffect(() => {
-    const handleKey = (e) => {
+    const iv = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // the NFC reader "types" the UID and presses Enter
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = performance.now();
+      const gap = t - lastKey.current;
+      lastKey.current = t;
       if (e.key === "Enter") {
         const uid = buffer.current.trim();
         buffer.current = "";
-        if (uid.length >= 4) handleTap(uid);
-      } else {
-        if (e.key.length === 1) buffer.current += e.key;
+        if (uid.length >= 4 && gap <= MAX_KEY_GAP_MS) handleTap(uid);   // only the reader is this fast
+      } else if (e.key.length === 1) {
+        if (gap > MAX_KEY_GAP_MS) buffer.current = "";   // slow key = typed by hand: start over
+        buffer.current += e.key;
       }
     };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line
   }, []);
-  useEffect(() => {
-  const interval = setInterval(() => {
-    setTime(new Date());
-  }, 1000);
 
-  return () => clearInterval(interval);
-}, []);
+  useEffect(() => () => clearTimeout(resetTimer.current), []);
+
+  const scheduleReset = () => {
+    clearTimeout(resetTimer.current);
+    resetTimer.current = setTimeout(() => { setStatus(null); setError(null); setWarning(null); }, RESET_MS);
+  };
 
   const handleTap = async (uid) => {
+    if (busy.current) return;           // ignore double taps while one is processing
+    busy.current = true;
     setLoading(true);
     setError(null);
+    setWarning(null);
+    setStatus(null);
+    setPhotoBad(false);
     try {
       const res = await fetch(`${API}/tap`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
         body: JSON.stringify({ uid }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      // nothing was recorded, just tell the intern why:
+      //   DUPLICATE_TAP = tapped again within 5 minutes
+      //   TAP_BLOCKED   = outside check-in hours, a weekend, or a holiday
+      if (data.code === "DUPLICATE_TAP" || data.code === "TAP_BLOCKED") { setWarning(data); return; }
       if (!res.ok) throw new Error(data.message || "Server error");
       setStatus(data);
       setLog((prev) => [data, ...prev].slice(0, 50));
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof TypeError ? "Can't reach the server. Please tell the OJT coordinator." : err.message);
     } finally {
       setLoading(false);
+      busy.current = false;
+      scheduleReset();
     }
   };
 
   const isIn = status?.action === "CHECK_IN";
+  const ins = log.filter((l) => l.action === "CHECK_IN").length;
+  const outs = log.length - ins;
+  const src = photoUrl(status?.photo);
+
+  const dateLabel = time.toLocaleDateString("en-PH", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Manila" });
+  const clock = time.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Manila" });
 
   return (
-    <div style={s.page}>
-      <div style={s.layout}>
+    <div className="kx-page">
+      <style>{css}</style>
 
-        {/* ── LEFT PANEL ── */}
-        <div style={s.left}>
-
-          {/* Header */}
-          <div style={s.header}>
-            <img
-              src={schoolLogo}
-              alt="CSU Logo"
-              style={{ width: 64, height: 64, objectFit: "contain", flexShrink: 0 }}
-            />
-            <div style={{ flex: 1, borderLeft: "1px solid rgba(255, 255, 255, 0.15)", paddingLeft: 14 }}>
-              <div style={{ fontSize: 25, fontWeight: 700, color: "#fff", letterSpacing: 0.3, marginBottom:7 }}>
-                Caraga State University
-              </div>
-              <div style={{ fontSize: 12, fontWeight: 500, color: "#ffffff", marginBottom: 1 }}>
-                NFC Internship Attendance Monitoring
-              </div>
-              <div style={{ gap: 6, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center",  }}>
-                <span style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: "#22c55e",
-                  boxShadow: "0 0 6px #22c55e",
-                  animation: "pulse 1.5s infinite",
-                  display: "inline-block",
-                  flexShrink: 0,
-                  marginTop: 1,
-                }} />
-
-                {/* DATE */}
-                <span style={{
-                  fontSize: 11,
-                  color: "#93c5fd",
-                  lineHeight: 1,
-                  marginLeft: 5,
-                }}>
-                  {time.toLocaleDateString("en-PH", {
-                    weekday: "long",
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric",
-                  })}
-                </span>
-
-                {/* TIME */}
-                <span style={{
-                  fontSize: 11,
-                  color: "#93c5fd",
-                  marginLeft: 8,
-                }}>
-                  {time.toLocaleTimeString("en-PH", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })}
-                </span>
-              </div>
+      <div className="kx-layout">
+        {/* ───────── LEFT: scanner ───────── */}
+        <section className="kx-main">
+          <header className="kx-head">
+            <img src={schoolLogo} alt="CSU logo" className="kx-logo" />
+            <div className="kx-brand">
+              <strong>Caraga State University</strong>
+              <span>College of Computing and Information Sciences</span>
             </div>
+            <div className="kx-live"><i /> Online</div>
+          </header>
+
+          <div className="kx-clock">
+            <div className="kx-time">{clock}</div>
+            <div className="kx-date">{dateLabel}</div>
           </div>
 
-          {/* Scan area */}
-          <div style={s.scanCard}>
-            <div style={s.nfcRing}>
-              {loading ? (
-                <div style={s.spinner} />
-              ) : (
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                  <circle cx="24" cy="24" r="16" stroke="#1c221d" strokeWidth="2" fill="none"/>
-                  <circle cx="24" cy="24" r="10" stroke="#3e963e" strokeWidth="2" fill="none"/>
-                  <circle cx="24" cy="24" r="4" fill="#1c221d"/>
-                  <line x1="2"  y1="24" x2="6"  y2="24" stroke="#1c221d" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="42" y1="24" x2="46" y2="24" stroke="#1c221d" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="24" y1="2"  x2="24" y2="6"  stroke="#1c221d" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="24" y1="42" x2="24" y2="46" stroke="#1c221d" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-              )}
-            </div>
-            <div style={s.scanText}>
-              {loading ? "Reading card..." : "Tap your NFC card on the reader"}
-            </div>
-            <div style={s.scanSub}>
-              {loading ? "Please wait..." : "The reader will detect your card automatically"}
-            </div>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div style={s.errorBox}>
-              <div style={s.errorIcon}>!</div>
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* Status result */}
-          {status && !loading && (
-            <div style={{
-              ...s.statusBox,
-              background: isIn ? "#ffffff" : "#eff6ff",
-              borderColor: isIn ? "#86efac" : "#224129",
-            }}>
-              <div style={s.statusTop}>
-                <div style={{
-                  ...s.statusBadge,
-                  background: isIn ? "#dcfce7" : "#dbeafe",
-                  color: isIn ? "#255ba8" : "#c23131",
-                }}>
-                  {isIn ? "✓ CHECKED IN" : "✓ CHECKED OUT"}
+          <div className="kx-stage">
+            {/* idle / reading */}
+            {!status && !error && !warning && (
+              <div className={loading ? "kx-scan reading" : "kx-scan"}>
+                <div className="kx-ring">
+                  <span className="kx-wave w1" /><span className="kx-wave w2" /><span className="kx-wave w3" />
+                  <div className="kx-core">
+                    {loading ? (
+                      <div className="kx-spin" />
+                    ) : (
+                      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />
+                      </svg>
+                    )}
+                  </div>
                 </div>
-                <div style={s.statusTime}>{status.time}</div>
+                <h1>{loading ? "Reading your card..." : "Tap your NFC card"}</h1>
+                <p>{loading ? "Please wait a moment." : "Hold your card on the reader to log your attendance."}</p>
               </div>
-              <div style={s.statusName}>{status.name || "Unknown Intern"}</div>
-              <div style={s.statusUid}>UID: {status.uid} · {status.date}</div>
-              <div style={s.tokenWrap}>
-                <div style={s.tokenLabel}>UUID v4 Token (bound: UID · Date · Action)</div>
-                <div style={s.tokenVal}>{status.token}</div>
+            )}
+
+            {/* success */}
+            {status && !loading && (
+              <div className={isIn ? "kx-result in" : "kx-result out"} key={status.token}>
+                <div className="kx-photo">
+                  {src && !photoBad
+                    ? <img src={src} alt="" onError={() => setPhotoBad(true)} />
+                    : <span>{(status.name || "?").charAt(0).toUpperCase()}</span>}
+                  <i className="kx-tick">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
+                  </i>
+                </div>
+                <span className="kx-chip">{isIn ? "Checked in" : "Checked out"}</span>
+                <h2>{isIn ? "Welcome," : "Goodbye,"} <b>{status.name || "Intern"}</b></h2>
+                <div className="kx-when">
+                  <strong>{status.time}</strong>
+                  <span>{status.date}</span>
+                </div>
+                {status.note && <div className="kx-note">{status.note}</div>}
+                <small className="kx-uid">Card ····{String(status.uid || "").slice(-4)}</small>
+                <div className="kx-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Simulate button */}
-          <button
-            style={{ ...s.testBtn, opacity: loading ? 0.6 : 1 }}
-            onClick={() => handleTap("1248158722")}
-            disabled={loading}
-          >
-            {loading ? "Processing..." : "Simulate Tap (Test)"}
-          </button>
+            {/* duplicate tap warning */}
+            {warning && !loading && (
+              <div className="kx-result warn" key={"w" + warning.message}>
+                <div className="kx-photo warn">
+                  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                </div>
+                <span className="kx-chip">{warning.code === "TAP_BLOCKED" ? "Check-in closed" : "Already tapped"}</span>
+                {warning.name && <h2><b>{warning.name}</b></h2>}
+                <p className="kx-warn-text">{warning.message}</p>
+                <div className="kx-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
+              </div>
+            )}
 
-        </div>
-
-        {/* ── RIGHT PANEL — LOG ── */}
-        <div style={s.right}>
-          <div style={s.logHeader}>
-            <div style={s.logTitle}>Attendance Log</div>
-            <div style={s.logCount}>
-              {log.length} record{log.length !== 1 ? "s" : ""}
-            </div>
+            {/* error */}
+            {error && !loading && (
+              <div className="kx-result err" key={error}>
+                <div className="kx-photo bad">
+                  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 2 20h20L12 3z" /><path d="M12 10v5M12 18h.01" /></svg>
+                </div>
+                <span className="kx-chip">Card not accepted</span>
+                <h2>{error}</h2>
+                <div className="kx-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
+              </div>
+            )}
           </div>
 
-          <div style={s.logList}>
+          <footer className="kx-foot">
+            <span>MYTRACK · CSU CCIS OJT</span>
+            {/* only while developing (npm run dev); it never appears in the built site */}
+            {import.meta.env.DEV && (
+              <button type="button" className="kx-test" onClick={() => handleTap(import.meta.env.VITE_TEST_UID || "1248158722")} disabled={loading}>
+                Simulate tap (test)
+              </button>
+            )}
+          </footer>
+        </section>
+
+        {/* ───────── RIGHT: log ───────── */}
+        <aside className="kx-side">
+          <div className="kx-side-head">
+            <div>
+              <h3>Attendance log</h3>
+              <p>This kiosk, this session</p>
+            </div>
+            <span className="kx-count-pill">{log.length}</span>
+          </div>
+
+          <div className="kx-stats">
+            <div className="in"><strong>{ins}</strong><span>Checked in</span></div>
+            <div className="out"><strong>{outs}</strong><span>Checked out</span></div>
+          </div>
+
+          <div className="kx-list">
             {log.length === 0 ? (
-              <div style={s.emptyState}>
-                <div style={s.emptyIcon}>📋</div>
-                <div style={{ fontSize: 14, color: "#38782a" }}>No records yet</div>
-                <div style={s.emptySub}>Tap a card to begin logging</div>
+              <div className="kx-empty">
+                <div className="kx-empty-ic">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></svg>
+                </div>
+                <strong>No taps yet</strong>
+                <span>Taps will appear here as interns arrive.</span>
               </div>
             ) : (
-              log.map((entry, i) => (
-                <div key={i} style={s.logEntry}>
-                  <div style={{
-                    ...s.logBadge,
-                    background: entry.action === "CHECK_IN" ? "#bedbe8" : "#fbd8d8",
-                    color:      entry.action === "CHECK_IN" ? "#255ba8" : "#c23131",
-                  }}>
-                    {entry.action === "CHECK_IN" ? "IN" : "OUT"}
+              log.map((e, i) => (
+                <div key={e.token + i} className="kx-row">
+                  <span className={e.action === "CHECK_IN" ? "kx-tag in" : "kx-tag out"}>
+                    {e.action === "CHECK_IN" ? "IN" : "OUT"}
+                  </span>
+                  <div className="kx-row-text">
+                    <strong>{e.name || e.uid}</strong>
+                    <small>{e.date}</small>
                   </div>
-                  <div style={s.logInfo}>
-                    <div style={s.logName}>{entry.name || entry.uid}</div>
-                    <div style={s.logToken}>{entry.token}</div>
-                  </div>
-                  <div style={s.logTime}>{entry.time}</div>
+                  <time>{e.time}</time>
                 </div>
               ))
             )}
           </div>
 
           {log.length > 0 && (
-            <div style={s.logFooter}>
-              <button style={s.clearBtn} onClick={() => setLog([])}>
-                Clear log
-              </button>
-            </div>
+            <button type="button" className="kx-clear" onClick={() => setLog([])}>Clear log</button>
           )}
-        </div>
-
+        </aside>
       </div>
-
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body, #root { height: 100%; }
-        body { background: #f1f5f9; }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
-      `}</style>
     </div>
   );
 }
 
-const s = {
-  page: {
-    height: "100vh",
-    background: "#f1f5f9",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontFamily: "'Segoe UI', sans-serif",
-    padding: "1.25rem",
-  },
-  layout: {
-    display: "flex",
-    gap: "1.25rem",
-    width: "100%",
-    maxWidth: 940,
-    height: "calc(100vh - 2.5rem)",
-    alignItems: "stretch",
-  },
+const css = `
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
 
-  // ── Left ──
-  left: {
-    width: 420,
-    flexShrink: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: "1rem",
-  },
-  header: {
-  background: "#1a5a26",
-  borderRadius: 14,
-  padding: "1rem 1.25rem",
-  display: "flex",
-  alignItems: "center",
-  gap: 14,
-  flexShrink: 0,
-},
-  headerDot: {
-    width: 10, height: 10, borderRadius: "50%",
-    background: "#22c55e", flexShrink: 0,
-    boxShadow: "0 0 8px #22c55e",
-  },
-  headerTitle: { fontSize: 15, fontWeight: 600, color: "#fff" },
-  headerSub:   { fontSize: 11, color: "#93c5fd", marginTop: 2 },
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; }
+body { background: #ffede5; }
 
-  scanCard: {
-    background: "#ffffff",
-    borderRadius: 14,
-    border: "1px solid #e2f0e3",
-    padding: "1rem 1rem",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "0.75rem",
-    flexShrink: 0,
-  },
-  nfcRing: {
-    width: 90, height: 90, borderRadius: "50%",
-    background: "#eff6ff", border: "2px solid #2b7b3c",
-    display: "flex", alignItems: "center", justifyContent: "center",
-  },
-  spinner: {
-    width: 36, height: 36,
-    border: "3px solid #e2e8f0",
-    borderTop: "3px solid #28772f",
-    borderRadius: "50%",
-    animation: "spin 0.8s linear infinite",
-  },
-  scanText: { fontSize: 15, fontWeight: 600, color: "#1e3b20", textAlign: "center" },
-  scanSub:  { fontSize: 12, color: "#94b898", textAlign: "center" },
+.kx-page {
+  --o: #e8582a; --o2: #f2733a; --ink: #1b1410; --mut: #8a7468;
+  --disp: 'Bricolage Grotesque', 'Figtree', sans-serif;
+  height: 100vh; min-height: 620px; padding: 20px; display: flex; align-items: center; justify-content: center;
+  font-family: 'Figtree', 'Segoe UI', sans-serif; color: var(--ink);
+  background:
+    radial-gradient(620px 420px at 92% -6%, rgba(242,115,58,.28), transparent 70%),
+    radial-gradient(560px 420px at -6% 106%, rgba(255,181,140,.5), transparent 70%),
+    #ffede5;
+}
+.kx-layout { width: 100%; max-width: 1180px; height: 100%; max-height: 760px; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; }
 
-  errorBox: {
-    background: "#fef2f2", border: "1px solid #fca5a5",
-    borderRadius: 10, padding: "0.75rem 1rem",
-    color: "#dc2626", fontSize: 13,
-    display: "flex", alignItems: "center", gap: 8,
-    flexShrink: 0,
-  },
-  errorIcon: {
-    width: 20, height: 20, borderRadius: "50%",
-    background: "#dc2626", color: "#fff",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 11, fontWeight: 700, flexShrink: 0,
-  },
+/* thin orange scrollbar, same as the dashboards */
+.kx-page * { scrollbar-width: thin; scrollbar-color: #e8582a #fdeee7; }
+.kx-page *::-webkit-scrollbar { width: 6px; height: 6px; }
+.kx-page *::-webkit-scrollbar-track { background: #fdeee7; border-radius: 99px; }
+.kx-page *::-webkit-scrollbar-thumb { background: #e8582a; border-radius: 99px; }
+.kx-page *::-webkit-scrollbar-thumb:hover { background: #d94a1c; }
 
-  statusBox: {
-    borderRadius: 12, border: "1px solid",
-    padding: "2rem 1.25rem", flexShrink: 0,
-  },
-  statusTop: {
-    display: "flex", justifyContent: "space-between",
-    alignItems: "center", marginBottom: 8,
-  },
-  statusBadge: {
-    fontSize: 11, fontWeight: 700,
-    padding: "3px 10px", borderRadius: 99, letterSpacing: 0.5,
-  },
-  statusTime: {
-    fontSize: 12, color: "#19551c",
-    fontFamily: "'Courier New', monospace",
-  },
-  statusName: { fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 4 },
-  statusUid:  { fontSize: 12, color: "#46556b", marginBottom: 10 },
-  tokenWrap: {
-    background: "rgba(0,0,0,0.04)",
-    borderRadius: 8, padding: "8px 12px",
-  },
-  tokenLabel: {
-    fontSize: 10, color: "#94a3b8",
-    textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
-  },
-  tokenVal: {
-    fontSize: 11, fontFamily: "'Courier New', monospace",
-    color: "#553333", wordBreak: "break-all", lineHeight: 1.6,
-  },
+/* ───── main card ───── */
+.kx-main {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; padding: 22px 28px 18px;
+  background: #fff; border-radius: 24px; box-shadow: 0 18px 44px rgba(150,52,20,.14), 0 1px 2px rgba(27,20,16,.04);
+}
+.kx-main::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px;
+  background: linear-gradient(90deg, #f2733a, #ffb48f, #f59e0b, #f2733a);
+}
+.kx-head { display: flex; align-items: center; gap: 14px; }
+.kx-logo { width: 58px; height: 58px; object-fit: contain; flex-shrink: 0; }
+.kx-brand { display: flex; flex-direction: column; min-width: 0; padding-left: 14px; border-left: 1px solid #f1e2d9; }
+.kx-brand strong { font-family: var(--disp); font-size: 22px; font-weight: 800; letter-spacing: -.4px; line-height: 1.1; }
+.kx-brand span { font-size: 12.5px; color: var(--mut); margin-top: 3px; }
+.kx-live { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; padding: 5px 13px; border-radius: 99px; background: #ecfdf3; color: #15803d; font-size: 12px; font-weight: 700; }
+.kx-live i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: kx-blink 1.6s ease-in-out infinite; }
 
-  testBtn: {
-    width: "100%", padding: "12px",
-    background: "#16541e", color: "#fff",
-    border: "none", borderRadius: 10,
-    cursor: "pointer", fontSize: 14, fontWeight: 500,
-    marginTop: "auto", flexShrink: 0,
-  },
+.kx-clock { text-align: center; margin-top: 14px; }
+.kx-time { font-family: var(--disp); font-size: 54px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; font-variant-numeric: tabular-nums; color: var(--o); }
+.kx-date { font-size: 14px; font-weight: 600; color: var(--mut); margin-top: 6px; }
 
-  // ── Right ──
-  right: {
-    flex: 1,
-    background: "#fff",
-    borderRadius: 14,
-    border: "1px solid #e2e8f0",
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    minHeight: 0,
-  },
-  logHeader: {
-    padding: "1rem 1.25rem",
-    borderBottom: "1px solid #f1f5f9",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexShrink: 0,
-  },
-  logTitle: { fontSize: 15, fontWeight: 600, color: "#1e293b" },
-  logCount: {
-    fontSize: 12, color: "#94a3b8",
-    background: "#f8fafc", border: "1px solid #e2e8f0",
-    borderRadius: 99, padding: "2px 10px",
-  },
-  logList: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "0.75rem",
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  emptyState: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    padding: "3rem 1rem",
-    textAlign: "center",
-  },
-  emptyIcon: { fontSize: 32, marginBottom: 4 },
-  emptySub:  { fontSize: 12, color: "#cbd5e1" },
+.kx-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
 
-  logEntry: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "10px 12px",
-    background: "#f8fafc",
-    borderRadius: 10,
-    border: "1px solid #f1f5f9",
-    flexShrink: 0,
-  },
-  logBadge: {
-    fontSize: 10, fontWeight: 700,
-    padding: "3px 8px", borderRadius: 99,
-    flexShrink: 0, letterSpacing: 0.3,
-  },
-  logInfo:  { flex: 1, minWidth: 0 },
-  logName:  { fontSize: 13, fontWeight: 600, color: "#1e293b", marginBottom: 2 },
-  logToken: {
-    fontSize: 10, color: "#94a3b8",
-    fontFamily: "'Courier New', monospace",
-    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-  },
-  logTime: {
-    fontSize: 11, color: "#64748b",
-    fontFamily: "'Courier New', monospace",
-    flexShrink: 0,
-  },
+/* idle scanner */
+.kx-scan { text-align: center; display: flex; flex-direction: column; align-items: center; }
+.kx-scan h1 { font-family: var(--disp); font-size: 30px; font-weight: 800; letter-spacing: -.6px; margin-top: 26px; }
+.kx-scan p { font-size: 14.5px; color: var(--mut); margin-top: 6px; }
+.kx-ring { position: relative; width: 170px; height: 170px; display: flex; align-items: center; justify-content: center; }
+.kx-core {
+  position: relative; z-index: 2; width: 112px; height: 112px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  color: #fff; background: linear-gradient(135deg, #f2733a, #e04a1a); box-shadow: 0 16px 32px rgba(232,88,42,.38);
+}
+.kx-wave { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(232,88,42,.45); animation: kx-wave 2.8s ease-out infinite; }
+.kx-wave.w2 { animation-delay: .9s; }
+.kx-wave.w3 { animation-delay: 1.8s; }
+.kx-scan.reading .kx-wave { animation-duration: 1.2s; }
+.kx-spin { width: 40px; height: 40px; border-radius: 50%; border: 4px solid rgba(255,255,255,.35); border-top-color: #fff; animation: kx-spin .8s linear infinite; }
 
-  logFooter: {
-    padding: "0.75rem",
-    borderTop: "1px solid #f1f5f9",
-    flexShrink: 0,
-  },
-  clearBtn: {
-    width: "100%", padding: "8px",
-    background: "transparent", border: "1px solid #e2e8f0",
-    borderRadius: 8, cursor: "pointer",
-    fontSize: 13, color: "#94a3b8",
-  },
-};
+/* result */
+.kx-result { position: relative; width: 100%; max-width: 440px; padding: 26px 24px 30px; text-align: center; border-radius: 22px; animation: kx-pop .35s cubic-bezier(.2,.8,.2,1); overflow: hidden; }
+.kx-result.in  { background: linear-gradient(160deg, #f0fdf4 0%, #dcfce7 100%); border: 1.5px solid #86efac; }
+.kx-result.out { background: linear-gradient(160deg, #fff7f1 0%, #ffe6d8 100%); border: 1.5px solid #f9b898; }
+.kx-result.err { background: linear-gradient(160deg, #fff5f5 0%, #fde2e2 100%); border: 1.5px solid #fca5a5; }
+.kx-result.warn { background: linear-gradient(160deg, #fffbeb 0%, #fef3c7 100%); border: 1.5px solid #fcd34d; }
+.kx-photo {
+  position: relative; width: 104px; height: 104px; margin: 0 auto 14px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-family: var(--disp); font-size: 44px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, #f2864f, #e8582a); box-shadow: 0 12px 26px rgba(232,88,42,.3); border: 4px solid #fff;
+}
+.kx-photo img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.kx-photo.bad { background: #dc2626; box-shadow: 0 12px 26px rgba(220,38,38,.3); }
+.kx-photo.warn { background: #f59e0b; box-shadow: 0 12px 26px rgba(245,158,11,.3); }
+.kx-tick { position: absolute; right: -2px; bottom: -2px; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; border: 3px solid #fff; background: #16a34a; }
+.kx-result.out .kx-tick { background: #e8582a; }
+.kx-chip { display: inline-block; padding: 5px 16px; border-radius: 99px; font-size: 12.5px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: #fff; background: #16a34a; }
+.kx-result.out .kx-chip { background: #e8582a; }
+.kx-result.err .kx-chip { background: #dc2626; }
+.kx-result.warn .kx-chip { background: #d97706; }
+.kx-warn-text { margin-top: 10px; font-size: 15px; font-weight: 600; line-height: 1.45; color: #92400e; }
+.kx-note { display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,.75); font-size: 13px; font-weight: 600; color: #6b4a1f; }
+.kx-result h2 { font-family: var(--disp); font-size: 22px; font-weight: 600; margin-top: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+.kx-result h2 b { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.6px; }
+.kx-result.err h2 { font-size: 17px; font-weight: 700; color: #b42318; }
+.kx-when { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
+.kx-when strong { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.kx-when span { font-size: 13px; color: #6b5a50; }
+.kx-uid { display: block; margin-top: 8px; font-size: 11.5px; color: #8a7468; font-family: ui-monospace, monospace; }
+.kx-count { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: rgba(0,0,0,.06); }
+.kx-count i { display: block; height: 100%; width: 100%; transform-origin: left; background: rgba(0,0,0,.22); animation-name: kx-shrink; animation-timing-function: linear; animation-fill-mode: forwards; }
 
+.kx-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 1px dashed #f1ddd1; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; color: var(--mut); }
+.kx-test { padding: 7px 14px; border-radius: 10px; border: 1.5px solid #f1e2d9; background: #fffaf7; color: #6b5a50; font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0; cursor: pointer; transition: all .15s; }
+.kx-test:hover:not(:disabled) { border-color: var(--o); color: var(--o); background: #fdeee7; }
+.kx-test:disabled { opacity: .55; cursor: default; }
+
+/* ───── log panel ───── */
+.kx-side { display: flex; flex-direction: column; min-height: 0; padding: 20px; background: #fff; border-radius: 24px; box-shadow: 0 18px 44px rgba(150,52,20,.14), 0 1px 2px rgba(27,20,16,.04); }
+.kx-side-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.kx-side-head h3 { font-family: var(--disp); font-size: 20px; font-weight: 800; letter-spacing: -.3px; }
+.kx-side-head p { font-size: 12px; color: var(--mut); margin-top: 2px; }
+.kx-count-pill { min-width: 34px; text-align: center; padding: 4px 12px; border-radius: 99px; background: #fdeee7; color: #c2410c; font-size: 13px; font-weight: 800; }
+.kx-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0 14px; }
+.kx-stats div { display: flex; flex-direction: column; padding: 10px 14px; border-radius: 14px; }
+.kx-stats .in { background: #e6f7ee; } .kx-stats .out { background: #fdeee7; }
+.kx-stats strong { font-family: var(--disp); font-size: 26px; font-weight: 800; line-height: 1.1; }
+.kx-stats .in strong { color: #15803d; } .kx-stats .out strong { color: #d94a1c; }
+.kx-stats span { font-size: 12px; font-weight: 600; color: #6b5a50; }
+
+.kx-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+.kx-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: #fffaf6; border: 1px solid #f8eee8; animation: kx-slide .3s ease-out; flex-shrink: 0; }
+.kx-tag { flex-shrink: 0; min-width: 42px; text-align: center; padding: 4px 9px; border-radius: 99px; font-size: 11px; font-weight: 800; letter-spacing: .4px; }
+.kx-tag.in { background: #dcfce7; color: #15803d; } .kx-tag.out { background: #fde5d8; color: #d94a1c; }
+.kx-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.kx-row-text strong { font-size: 13.5px; font-weight: 700; color: #3a2e28; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kx-row-text small { font-size: 11px; color: #9a8c84; }
+.kx-row time { flex-shrink: 0; font-size: 12px; font-weight: 600; color: #6b5a50; font-variant-numeric: tabular-nums; }
+.kx-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px; padding: 20px; border: 1.5px dashed #f2cdb9; border-radius: 16px; background: rgba(255,255,255,.7); }
+.kx-empty-ic { width: 54px; height: 54px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #fdeee7; color: var(--o); margin-bottom: 6px; }
+.kx-empty strong { font-size: 14.5px; color: #3a2e28; }
+.kx-empty span { font-size: 12.5px; color: #9a8c84; }
+.kx-clear { margin-top: 12px; padding: 9px; border-radius: 12px; border: 1.5px solid #f1e2d9; background: #fffaf7; color: #6b5a50; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; }
+.kx-clear:hover { border-color: var(--o); color: var(--o); background: #fdeee7; }
+
+/* ───── motion ───── */
+@keyframes kx-spin { to { transform: rotate(360deg); } }
+@keyframes kx-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes kx-wave { 0% { transform: scale(.7); opacity: .9; } 100% { transform: scale(1.5); opacity: 0; } }
+@keyframes kx-pop { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes kx-slide { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes kx-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .kx-wave, .kx-live i, .kx-result, .kx-row, .kx-spin { animation: none !important; }
+  .kx-count i { animation-duration: 0s !important; }
+}
+
+/* ───── smaller screens ───── */
+@media (max-width: 960px) {
+  .kx-page { height: auto; min-height: 100vh; align-items: flex-start; }
+  .kx-layout { grid-template-columns: 1fr; max-height: none; height: auto; }
+  .kx-main { min-height: 560px; }
+  .kx-side { max-height: 420px; }
+}
+@media (max-width: 560px) {
+  .kx-page { padding: 12px; }
+  .kx-main { padding: 18px 16px 14px; }
+  .kx-brand strong { font-size: 17px; }
+  .kx-live { display: none; }
+  .kx-time { font-size: 42px; }
+}
+`;
