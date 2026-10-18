@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../assets/logo.png";
 
-const API = "http://localhost:8000/api";
+import { API, STORAGE } from "../config.js";
 export const REQUIRED_HOURS = 460; // fallback when an intern has no program set
 
 /* ── Required OJT hours per program (from the OJT coordinator) ── */
@@ -31,24 +31,47 @@ export const dtrModeOf = (u) => (u?.dtr_mode === "four" ? "four" : "two");
 
 /* ── Internship requirements (edit the lists here) ── */
 export const PRE_REQUIREMENTS = [
+  { key: "capstone_summary", label: "Capstone/Thesis Summary Sheet", hint: "With a passed rating — proof you may enroll in the internship" },
   { key: "letter_of_intent", label: "Letter of Intent", hint: "With your CV attached" },
   { key: "endorsement_letter", label: "Endorsement Letter", hint: "Signed by the OJT Coordinator, Chairperson and Dean of CCIS" },
-  { key: "moa", label: "Memorandum of Agreement (MOA)", hint: "Must be approved and notarized — hours are not credited without it" },
-  { key: "internship_contract", label: "Student Internship Contract" },
-  { key: "medical_certificate", label: "Medical Certificate" },
+  { key: "moa", label: "Memorandum of Agreement (MOA)", hint: "Approved and notarized, long bond paper (7 copies) — hours are not credited without it" },
+  { key: "internship_contract", label: "Student Internship Contract", hint: "Signed and notarized, long bond paper (3 copies)" },
+  { key: "internship_plan", label: "Student Internship Plan", hint: "Signed by the Chairperson, SIP Coordinator and HTE Supervisor" },
+  { key: "medical_certificate", label: "Medical Certificate", hint: "With CBC, signed by the university physician" },
   { key: "personal_history", label: "Student Trainee's Personal History", hint: "A4 size" },
-  { key: "parents_consent", label: "Parents' Consent" },
-  { key: "pledge", label: "Student's Pledge" },
-  { key: "acceptance_form", label: "Acceptance Form" },
-  { key: "insurance", label: "Insurance" },
+  { key: "parents_consent", label: "Parents' Consent", hint: "Long bond paper, notarized" },
+  { key: "pledge", label: "Student's Pledge", hint: "Signed in front of the SIP Coordinator (A4)" },
+  { key: "acceptance_form", label: "Acceptance Form", hint: "Signed by your parent/guardian and the HTE representative (A4)" },
+  { key: "insurance", label: "Insurance", hint: "Scanned copy from any reliable insurance company" },
+  { key: "orientation", label: "Deployment Orientation Attendance", hint: "Proof you attended the internship deployment orientation" },
+];
+// During the internship (weekly / monthly reports can be submitted many times)
+export const DURING_REQUIREMENTS = [
+  { key: "supervisor_feedback_form", label: "Training Supervisor Feedback Form", hint: "Give it to your HTE supervisor at the start — it is used to monitor and grade you" },
+  { key: "weekly_report", label: "Weekly / Monthly Report", hint: "Submit one every week (or month, as instructed)", repeat: true },
+  { key: "performance_appraisal", label: "Student Trainee Performance Appraisal", hint: "Your HTE supervisor's final rating, given in your last week" },
 ];
 export const POST_REQUIREMENTS = [
   { key: "certificate_of_completion", label: "Certificate of Completion" },
   { key: "evaluation_forms", label: "Evaluation Forms" },
-  { key: "narrative_report", label: "Narrative Report" },
+  { key: "narrative_report", label: "Narrative Report", hint: "Use the prescribed format, written in 3rd person" },
   { key: "dtr", label: "Daily Time Record (DTR)", hint: "Signed copy" },
+  { key: "system_output", label: "System Output Presentation", hint: "Every intern presents the system output they made" },
 ];
-const STORAGE = "http://localhost:8000/storage/";
+export const REQUIREMENTS_BY_PHASE = { pre: PRE_REQUIREMENTS, during: DURING_REQUIREMENTS, post: POST_REQUIREMENTS };
+export const PHASE_LABEL = { pre: "Pre-internship", during: "During internship", post: "Post-internship" };
+
+// Due date status of one requirement: { label, tone } or null.  sub = the intern's latest submission.
+export function dueStatus(due, sub, today = todayManila()) {
+  if (!due) return null;
+  const d = String(due).slice(0, 10);
+  const label = new Date(d + "T00:00:00").toLocaleDateString("en-PH", { month: "short", day: "numeric" });
+  if (sub && (sub.status === "approved" || sub.status === "pending")) return { label: `Due ${label}`, tone: "none" };
+  const days = Math.round((new Date(d + "T00:00:00") - new Date(today + "T00:00:00")) / 86400000);
+  if (days < 0) return { label: `Overdue · ${label}`, tone: "rejected" };
+  if (days <= 3) return { label: days === 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`, tone: "pending" };
+  return { label: `Due ${label}`, tone: "none" };
+}
 
 // Two lines shown next to the logo when the sidebar is open
 const BRAND_LINES = ["CSU CCIS", "MYTRACK"]; // e.g. ["CARAGA STATE", "UNIVERSITY"]
@@ -57,6 +80,28 @@ const BRAND_LINES = ["CSU CCIS", "MYTRACK"]; // e.g. ["CARAGA STATE", "UNIVERSIT
 export const photoUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
 
 /* ───────────────────────── helpers ───────────────────────── */
+/* ───────── Live updates ─────────
+   Shell asks the server "has anything changed?" every few seconds (GET /api/live, a tiny answer).
+   When the answer changes it sends the "mytrack:live" event, and every page that called
+   liveRefresh() reloads its data. Nobody has to press refresh.                                   */
+export const LIVE_EVENT = "mytrack:live";
+const LIVE_CHECK_MS = 4000;      // how often to ask "has anything changed?"
+const LIVE_FALLBACK_MS = 60000;  // full reload anyway once a minute, just in case
+
+// Use inside a useEffect:  useEffect(() => { load(); return liveRefresh(load); }, []);
+export function liveRefresh(load, fallbackMs = LIVE_FALLBACK_MS) {
+  const run = () => { if (!document.hidden) load(); };
+  const onVisible = () => { if (!document.hidden) load(); };   // coming back to the tab
+  window.addEventListener(LIVE_EVENT, run);
+  document.addEventListener("visibilitychange", onVisible);
+  const iv = setInterval(run, fallbackMs);
+  return () => {
+    window.removeEventListener(LIVE_EVENT, run);
+    document.removeEventListener("visibilitychange", onVisible);
+    clearInterval(iv);
+  };
+}
+
 export const todayManila = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 export const fmtTime = (v) => (v ? new Date(v).toLocaleTimeString("en-PH") : "—");
 export const esc = (s) =>
@@ -75,7 +120,7 @@ export function greeting() {
    - arriving early is fine, but hours only count from 8:00 (the DTR still shows the real time)
    - 12:00–1:00 is lunch and never counts
    - time after 5:00 PM is overtime: it counts only after the coordinator approves it
-   - a day never credits more than dailyCap hours, overtime included                         */
+   - official hours give at most dailyCap hours a day; approved overtime is added on top   */
 export const SCHEDULE = { amIn: 8, amOut: 12, pmIn: 13, pmOut: 17, dailyCap: 8, tapCooldownMin: 5 };
 
 const HOUR = 3600000;
@@ -100,7 +145,7 @@ export function sessionsByDate(recs) {
       in: r.checked_in_at,
       out: r.checked_out_at || null,
       otMinutes: Number(r.ot_minutes || 0),            // overtime found at check-out
-      otStatus: r.ot_status || null,                   // pending | approved | rejected
+      otStatus: r.ot_status || null,                   // pending (supervisor) | endorsed (coordinator) | approved | rejected
       otApproved: Number(r.ot_approved_minutes || 0),  // minutes the coordinator credited
     });
   });
@@ -124,9 +169,11 @@ export function sessionSplit({ in: i, out: o }) {
 // Credited hours of one day: official-hours time + approved overtime, never above the daily cap.
 // 4 taps 8–12 + 1–5 = 8h.  2 taps 8–5 = 8h (lunch not counted).  7:30 → counts from 8:00.
 export function dayHours(sessions) {
-  let ms = 0;
-  sessions.forEach((s) => { ms += sessionSplit(s).reg + (s.otApproved || 0) * 60000; });
-  return Math.min(SCHEDULE.dailyCap * HOUR, ms) / HOUR;
+  let reg = 0;
+  let ot = 0;
+  sessions.forEach((s) => { reg += sessionSplit(s).reg; ot += (s.otApproved || 0) * 60000; });
+  // the cap is for the official hours only; overtime the coordinator approved is added on top
+  return (Math.min(SCHEDULE.dailyCap * HOUR, reg) + ot) / HOUR;
 }
 
 // Overtime of one day: { minutes, status } (status = the "worst" one: pending > approved > rejected)
@@ -135,7 +182,8 @@ export function dayOvertime(sessions) {
   if (!withOt.length) return null;
   const minutes = withOt.reduce((n, s) => n + s.otMinutes, 0);
   const approved = withOt.reduce((n, s) => n + s.otApproved, 0);
-  const status = withOt.some((s) => s.otStatus === "pending") ? "pending"
+  // "endorsed" = the supervisor approved, the coordinator has not decided yet: still waiting
+  const status = withOt.some((s) => s.otStatus === "pending" || s.otStatus === "endorsed") ? "pending"
     : withOt.some((s) => s.otStatus === "approved") ? "approved" : "rejected";
   return { minutes, approved, status };
 }
@@ -289,7 +337,7 @@ export function Table({ headers, rows, empty = "Nothing here yet." }) {
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>
+            <tr key={i}>{r.map((c, j) => <td key={j} data-label={headers[j]}>{c}</td>)}</tr>
           ))}
         </tbody>
       </table>
@@ -382,32 +430,6 @@ function SquarePhoto({ name, photo }) {
   );
 }
 
-// Filled icons for the navbar (bell + account circle)
-const BellFill = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z" />
-  </svg>
-);
-const AccountFill = () => (
-  <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 4a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Zm0 14a8 8 0 0 1-6.16-2.9C6.9 15.3 9.3 14.5 12 14.5s5.1.8 6.16 2.6A8 8 0 0 1 12 20Z" />
-  </svg>
-);
-
-// Small square photo in the account menu
-function MenuPhoto({ name, photo }) {
-  const [bad, setBad] = useState(false);
-  const src = photoUrl(photo);
-  useEffect(() => setBad(false), [photo]);
-  return (
-    <div className="ix-acct-photo">
-      {src && !bad
-        ? <img src={src} alt="" onError={() => setBad(true)} />
-        : <span>{name?.charAt(0).toUpperCase() || "?"}</span>}
-    </div>
-  );
-}
-
 // Click-to-choose square photo picker (used when adding a user)
 export function PhotoPicker({ file, onChange }) {
   const [preview, setPreview] = useState(null);
@@ -495,7 +517,6 @@ function PwInput({ value, onChange, placeholder, autoComplete, autoFocus }) {
 }
 
 export function AccountSecurity({ user }) {
-  const [dob, setDob] = useState(null);
   const [code, setCode] = useState(null);       // the code, once revealed
   const [ask, setAsk] = useState(null);         // null | "show" | "new" | "pw"
   const [pw, setPw] = useState("");
@@ -505,12 +526,6 @@ export function AccountSecurity({ user }) {
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    fetch(`${API}/me?user_id=${user.id}`).then((r) => r.json())
-      .then((d) => setDob(d?.date_of_birth ? String(d.date_of_birth).slice(0, 10) : ""))
-      .catch(() => setDob(""));
-  }, [user.id]);
 
   const close = () => { setAsk(null); setPw(""); setNp(""); setNp2(""); setErr(null); setBusy(false); };
 
@@ -545,12 +560,11 @@ export function AccountSecurity({ user }) {
     try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
   };
 
-  const dobLabel = dob ? new Date(dob + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" }) : null;
   const titles = { show: "View recovery code", new: "Make a new recovery code", pw: "Change Password" };
 
   return (
     <section className="ix-card sec-card">
-      <div className="ix-card-label">Account security</div>
+      <h3 className="ipv-title">Account security</h3>
       <Msg msg={note} />
 
       <div className="sec-row2">
@@ -567,12 +581,6 @@ export function AccountSecurity({ user }) {
           </button>
         </div>
         <small className="sec-hint">Use it on the login page (Forgot password?) to set a new password. It changes after every use, so check this page for the new one.</small>
-      </div>
-
-      <div className="sec-row2">
-        <div className="sec-label">Date of birth</div>
-        <div className="sec-value"><strong>{dob === null ? "…" : dobLabel || "Not set"}</strong></div>
-        <small className="sec-hint">{dob === "" ? "Ask your administrator to add it. It can also be used to recover your account." : "Set by your administrator. It can also be used to recover your account."}</small>
       </div>
 
       <button type="button" className="ix-b warn sec-change" onClick={() => setAsk("pw")}>
@@ -909,6 +917,7 @@ export function UserDetails({ u }) {
               {cell("Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite")}
               {cell("Tracking", u.tracking_type === "output" ? "Output-based" : "Hours-based")}
               {cell("DTR type", DTR_MODES[dtrModeOf(u)])}
+              {cell("HTE supervisor", u.supervisor_name || "Not assigned yet")}
               {cell("Required hours", `${requiredHoursFor(u.program)}h`)}
               {cell("NFC UID", u.nfc_uid || "Not linked")}
             </div>
@@ -930,7 +939,7 @@ export function UserDetails({ u }) {
 }
 
 /* Shared form for "Add New User" and "Edit User" (same look as the View window) */
-export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions }) {
+export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions, supervisors }) {
   const add = mode === "add";
   const today = todayManila();
 
@@ -978,7 +987,24 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
         <h3 className="ipv-title">Account</h3>
         <div className="ipv-grid c3">
           {cell(isIntern ? "Student ID" : "Employee ID",
-            text("student_id", { required: add, placeholder: isIntern ? "e.g. 2021-00123" : "e.g. EMP-0001" }),
+            isIntern
+              ? text("student_id", { required: add, placeholder: "e.g. 2021-00123" })
+              : (
+                /* employees: a fixed "EMP-" in front, you only type the number; saved as e.g. EMP-0001 */
+                <div className="uf-prefix">
+                  <span>EMP-</span>
+                  <input
+                    className="uf-input"
+                    required={add}
+                    placeholder="0001"
+                    value={String(f.student_id ?? "").replace(/^EMP-?/i, "")}
+                    onChange={(e) => {
+                      const rest = e.target.value.replace(/^EMP-?/i, "").replace(/\s+/g, "").toUpperCase();
+                      set("student_id")({ target: { value: rest ? `EMP-${rest}` : "" } });
+                    }}
+                  />
+                </div>
+              ),
             { hint: "Used to sign up for account recovery." })}
           {add && cell("Role", (
             <select className="uf-input" value={f.role} onChange={set("role")}>
@@ -1036,6 +1062,12 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                   <option value="four">{DTR_MODES.four}</option>
                 </select>
               ), { hint: "Depends on the intern's HTI." })}
+              {supervisors && cell("HTE supervisor", (
+                <select className="uf-input" value={f.supervisor_id ?? ""} onChange={set("supervisor_id")}>
+                  <option value="">Not assigned yet</option>
+                  {supervisors.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+                </select>
+              ), { hint: "Reviews this intern's overtime and time corrections and certifies the DTR." })}
               {cell("NFC card UID", uidField, { plain: true, full: true })}
             </div>
           </div>
@@ -1272,8 +1304,8 @@ export function AnnouncementBoard({ limit = 3 }) {
       finally { if (alive) setLoading(false); }
     };
     load();
-    const iv = setInterval(() => { if (!document.hidden) load(); }, 15000);
-    return () => { alive = false; clearInterval(iv); };
+    const stop = liveRefresh(load);
+    return () => { alive = false; stop(); };
   }, []);
 
   return (
@@ -1308,21 +1340,27 @@ export function AnnouncementBoard({ limit = 3 }) {
 // Full page for staff: post a new announcement + manage the old ones
 export function AnnouncementManager({ user }) {
   const [items, setItems] = useState([]);
+  const [removed, setRemoved] = useState([]);       // the history of taken-down announcements
+  const [view, setView] = useState("posted");        // "posted" | "removed"
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
 
   const load = async () => {
     try {
-      const res = await fetch(`${API}/announcements`, { headers: { Accept: "application/json" } });
-      const data = await res.json();
-      if (Array.isArray(data)) setItems(data);
-    } catch { /* keep what we have */ }
-    finally { setLoading(false); }
+      const [a, h] = await Promise.all([
+        fetch(`${API}/announcements`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null),
+        fetch(`${API}/announcements/history`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null),
+      ]);
+      if (Array.isArray(a)) setItems(a);
+      if (Array.isArray(h)) setRemoved(h);
+    } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => liveRefresh(load), []);
 
   const post = async (e) => {
     e.preventDefault();
@@ -1337,6 +1375,7 @@ export function AnnouncementManager({ user }) {
       if (!res.ok) throw new Error(data?.message || (data?.errors && Object.values(data.errors)[0]?.[0]) || "Could not post the announcement.");
       setMsg({ type: "success", text: "Posted. Interns have been notified." });
       setTitle(""); setBody("");
+      setView("posted");
       load();
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
@@ -1345,20 +1384,50 @@ export function AnnouncementManager({ user }) {
     }
   };
 
-  const remove = async (id) => {
-    if (!window.confirm("Delete this announcement?")) return;
+  // take it down: interns stop seeing it, and it moves to the Removed history
+  const remove = async (a) => {
+    if (!window.confirm(`Remove "${a.title}"? Interns will no longer see it. It stays in the Removed history.`)) return;
+    setBusy(`p${a.id}`); setMsg(null);
     try {
-      await fetch(`${API}/announcements/${id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const res = await fetch(`${API}/announcements/${a.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || "Could not remove the announcement.");
+      setMsg({ type: "success", text: data?.message || "Removed. You can find it in the history." });
       load();
-    } catch { /* ignore */ }
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setBusy(null); }
   };
+
+  // delete a removed announcement for good
+  const purge = async (h) => {
+    if (!window.confirm(`Delete "${h.title}" for good? This cannot be undone.`)) return;
+    setBusy(`h${h.id}`); setMsg(null);
+    try {
+      const res = await fetch(`${API}/announcements/history/${h.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || "Could not delete it.");
+      setMsg({ type: "success", text: "Deleted for good." });
+      load();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setBusy(null); }
+  };
+
+  const msgCell = (t, b) => (
+    <div className="ann-cell">
+      <strong>{t}</strong>
+      {b && <span>{b}</span>}
+    </div>
+  );
 
   return (
     <>
       <PageHeader title="Announcements" sub="Post updates for all interns. They get a notification right away." />
-      <div className="ann-split">
+      <Msg msg={msg} />
+      <div className="side-split">
         <div className="ix-card">
-          <Msg msg={msg} />
+          <h3 className="side-title">New announcement</h3>
           <form onSubmit={post} className="ix-form">
             <div className="ix-field">
               <label htmlFor="ann-title">Title</label>
@@ -1376,26 +1445,47 @@ export function AnnouncementManager({ user }) {
           </form>
         </div>
 
-        <Section icon="bell" title="Posted announcements" count={items.length}>
-          {loading ? <Spinner /> : items.length === 0 ? (
-            <Empty icon="bell" title="Nothing posted yet" sub="Your announcements will be listed here." />
+        <div className="ix-card flush">
+          <div className="side-head">
+            <div className="ix-pills">
+              <button type="button" className={view === "posted" ? "ix-pill active" : "ix-pill"} onClick={() => setView("posted")}>
+                Posted <span className="ix-pill-count">{items.length}</span>
+              </button>
+              <button type="button" className={view === "removed" ? "ix-pill active" : "ix-pill"} onClick={() => setView("removed")}>
+                Removed <span className="ix-pill-count">{removed.length}</span>
+              </button>
+            </div>
+          </div>
+          {loading ? <Spinner /> : view === "posted" ? (
+            items.length === 0 ? <Empty icon="bell" title="Nothing posted yet" sub="Your announcements will be listed here." /> : (
+              <Table
+                headers={["Announcement", "Posted by", "Date", "Action"]}
+                rows={items.map((a) => [
+                  msgCell(a.title, a.body),
+                  a.author || "OJT office",
+                  fmtDay(a.created_at),
+                  <button type="button" className="ix-b danger sm" disabled={busy === `p${a.id}`} onClick={() => remove(a)}>
+                    <Icon name="trash" size={14} /> {busy === `p${a.id}` ? "..." : "Remove"}
+                  </button>,
+                ])}
+              />
+            )
           ) : (
-            <ul className="ann-list ann-manage">
-              {items.map((a) => (
-                <li key={a.id}>
-                  <div className="ann-row">
-                    <strong>{a.title}</strong>
-                    <button type="button" className="ix-b danger sm" onClick={() => remove(a.id)} aria-label={`Delete ${a.title}`}>
-                      <Icon name="trash" size={14} />
-                    </button>
-                  </div>
-                  <p>{a.body}</p>
-                  <small>{a.author || "OJT office"} · {fmtDay(a.created_at)}</small>
-                </li>
-              ))}
-            </ul>
+            removed.length === 0 ? <Empty icon="list" title="No removed announcements" sub="Announcements you remove are kept here." /> : (
+              <Table
+                headers={["Announcement", "Posted", "Removed", "Action"]}
+                rows={removed.map((h) => [
+                  msgCell(h.title, h.body),
+                  <div className="ann-cell"><span>{h.author || "OJT office"}</span><small>{fmtDay(h.posted_at)}</small></div>,
+                  <div className="ann-cell"><span>{h.removed_by_name || "—"}</span><small>{fmtDay(h.removed_at)}</small></div>,
+                  <button type="button" className="ix-b danger sm" disabled={busy === `h${h.id}`} onClick={() => purge(h)}>
+                    <Icon name="trash" size={14} /> {busy === `h${h.id}` ? "..." : "Delete"}
+                  </button>,
+                ])}
+              />
+            )
           )}
-        </Section>
+        </div>
       </div>
     </>
   );
@@ -1432,8 +1522,7 @@ function useNotifications(userId) {
 
   useEffect(() => {
     load();
-    const iv = setInterval(() => { if (!document.hidden) load(); }, 20000);
-    return () => clearInterval(iv);
+    return liveRefresh(load);
   }, [load]);
 
   const markRead = async (id) => {
@@ -1471,16 +1560,49 @@ export default function Shell({ navItems, user, children }) {
     try { return !isMobile() && localStorage.getItem(SIDEBAR_KEY) === "1"; } catch { return false; }
   });
   const [isFull, setIsFull] = useState(false);
+
+  // live updates: one small "has anything changed?" check for the whole page
+  useEffect(() => {
+    let last = null;
+    let busy = false;
+    const check = async () => {
+      if (document.hidden || busy) return;
+      busy = true;
+      try {
+        const res = await fetch(`${API}/live`, { headers: { Accept: "application/json" }, cache: "no-store" });
+        const d = await res.json();
+        if (d?.v) {
+          if (last !== null && d.v !== last) window.dispatchEvent(new Event(LIVE_EVENT));
+          last = d.v;
+        }
+      } catch { /* offline for a moment: try again next time */ }
+      finally { busy = false; }
+    };
+    check();
+    const iv = setInterval(check, LIVE_CHECK_MS);
+    return () => clearInterval(iv);
+  }, []);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
   const [acctOpen, setAcctOpen] = useState(false);
   const acctRef = useRef(null);
 
   // student / employee ID and program are not in the login response, so read them from the account
-  const [me, setMe] = useState(null);
+  // kept in this tab's storage, so the ID shows right away when you change pages (no "role first, ID later")
+  const ME_KEY = `mytrack_me_${user?.id}`;
+  const [me, setMe] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(ME_KEY) || "null"); } catch { return null; }
+  });
   useEffect(() => {
     if (!user?.id) return;
-    fetch(`${API}/me?user_id=${user.id}`).then((r) => r.json()).then((d) => setMe(d?.user || d)).catch(() => {});
+    fetch(`${API}/me?user_id=${user.id}`).then((r) => r.json()).then((d) => {
+      const u = d?.user || d;
+      if (!u || !u.id) return;
+      setMe(u);
+      try {
+        sessionStorage.setItem(ME_KEY, JSON.stringify({ id: u.id, student_id: u.student_id, program: u.program }));
+      } catch { /* ignore */ }
+    }).catch(() => {});
     // eslint-disable-next-line
   }, []);
   const yearLabel = (p) => {
@@ -1539,6 +1661,7 @@ export default function Shell({ navItems, user, children }) {
 
   const logout = () => {
     sessionStorage.removeItem("user");
+    try { sessionStorage.removeItem(ME_KEY); } catch { /* ignore */ }
     localStorage.removeItem("ojt_remember"); // stops "Remember me" from signing back in
     navigate(loginPath, { replace: true });
   };
@@ -1577,7 +1700,7 @@ export default function Shell({ navItems, user, children }) {
               aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
               aria-expanded={notifOpen}
             >
-              <BellFill />
+              <Icon name="bell" size={20} />
               {unreadCount > 0 && <span className="ix-notification-count">{unreadCount > 9 ? "9+" : unreadCount}</span>}
             </button>
 
@@ -1630,7 +1753,7 @@ export default function Shell({ navItems, user, children }) {
             )}
           </div>
 
-          {/* account button: opens a small menu with the photo, name, ID and Sign-Out */}
+          {/* account button: full name + photo; click it to open the Log out menu */}
           <div className="ix-acct-wrap" ref={acctRef}>
             <button
               className={acctOpen ? "ix-acct-btn open" : "ix-acct-btn"}
@@ -1639,21 +1762,15 @@ export default function Shell({ navItems, user, children }) {
               aria-haspopup="menu"
               aria-expanded={acctOpen}
             >
-              <AccountFill />
+              <span className="ix-acct-name">{user?.name || "User"}</span>
+              <Avatar name={user?.name} photo={user?.photo} status="on" size={36} />
             </button>
 
             {acctOpen && (
               <div className="ix-acct-menu" role="menu">
-                <div className="ix-acct-who">
-                  <MenuPhoto name={user?.name} photo={user?.photo} />
-                  <div className="ix-acct-text">
-                    <strong>{(user?.name || "User").toUpperCase()}</strong>
-                    <span>{me?.student_id || ROLE_LABEL[user?.role] || "Staff"}</span>
-                  </div>
-                </div>
                 <button type="button" className="ix-logout" role="menuitem" onClick={logout}>
-                  <Icon name="logout" size={20} />
-                  <span>Sign-Out</span>
+                  <Icon name="logout" size={16} />
+                  <span>Log out</span>
                 </button>
               </div>
             )}
@@ -1665,15 +1782,6 @@ export default function Shell({ navItems, user, children }) {
         <div className={menuOpen ? "ix-strip open" : "ix-strip"} />
         {menuOpen && <div className="ix-backdrop" onClick={() => setMenuOpen(false)} />}
         <aside className={menuOpen ? "ix-side open" : "ix-side"} aria-label="Main navigation">
-          <div className="ix-side-profile" aria-hidden={!menuOpen}>
-            <SquarePhoto name={user?.name} photo={user?.photo} />
-            <div className="ix-side-who">
-              <strong>{user?.name || "User"}</strong>
-              <span className="ix-side-role">{ROLE_LABEL[user?.role] || "Staff"}</span>
-              {me?.student_id && <span className="ix-side-meta">{user?.role === "intern" ? "ID No." : "Employee ID"} · {me.student_id}</span>}
-              {user?.role === "intern" && me?.program && <span className="ix-side-meta">{yearLabel(me.program)}</span>}
-            </div>
-          </div>
           <nav className="ix-side-menu">
           {navItems.map((it) => (
             <button
@@ -1697,9 +1805,240 @@ export default function Shell({ navItems, user, children }) {
       </div>
 
       <style>{css}</style>
+      {/* loaded LAST so it wins over every page's own styles: one look for all roles */}
+      <style>{uiUnify}</style>
     </div>
   );
 }
+
+/* ───────────────────────── one look for every role ─────────────────────────
+   Same font, colours, buttons, dropdowns, inputs and tabs on the Intern, Coordinator,
+   Supervisor and Admin pages. To change the look of the whole system, change the
+   values in --u-* below. */
+export const uiUnify = `
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+  :is(.ix-page, .ix-modal-wrap) {
+    --u-font: 'Poppins', 'Segoe UI', sans-serif;
+    --u-orange: #e8582a;        /* main colour (buttons, active tab, focus) */
+    --u-orange-dark: #d4481b;   /* hover */
+    --u-orange-soft: #fdeee7;   /* light orange background */
+    --u-ink: #1f2937;           /* normal text */
+    --u-muted: #6b7280;         /* small / secondary text */
+    --u-line: #d6d3d1;          /* input & button borders */
+    --u-h: 38px;                /* height of every button, dropdown and input */
+    --u-h-sm: 32px;             /* small buttons */
+    --u-radius: 8px;
+    /* the older theme variables now follow the same colours */
+    --md-text: var(--u-ink); --md-muted: var(--u-muted); --md-orange: var(--u-orange);
+    --display: var(--u-font); --o: var(--u-orange);
+  }
+  .ix-page .ix-main { --display: var(--u-font); }
+
+  /* ── font: Poppins everywhere (printed DTR keeps its own font) ── */
+  .ix-page, .ix-page .ix-content, .ix-modal-wrap { font-family: var(--u-font); color: var(--u-ink); }
+  :is(.ix-page, .ix-modal-wrap) :is(button, input, select, textarea) { font-family: var(--u-font); }
+  :is(.ix-page, .ix-modal-wrap) :is(h1, h2, h3, .ix-stat-value) { font-family: var(--u-font); }
+  .ix-page .ix-ph h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; color: #111827; }
+
+  /* ── buttons ── */
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-b, .ix-btn, .fl-btn) {
+    height: var(--u-h); padding: 0 16px; border-radius: var(--u-radius);
+    font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap;
+    transform: none; box-shadow: none; cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+  }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-b.primary, .ix-b.warn, .ix-btn, .fl-btn) {
+    background: var(--u-orange); background-image: none; color: #fff; border: 1px solid var(--u-orange);
+  }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-b.primary, .ix-b.warn, .ix-btn, .fl-btn):hover:not(:disabled) {
+    background: var(--u-orange-dark); border-color: var(--u-orange-dark); color: #fff; transform: none; box-shadow: none;
+  }
+  :is(.ix-page, .ix-modal-wrap) .ix-b.ghost { background: #fff; border: 1px solid var(--u-line); color: #374151; }
+  :is(.ix-page, .ix-modal-wrap) .ix-b.ghost:hover:not(:disabled) { background: var(--u-orange-soft); border-color: var(--u-orange); color: var(--u-orange-dark); }
+  :is(.ix-page, .ix-modal-wrap) .ix-b.danger { background: #fff; border: 1px solid #fca5a5; color: #dc2626; }
+  :is(.ix-page, .ix-modal-wrap) .ix-b.danger:hover:not(:disabled) { background: #fef2f2; border-color: #dc2626; }
+  :is(.ix-page, .ix-modal-wrap) .ix-b.ok { background: #16a34a; border: 1px solid #16a34a; color: #fff; }
+  :is(.ix-page, .ix-modal-wrap) .ix-b.ok:hover:not(:disabled) { background: #15803d; border-color: #15803d; }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-b.sm, .rv-actions .ix-b, .sv-actions .ix-b) { height: var(--u-h-sm); padding: 0 12px; font-size: 12.5px; }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-b, .ix-btn, .fl-btn):disabled { opacity: .55; cursor: default; }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-b, .ix-btn, .fl-btn):focus-visible { outline: 2px solid var(--u-orange); outline-offset: 2px; }
+  /* small secondary buttons that were styled on their own */
+  .ix-page .adm-cal-today { height: var(--u-h-sm); padding: 0 12px; border: 1px solid var(--u-line); border-radius: var(--u-radius); background: #fff; color: #374151; font-size: 12.5px; font-weight: 600; }
+  .ix-page .adm-cal-today:hover { background: var(--u-orange-soft); border-color: var(--u-orange); color: var(--u-orange-dark); }
+  .ix-page .adm-cal-nav { border-radius: var(--u-radius); border-color: var(--u-line); background: #fff; }
+
+  /* ── inputs, dropdowns and text boxes ── */
+  :is(.ix-page, .ix-modal-wrap) :is(
+    .ix-field input:not([type=file]):not([type=checkbox]):not([type=radio]), .ix-field select, .ix-field textarea,
+    .ix-select, .at-month, .dtr-sel, .fl-field select, .dtr-search input, .uf-input, .imp-edit, .sec-pw input
+  ) {
+    padding: 0 12px; border: 1px solid var(--u-line); border-radius: var(--u-radius);
+    background-color: #fff; color: var(--u-ink); font-size: 13.5px; font-weight: 400; box-shadow: none;
+    outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  :is(.ix-page, .ix-modal-wrap) :is(
+    .ix-field input, .ix-field select, .ix-select, .at-month, .dtr-sel, .fl-field select,
+    .dtr-search input, input.uf-input, select.uf-input, .imp-edit, .sec-pw input
+  ) { height: var(--u-h); }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-field textarea, textarea.uf-input) { padding: 10px 12px; line-height: 1.5; }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-field textarea, textarea.uf-input) { min-height: 76px; }
+  /* search boxes with an icon inside keep room for the icon */
+  .ix-page .dtr-search input { padding-left: 36px !important; padding-right: 32px !important; }
+  .ix-page .dtr-search-list { border-radius: var(--u-radius); }
+  .ix-page .dtr-search-list li { border-radius: 6px; }
+  /* every dropdown gets the same arrow */
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-field select, .ix-select, .at-month, .dtr-sel, .fl-field select, select.uf-input) {
+    appearance: none; -webkit-appearance: none; padding-right: 34px; cursor: pointer;
+    background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 11px center;
+  }
+  :is(.ix-page, .ix-modal-wrap) :is(
+    .ix-field input, .ix-field select, .ix-field textarea, .ix-select, .at-month, .dtr-sel, .fl-field select,
+    .dtr-search input, .uf-input, .imp-edit, .sec-pw input
+  ):is(:hover):not(:disabled) { border-color: #a8a29e; }
+  :is(.ix-page, .ix-modal-wrap) :is(
+    .ix-field input, .ix-field select, .ix-field textarea, .ix-select, .at-month, .dtr-sel, .fl-field select,
+    .dtr-search input, .uf-input, .imp-edit, .sec-pw input
+  ):focus { border-color: var(--u-orange); box-shadow: 0 0 0 3px rgba(232,88,42,.15); padding-top: 0; padding-bottom: 0; }
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-field textarea, textarea.uf-input):focus { padding-top: 10px; padding-bottom: 10px; }
+  :is(.ix-page, .ix-modal-wrap) ::placeholder { color: #a8a29e; font-weight: 400; }
+  /* search box (icon + input) */
+  :is(.ix-page, .ix-modal-wrap) .ix-search { height: var(--u-h); padding: 0 12px; border: 1px solid var(--u-line); border-radius: var(--u-radius); background: #fff; }
+  :is(.ix-page, .ix-modal-wrap) .ix-search:focus-within { border-color: var(--u-orange); box-shadow: 0 0 0 3px rgba(232,88,42,.15); }
+  :is(.ix-page, .ix-modal-wrap) .ix-search input { height: 100%; padding: 0; font-size: 13.5px; color: var(--u-ink); }
+  /* field labels: same size everywhere */
+  :is(.ix-page, .ix-modal-wrap) :is(.ix-field > label, .ix-field > span:first-child, .fl-label, .uf-cell .ipv-label) {
+    font-size: 12.5px; font-weight: 600; color: #374151; letter-spacing: 0; text-transform: none;
+  }
+  /* Display DTR picker: label above the dropdown, like every other form */
+  .ix-page .dtr-pick { align-items: end; }
+  .ix-page .fl-field { display: flex; flex-direction: column; gap: 5px; }
+  .ix-page .fl-field .fl-label,
+  .ix-page .fl-field.empty .fl-label,
+  .ix-page .fl-field.empty:focus-within .fl-label { position: static; transform: none; top: auto; left: auto; font-size: 12.5px; color: #374151; }
+  .ix-page .fl-field:focus-within .fl-label { color: #374151; }
+
+  /* ── tabs ── */
+  /* section tabs (underline): same everywhere */
+  .ix-page .grp-tab { font-size: 13.5px; font-weight: 600; color: var(--u-muted); }
+  .ix-page .grp-tab.active { color: var(--u-orange); }
+  .ix-page .grp-tab.active::after { background: var(--u-orange); }
+  /* filter tabs (pills) and the requirement-phase tabs: one style */
+  .ix-page .req-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; background: none; box-shadow: none; border-radius: 0; }
+  .ix-page :is(.ix-pill, .req-tabs button, .ix-content .at-log-head .ix-pill) {
+    height: 34px; padding: 0 14px; border: 1px solid var(--u-line); border-radius: var(--u-radius);
+    background: #fff; background-image: none; color: #4b5563; font-size: 13px; font-weight: 600; box-shadow: none;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .ix-page :is(.ix-pill, .req-tabs button):hover:not(.active):not(.on):not(:disabled) { border-color: var(--u-orange); color: var(--u-orange-dark); }
+  .ix-page :is(.ix-pill.active, .req-tabs button.on, .ix-content .at-log-head .ix-pill.active) {
+    background: var(--u-orange); background-image: none; border-color: var(--u-orange); color: #fff; box-shadow: none;
+  }
+
+  /* modal titles */
+  .ix-modal-wrap .ix-modal header h2 { font-family: var(--u-font); font-weight: 700; }
+
+  /* ── flat colours: no gradients left ── */
+  .ix-page .ix-content .hv-hero { background: var(--u-orange) !important; }
+  .ix-page .ix-content .hv-hero .hv-track { background: rgba(255,255,255,.28); }
+  .ix-page .ix-content .hv-hero .hv-track-fill { background: #fff; }
+  .ix-page .ix-content .hv-hero .hv-track i { background: rgba(232,88,42,.6); }
+  .ix-page .ix-content .hv-hero svg circle:first-child { stroke: rgba(255,255,255,.28); }
+  .ix-page .ix-content .hv-hero svg circle:last-child { stroke: #fff; }
+  .ix-page .ix-content .hv-hero .hv-pill { background: #fff; color: var(--u-orange-dark); }
+  .ix-page .ix-content .hv-hero .hv-pill i { background: var(--u-orange); }
+  .ix-page .adm-cal-day.today, .ix-page .adm-cal-day.today.event { background: var(--u-orange); color: #fff; box-shadow: none; }
+  :is(.ix-page, .ix-modal-wrap, .ix-nav) .ix-av, .ix-page .ix-avatar { background: var(--u-orange); box-shadow: none; }
+  .ix-page .ix-bar-fill, .ix-page .at-hrs-bar i, .ix-page .at-col-track i { background: var(--u-orange); }
+  .ix-page .at-col-track i.online { background: #2563eb; }
+  .ix-page .ix-steps li.done .ix-step-dot { background: var(--u-orange); box-shadow: none; }
+  .ix-page .ix-content .ix-card.adm-duty { background: #fff; }
+  .ix-page :is(.ix-stat-icon, .crd-icon, .crd-row-ico, .adm-duty-icon) { box-shadow: none !important; }
+  .ix-page :is(.ix-stat-icon, .crd-icon, .crd-row-ico).orange { background: var(--u-orange) !important; }
+  .ix-page :is(.ix-stat-icon, .crd-row-ico).blue   { background: #2563eb !important; }
+  .ix-page .ix-stat-icon.green  { background: #16a34a !important; }
+  .ix-page :is(.ix-stat-icon, .crd-row-ico).purple { background: #7c3aed !important; }
+  .ix-page .adm-duty-icon { background: var(--u-orange) !important; }
+
+  /* ── stat cards: icon on the left, the number big and easy to read ── */
+  .ix-page .ix-content .hv-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+  .ix-page .ix-content .hv-stat {
+    display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 14px 16px; min-height: 0;
+    background: #fff; border-radius: 12px; position: relative; overflow: hidden;
+  }
+  .ix-page .ix-content .hv-stat .hv-stat-ic {
+    position: static; width: 44px; height: 44px; margin: 0; flex-shrink: 0; border-radius: 10px; box-shadow: none;
+    display: flex; align-items: center; justify-content: center; grid-column: auto; grid-row: auto;
+  }
+  .ix-page .ix-content .hv-stat.orange .hv-stat-ic { background: #fdeee7; color: var(--u-orange); }
+  .ix-page .ix-content .hv-stat.blue   .hv-stat-ic { background: #e8f1fd; color: #2563eb; }
+  .ix-page .ix-content .hv-stat.green  .hv-stat-ic { background: #e6f7ee; color: #16a34a; }
+  .ix-page .ix-content .hv-stat.purple .hv-stat-ic { background: #f0eafd; color: #7c3aed; }
+  .ix-page .ix-content .hv-stat.red    .hv-stat-ic { background: #fef2f2; color: #dc2626; }
+  .ix-page .ix-content .hv-stat.red.ok .hv-stat-ic { background: #e6f7ee; color: #16a34a; }
+  .ix-page .ix-content .hv-stat .hv-stat-body { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; flex: 1; gap: 1px; }
+  .ix-page .ix-content .hv-stat .hv-stat-body small { order: 1; text-align: left; font-size: 12px; font-weight: 500; color: var(--u-muted); line-height: 1.2; }
+  .ix-page .ix-content .hv-stat .hv-stat-body strong { order: 2; text-align: left; font-size: 21px; font-weight: 700; color: #111827; line-height: 1.2; margin: 0; }
+  .ix-page .ix-content .hv-stat .hv-stat-body em {
+    order: 3; font-style: normal; font-size: 11.5px; line-height: 1.3; color: #9ca3af; margin: 0; padding: 0; border: 0;
+    white-space: normal; max-width: 100%;
+  }
+  .ix-page .ix-content .hv-stat .hv-stat-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; margin: 0; border-radius: 0; background: #fde5d8; }
+  .ix-page .ix-content .hv-stat .hv-stat-bar i { display: block; height: 100%; background: var(--u-orange); border-radius: 0; }
+  @media (max-width: 1100px) { .ix-page .ix-content .hv-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 420px)  {
+    .ix-page .ix-content .hv-stats { gap: 10px; }
+    .ix-page .ix-content .hv-stat { padding: 12px; gap: 10px; }
+    .ix-page .ix-content .hv-stat .hv-stat-ic { width: 36px; height: 36px; }
+    .ix-page .ix-content .hv-stat .hv-stat-body strong { font-size: 18px; }
+  }
+
+  /* ── phones: every table turns into a list of cards (label on the left, value on the right) ── */
+  @media (max-width: 640px) {
+    .ix-page .ix-content .ix-table-wrap { overflow: visible; }
+    .ix-page .ix-content .ix-table, .ix-page .ix-content .ix-table tbody { display: block; width: 100%; }
+    .ix-page .ix-content .ix-table thead { display: none; }
+    .ix-page .ix-content .ix-table tr { display: block; padding: 10px 14px; border-bottom: 1px solid #f1ece9; }
+    .ix-page .ix-content .ix-table tr:hover { background: transparent; }
+    .ix-page .ix-content .ix-table td {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+      padding: 5px 0; border: 0; text-align: right; white-space: normal; max-width: none; min-width: 0;
+    }
+    .ix-page .ix-content .ix-table td::before {
+      content: attr(data-label); flex-shrink: 0; padding-top: 2px; text-align: left;
+      font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #9ca3af;
+    }
+    .ix-page .ix-content .ix-table td[data-label=""]::before { content: none; }
+    /* the first cell is the row's title: full width, no label */
+    .ix-page .ix-content .ix-table td:first-child { display: block; text-align: left; padding-bottom: 6px; }
+    .ix-page .ix-content .ix-table td:first-child::before { content: none; }
+    .ix-page .ix-content .ix-table td > * { min-width: 0; }
+    .ix-page .ix-content .ix-table td .ix-actions { justify-content: flex-end; flex-wrap: wrap; }
+    .ix-page .ix-content .rq-steps li { width: 70px; font-size: 10px; }
+    .ix-page .ix-content .rq-steps li span { line-height: 1.2; }
+    /* Submit MOV: one requirement per row, the button can wrap under the text */
+    .ix-page .req-list { grid-template-columns: minmax(0, 1fr); }
+    .ix-page .req-item { flex-wrap: wrap; }
+    .ix-page .req-item .req-main strong, .ix-page .req-item .req-main small { white-space: normal; }
+  }
+
+  /* ── intern home: getting-started checklist ── */
+  .gs-card { display: flex; flex-direction: column; gap: 12px; }
+  .gs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .gs-head strong { font-size: 15px; font-weight: 700; color: #111827; }
+  .gs-head span { font-size: 12px; color: var(--u-muted); }
+  .gs-bar { height: 6px; border-radius: 99px; background: #fde5d8; overflow: hidden; }
+  .gs-bar i { display: block; height: 100%; background: var(--u-orange); border-radius: 99px; transition: width .4s; }
+  .gs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .gs-list li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #f1ece9; border-radius: 10px; }
+  .gs-list li.done { background: #f6fdf9; border-color: #d7f0e1; }
+  .gs-dot { width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%; border: 2px solid #d1d5db; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #9ca3af; background: #fff; }
+  .gs-list li.done .gs-dot { background: #16a34a; border-color: #16a34a; color: #fff; }
+  .gs-list li.wait .gs-dot { border-color: #f59e0b; color: #b45309; background: #fffbeb; }
+  .gs-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .gs-text b { font-size: 13.5px; color: #111827; font-weight: 600; }
+  .gs-text small { font-size: 12px; color: var(--u-muted); }
+  .gs-list li.done .gs-text b { color: #15803d; }
+`;
 
 /* ───────────────────────── styles ───────────────────────── */
 const css = `
@@ -1726,7 +2065,7 @@ const css = `
 
   /* notifications */
   .ix-notification-wrap { position: relative; }
-  .ix-notification-btn { position: relative; width: 44px; height: 44px; border: none; border-radius: 50%; background: none; color: #f97316; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s, color .15s; }
+  .ix-notification-btn { position: relative; width: 40px; height: 40px; border: none; border-radius: 50%; background: none; color: #f97316; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s, color .15s; }
   .ix-notification-btn:hover, .ix-notification-btn[aria-expanded="true"] { background: #fff1e6; color: #ea580c; }
   .ix-notification-btn:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
   .ix-notification-btn:has(.ix-notification-count) svg { animation: ix-ring 3.2s ease-in-out infinite; transform-origin: 50% 10%; }
@@ -1752,17 +2091,19 @@ const css = `
   .ix-avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f2864f, #e8582a); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 6px 14px rgba(232,88,42,0.35); }
   /* account button + menu (photo, name, ID, Sign-Out) */
   .ix-acct-wrap { position: relative; }
-  .ix-acct-btn { width: 50px; height: 50px; border: none; border-radius: 50%; background: none; color: #f97316; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s, color .15s; }
-  .ix-acct-btn:hover, .ix-acct-btn.open { background: #fde3cf; color: #ea580c; }
+  .ix-acct-btn { height: 46px; padding: 0 6px 0 14px; border: none; border-radius: 8px; background: none; color: #1f2937; display: flex; align-items: center; gap: 12px; cursor: pointer; font-family: inherit; transition: background .15s, color .15s; }
+  .ix-acct-btn:hover, .ix-acct-btn.open { background: #fde3cf; color: #c2410c; }
+  .ix-acct-name { font-size: 14.5px; font-weight: 500; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .ix-acct-btn .ix-av { flex-shrink: 0; }
+  @media (max-width: 600px) { .ix-acct-name { display: none; } .ix-acct-btn { padding: 0 4px; } }
   .ix-acct-btn:focus-visible, .ix-notification-btn:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
-  .ix-acct-menu { position: absolute; top: calc(100% + 8px); right: 0; width: 310px; background: #fff; border-radius: 6px; box-shadow: 0 10px 30px rgba(15,23,42,0.16); overflow: hidden; z-index: 100; animation: ix-pop .18s ease-out; }
-  .ix-acct-who { display: flex; align-items: center; gap: 14px; padding: 22px 22px 20px; border-bottom: 1px solid #e5e7eb; }
-  .ix-acct-photo { width: 60px; height: 60px; flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #334155; color: #fff; font-size: 24px; font-weight: 700; }
-  .ix-acct-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .ix-acct-text { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-  .ix-acct-text strong { font-size: 14.5px; font-weight: 500; color: #111827; line-height: 1.3; overflow-wrap: anywhere; }
-  .ix-acct-text span { font-size: 13.5px; color: #9ca3af; }
-  .ix-logout { width: 100%; display: flex; align-items: center; gap: 10px; padding: 16px 22px; border: none; background: none; cursor: pointer; color: #1f2937; font-size: 14.5px; font-weight: 600; letter-spacing: .02em; text-align: left; transition: background .15s, color .15s; }
+  .ix-acct-menu { position: absolute; top: calc(100% + 8px); right: 0; width: 200px; padding: 6px 0; background: #fff; border-radius: 6px; box-shadow: 0 10px 30px rgba(15,23,42,0.16); overflow: hidden; z-index: 100; animation: ix-pop .18s ease-out; }
+  .ix-acct-who { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #e5e7eb; }
+  .ix-acct-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .ix-acct-text strong { font-size: 13px; font-weight: 600; color: #111827; line-height: 1.3; overflow-wrap: anywhere; }
+  .ix-acct-text span { font-size: 12px; color: #6b7280; }
+  .ix-acct-text .ix-acct-role { font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #c2410c; }
+  .ix-logout { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 16px; border: none; background: none; cursor: pointer; color: #1f2937; font-size: 13px; font-weight: 600; letter-spacing: .02em; text-align: left; transition: background .15s, color .15s; }
   .ix-logout:hover { background: #fff1e6; color: #ea580c; }
   .ix-icon-btn:focus-visible, .ix-logout:focus-visible, .ix-logo-btn:focus-visible, .ix-side-item:focus-visible, .ix-b:focus-visible { outline: 2px solid #e8582a; outline-offset: 2px; }
 
@@ -1910,6 +2251,17 @@ const css = `
   .ix-badge.approved { background: #e6f7ee; color: #15803d; }
   .ix-badge.rejected { background: #fef2f2; color: #dc2626; }
   .sec-card { margin-top: 20px; }
+  /* My Profile (every role): the portal-style details card, then Account security under it */
+  .prof-stack { display: flex; flex-direction: column; gap: 20px; }
+  .prof-stack > * { margin: 0; min-width: 0; }
+  .ix-content .ix-card.prof-main { position: relative; overflow: hidden; }
+  .prof-main .ipv { border-radius: 0; box-shadow: none; }
+  .prof-tools { position: absolute; top: 18px; right: 20px; z-index: 2; }
+  .ix-content .prof-sec .ix-card.sec-card { margin: 0; padding: 0 0 18px !important; overflow: hidden; }
+  .prof-sec .sec-card > :not(.ipv-title):not(.ix-modal-wrap) { margin-left: 18px; margin-right: 18px; }
+  .prof-sec .sec-card .ipv-title { margin: 0 0 4px; }
+  .prof-sec .sec-row2:first-of-type { border-top: 0; }
+  .prof-sec .sec-change { margin-top: 12px; }
   .sec-row2 { padding: 14px 0; border-top: 1px solid #f3e3da; }
   .sec-row2:first-of-type { border-top: 0; }
   .sec-label { font-size: 12px; color: #8a7468; font-weight: 600; margin-bottom: 4px; }
@@ -2199,6 +2551,19 @@ const css = `
 
   /* ───── Announcements ───── */
   .ann-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  /* a form on the left, its table on the right, in one row (Announcements, Calendar) */
+  .side-split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .side-split > * { min-width: 0; margin: 0; }
+  .side-title { margin: 0 0 14px; font-size: 16px; font-weight: 700; color: #111827; }
+  .side-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid #f1ece9; }
+  .side-head .ix-pills { margin: 0; }
+  .side-head h3 { margin: 0; font-size: 16px; font-weight: 700; color: #111827; }
+  .side-head p { margin: 2px 0 0; font-size: 12.5px; color: #6b7280; }
+  .ann-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 420px; }
+  .ann-cell strong { font-size: 13.5px; color: #111827; }
+  .ann-cell span { font-size: 12.5px; color: #4b5563; white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .ann-cell small { font-size: 11.5px; color: #9ca3af; }
+  @media (max-width: 1000px) { .side-split { grid-template-columns: 1fr; } }
   .ann-split > * { min-width: 0; margin: 0; }
   .ann-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   .ann-manage { margin: 0; padding: 16px 20px 20px; }
@@ -2212,6 +2577,8 @@ const css = `
 
   /* View / Add / Edit window: same look as the Monitor Interns profile, edge to edge inside the modal */
   .ipv-modal { margin: 0 -24px -24px; border-top: 1px solid #eadfd8; }
+  /* the same profile layout used on a page card (My Profile, Manage Accounts): fill the card edge to edge */
+  .ix-content .ix-card:not(.flush) .ipv-modal { margin: -18px -20px -18px; border-top: 0; }
 
   /* Add / Edit user form (inputs inside the same boxed cells) */
   .uf-head .ix-photo-pick { flex: 1; background: transparent; }
@@ -2223,6 +2590,77 @@ const css = `
   .uf-input:disabled { color: #94a3b8; }
   .uf-input.scanning { color: #d94a1c; }
   .uf-hint { font-size: 11px; font-weight: 400; line-height: 1.4; color: #94a3b8; }
+
+  /* ═════ University-portal look for the profile windows (View / Add / Edit user, profiles) ═════
+     Each section is a card with a solid orange title bar; details read "Label: Value". */
+  .ipv { border-top: 0; background: #f6f2ef; }
+  .ipv-modal { border-top: 0; }
+  .ipv-head {
+    margin: 0; padding: 18px 24px; gap: 18px; border-bottom: 0;
+    background: #e8582a;   /* solid orange header */
+  }
+  .ipv-head-main h2 { color: #fff; font-size: 20px; }
+  .ipv-head-sub { color: #fde3cf; }
+  .ipv-head-sub strong { color: #fff; }
+  .ipv-head-sub span + span::before { background: rgba(255,255,255,.35); }
+  .ipv-head .ix-badge { background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.35); }
+  .ipv-head .ix-av { box-shadow: 0 0 0 3px rgba(255,255,255,.85); }
+  /* Add / Edit: the photo picker stays readable on the orange bar */
+  .uf-head { background: #fff7f2; border-bottom: 3px solid #ea580c; }
+  .uf-head .ipv-head-main h2 { color: #1f2937; }
+  .uf-head .ipv-head-sub { color: #6b7280; }
+
+  .ipv-block {
+    margin: 14px 16px; padding: 0; border: 0; border-radius: 10px; overflow: hidden;
+    background: #fff; box-shadow: 0 2px 8px rgba(15,23,42,0.06);
+  }
+  .ipv-block:last-child { margin-bottom: 16px; }
+  /* section titles: black text with a short orange underline (only the top header is orange) */
+  .ipv-title, .ipv-title-row {
+    position: relative; margin: 0; padding: 14px 18px 9px; background: none;
+    color: #111827; font-size: 15px; font-weight: 700; letter-spacing: .01em;
+    border-bottom: 1px solid #f1e6df;
+  }
+  .ipv-title::before { display: none; }
+  .ipv-title::after {
+    content: ""; position: absolute; left: 18px; bottom: -1px; width: 44px; height: 3px;
+    border-radius: 3px 3px 0 0; background: #ea580c;
+  }
+  .ipv-title-row .ipv-title { position: relative; padding: 0; border: 0; }
+  .ipv-title-row .ipv-title::after { left: 0; bottom: -10px; }
+  .ipv-title-row .ipv-muted { color: #94a3b8; }
+
+  /* details: "Label: Value" in columns, no boxes */
+  .ipv-grid { gap: 0; background: none; border: 0; border-radius: 0; padding: 12px 18px 14px; }
+  .ipv-grid .ipv-cell { padding: 7px 10px 7px 0; background: none; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+  .ipv-grid .ipv-label { font-size: 13px; font-weight: 400; color: #6b7280; }
+  .ipv-grid .ipv-label::after { content: ":"; }
+  .ipv-grid .ipv-value { font-size: 13.5px; font-weight: 700; color: #1f2937; }
+  /* attendance summary numbers keep their own look */
+  .ipv-grid.ipv-stats { gap: 10px; }
+  .ipv-grid.ipv-stats .ipv-cell { flex-direction: column; align-items: flex-start; padding: 10px 12px; background: #fff7f2; border-radius: 8px; }
+
+  /* Add / Edit form: label above a clean input box */
+  .ipv-grid .uf-cell { flex-direction: column; align-items: stretch; gap: 5px; padding: 8px 12px 8px 0; cursor: default; }
+  .ipv-grid .uf-cell:focus-within { background: none; box-shadow: none; }
+  .ipv-grid .uf-cell .ipv-label { font-size: 12.5px; font-weight: 600; color: #374151; }
+  .ipv-grid .uf-cell .ipv-label::after { content: ""; }
+  .uf-input {
+    padding: 8px 10px; border: 1px solid #d6d3d1; border-radius: 6px; background: #fff;
+    font-size: 13.5px; font-weight: 500; transition: border-color .15s, box-shadow .15s;
+  }
+  .uf-input:focus { border-color: #ea580c; box-shadow: 0 0 0 3px rgba(234,88,12,.15); }
+  select.uf-input { appearance: auto; }
+  .uf-cell .ix-row-gap .uf-input { flex: 1; }
+  /* Employee ID: grey "EMP-" box joined to the input */
+  .uf-prefix { display: flex; align-items: stretch; }
+  .uf-prefix > span { display: flex; align-items: center; padding: 0 10px; border: 1px solid #d6d3d1; border-right: 0; border-radius: 6px 0 0 6px; background: #f5f5f4; color: #57534e; font-size: 13.5px; font-weight: 700; }
+  .uf-prefix .uf-input { flex: 1; min-width: 0; border-radius: 0 6px 6px 0; }
+
+  @media (max-width: 700px) {
+    .ipv-block { margin: 12px 10px; }
+    .ipv-grid { padding: 10px 14px 12px; }
+  }
 
   /* ───── Notification list: red thin scrollbar + delete button ───── */
   .ix-notification-list { scrollbar-width: thin; scrollbar-color: #dc5d26 #fdeae2; }
@@ -2265,7 +2703,7 @@ const css = `
     .ix-main { padding: 20px 16px 32px; }
   }
   @media (max-width: 600px) {
-    .ix-acct-menu { position: fixed; top: 70px; right: 12px; width: min(310px, calc(100vw - 24px)); }
+    .ix-acct-menu { position: fixed; top: 70px; right: 12px; width: min(200px, calc(100vw - 24px)); }
     .ix-notification-dropdown { position: fixed; top: 80px; left: 12px; right: 12px; width: auto; }
     .ix-hero { padding: 22px; }
     .ix-hero h1 { font-size: 22px; }
@@ -2302,7 +2740,7 @@ const css = `
 
   /* the page list fills the space left and scrolls when the pages don't fit (e.g. the coordinator) */
   .ix-page .ix-side-menu { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 4px 0 12px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
-  .ix-page .ix-side.open .ix-side-menu { border-top: 1px solid #eceef1; }
+  /* (no divider line above the menu — the profile block above it was removed) */
 
   /* every role gets the same 42px rows and 4px gaps (the buttons never squeeze) */
   .ix-page .ix-side-item { flex: 0 0 42px; height: 42px; min-height: 42px; margin: 2px 8px; }

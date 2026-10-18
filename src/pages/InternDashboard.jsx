@@ -3,25 +3,26 @@ import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import Shell, {
-  Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar, Modal,
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar, Modal, Empty,
   calcHours, fmtTime, greeting, esc, requiredHoursFor, programKey,
-  PRE_REQUIREMENTS, POST_REQUIREMENTS, AnnouncementBoard, AccountSecurity,
-  sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, SCHEDULE,
+  PRE_REQUIREMENTS, POST_REQUIREMENTS, REQUIREMENTS_BY_PHASE, dueStatus, AnnouncementBoard, AccountSecurity, UserDetails,
+  sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, SCHEDULE, liveRefresh, todayManila,
 } from "../components/DashKit.jsx";
 
 // Home look (stats, calendar, gaps) is shared with the admin / coordinator dashboards
 import { HomeCalendar, adminCss } from "./AdminDashboard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
+import { API, STORAGE } from "../config.js";
 
-const API = "http://localhost:8000/api";
 
 const NAV = [
-  { path: "/intern",         label: "Dashboard",     icon: "home" },
+  { path: "/intern",         label: "Home",     icon: "home" },
   { path: "/intern/records", label: "My Attendance", icon: "list" },
   { path: "/intern/dtr",     label: "My DTR",        icon: "file" },
   { path: "/intern/online",  label: "Submit Online", icon: "upload" },
   { path: "/intern/movs",    label: "Submit MOV",    icon: "folder" },
+  { path: "/intern/requests", label: "My Requests",  icon: "inbox" },
   { path: "/intern/nfc",     label: "NFC Card",      icon: "card" },
   { path: "/intern/profile", label: "My Profile",    icon: "user" },
 ];
@@ -51,8 +52,7 @@ export default function InternDashboard() {
 
   useEffect(() => {
     fetchRecords();
-    const iv = setInterval(() => { if (!document.hidden) fetchRecords(); }, 15000);
-    return () => clearInterval(iv);
+    return liveRefresh(fetchRecords);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -84,6 +84,7 @@ export default function InternDashboard() {
       <style>{formalLayout}</style>
       <style>{mdCss}</style>
       <style>{cardUnify}</style>
+      {path === "/intern" && <MoaNotice user={user} go={navigate} />}
       {path === "/intern" && (
         <Home
           user={user} firstName={firstName} uniqueDays={uniqueDays} totalHours={totalHours}
@@ -100,9 +101,156 @@ export default function InternDashboard() {
       )}
       {path === "/intern/online" && <SubmitOnline user={user} />}
       {path === "/intern/movs" && <SubmitMov user={user} unlocked={user.tracking_type === "output" || totalHours >= required} totalHours={totalHours} required={required} />}
+      {path === "/intern/requests" && <MyRequests user={user} records={records} />}
       {path === "/intern/nfc" && <NfcApply user={user} />}
-      {path === "/intern/profile" && <Profile user={user} program={program} dtrMode={dtrMode} />}
+      {path === "/intern/profile" && <Profile user={user} />}
     </Shell>
+  );
+}
+
+/* ───────────────────────── My Requests ─────────────────────────
+   Everything the intern asked for, in one place, with where each one is now:
+   Filed → HTE supervisor (confirms) → OJT coordinator (final decision).
+   WFH requests and interns without a supervisor go straight to the coordinator. */
+const REQ_KINDS = {
+  online:     { label: "Online attendance", icon: "upload" },
+  overtime:   { label: "Overtime",          icon: "clock" },
+  correction: { label: "Time correction",   icon: "pencil" },
+  wfh:        { label: "Work arrangement",  icon: "globe" },
+};
+
+function reqSteps(row) {
+  const steps = row.viaSupervisor ? ["Filed", "Supervisor", "Coordinator"] : ["Filed", "Coordinator"];
+  const last = steps.length - 1;
+  let done = 1, current = 1, failed = -1;
+  if (row.status === "endorsed") { done = 2; current = 2; }
+  else if (row.status === "approved") { done = steps.length; current = -1; }
+  else if (row.status === "rejected") {
+    // rejected by the coordinator if the supervisor had already confirmed it, otherwise by the first reviewer
+    failed = row.viaSupervisor && !row.endorsed ? 1 : last;
+    done = failed; current = -1;
+  }
+  return steps.map((label, i) => ({
+    label,
+    state: i === failed ? "fail" : i < done ? "done" : i === current ? "now" : "todo",
+  }));
+}
+
+const REQ_STATUS = {
+  pending:  { label: "Waiting", type: "pending" },
+  endorsed: { label: "Confirmed by supervisor", type: "pending" },
+  approved: { label: "Approved", type: "approved" },
+  rejected: { label: "Rejected", type: "rejected" },
+};
+
+function MyRequests({ user, records }) {
+  const [online, setOnline] = useState([]);
+  const [fixes, setFixes] = useState([]);
+  const [wfh, setWfh] = useState([]);
+  const [hasSup, setHasSup] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all");
+
+  const load = async () => {
+    const get = (url) => fetch(url, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null);
+    const [o, c, w, me] = await Promise.all([
+      get(`${API}/intern/my-online?user_id=${user.id}`),
+      get(`${API}/intern/time-corrections`),
+      get(`${API}/intern/work-mode-requests`),
+      get(`${API}/me?user_id=${user.id}`),
+    ]);
+    if (Array.isArray(o)) setOnline(o);
+    if (Array.isArray(c)) setFixes(c);
+    if (Array.isArray(w)) setWfh(w);
+    if (me) setHasSup(!!(me.user || me).supervisor_id);
+    setLoading(false);
+  };
+  useEffect(() => { load(); return liveRefresh(load); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  const day = (v) => v ? new Date(String(v).slice(0, 10) + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
+  const time12 = (t) => {
+    if (!t) return "";
+    const [h, m] = String(t).split(":").map(Number);
+    return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+  };
+
+  const rows = [
+    ...online.map((o) => ({
+      key: `o${o.id}`, kind: "online", date: o.date, status: o.status, viaSupervisor: hasSup,
+      endorsed: !!o.endorsed_at || o.status === "endorsed",
+      details: o.description, remarks: o.remarks || o.endorse_remarks,
+    })),
+    ...records.filter((r) => r.ot_status).map((r) => ({
+      key: `t${r.id}`, kind: "overtime", date: r.date, status: r.ot_status, viaSupervisor: hasSup,
+      endorsed: !!r.ot_endorsed_at || r.ot_status === "endorsed",
+      details: r.ot_status === "approved" && r.ot_approved_minutes != null
+        ? `${fmtMinutes(r.ot_approved_minutes)} approved of ${fmtMinutes(r.ot_minutes || 0)}`
+        : `${fmtMinutes(r.ot_minutes || 0)} after 5:00 PM`,
+      remarks: r.ot_remarks,
+    })),
+    ...fixes.map((c) => ({
+      key: `c${c.id}`, kind: "correction", date: c.date, status: c.status, viaSupervisor: hasSup,
+      endorsed: !!c.endorsed_at || c.status === "endorsed",
+      details: `Time out ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks,
+    })),
+    ...wfh.map((w) => ({
+      key: `w${w.id}`, kind: "wfh", date: w.created_at, status: w.status, viaSupervisor: false, endorsed: false,
+      details: `${w.requested_mode === "offsite" ? "Work from home" : "Back to onsite"} — ${w.reason || ""}`, remarks: w.remarks,
+    })),
+  ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const groupOf = (r) => (r.status === "approved" ? "approved" : r.status === "rejected" ? "rejected" : "waiting");
+  const count = (g) => rows.filter((r) => groupOf(r) === g).length;
+  const shown = filter === "all" ? rows : rows.filter((r) => groupOf(r) === filter);
+
+  return (
+    <>
+      <PageHeader title="My Requests" sub="Everything you filed and where it is now: your supervisor confirms first, then the OJT coordinator decides." live />
+
+      <div className="ix-pills">
+        {[["all", "All", rows.length], ["waiting", "Waiting", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
+          <button key={k} type="button" className={filter === k ? "ix-pill active" : "ix-pill"} onClick={() => setFilter(k)}>
+            {l} <span className="ix-pill-count">{n}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="ix-card flush">
+        {loading ? <Spinner /> : shown.length === 0 ? (
+          <Empty icon="inbox" title={rows.length ? "Nothing here" : "No requests yet"}
+            sub="Online attendance, overtime, time corrections and WFH requests you file will show up here." />
+        ) : (
+          <Table
+            headers={["Request", "Date", "Progress", "Status"]}
+            rows={shown.map((r) => {
+              const st = REQ_STATUS[r.status] || { label: r.status || "—", type: "none" };
+              return [
+                <div className="rq-what">
+                  <span className="rq-ic"><Icon name={REQ_KINDS[r.kind].icon} size={15} /></span>
+                  <div>
+                    <strong>{REQ_KINDS[r.kind].label}</strong>
+                    {r.details && <small>{r.details}</small>}
+                  </div>
+                </div>,
+                day(r.date),
+                <ol className="rq-steps" aria-label="Progress">
+                  {reqSteps(r).map((s) => (
+                    <li key={s.label} className={s.state}>
+                      <i>{s.state === "done" ? "✓" : s.state === "fail" ? "✕" : ""}</i>
+                      <span>{s.label}</span>
+                    </li>
+                  ))}
+                </ol>,
+                <div className="rq-status">
+                  <Badge label={st.label} type={st.type} />
+                  {r.remarks && <small>“{r.remarks}”</small>}
+                </div>,
+              ];
+            })}
+          />
+        )}
+      </div>
+    </>
   );
 }
 
@@ -171,7 +319,14 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
     statusText = `Checked out ${lastTime} · ${lastTap.date}`;
   }
 
-  const recent = records.slice(0, 5);
+  // one row per day (like My Attendance): first time in, last time out, hours credited
+  const sessions = sessionsByDate(records);
+  const recentDays = Object.keys(sessions).sort((a, b) => b.localeCompare(a)).slice(0, 5).map((d) => {
+    const s = sessions[d];
+    const last = [...s].reverse().find((x) => x.out);
+    return { date: d, online: s.some((x) => x.online), in: s[0]?.in, out: last?.out || null, hrs: last ? dayHours(s) : null };
+  });
+  const dayLabel = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
   const stats = [
     { icon: "calendar", tone: "orange", label: "Days present", value: uniqueDays, hint: "days logged" },
@@ -230,13 +385,8 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
           </div>
         </div>
 
-        {needsCardWarning && (
-          <div className="ix-alert">
-            <Icon name="warn" size={18} />
-            No NFC card linked to your account yet.
-            <button className="ix-b primary sm" onClick={onApply}>Apply for a card</button>
-          </div>
-        )}
+        {/* first steps for a new intern; disappears once everything is done */}
+        <GettingStarted user={user} records={records} needsCard={needsCardWarning} go={go} onApply={onApply} />
 
         {/* stats */}
         <div className="hv-stats">
@@ -255,20 +405,19 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
 
         {/* recent attendance */}
         <div className="adm-live hv-recent">
-          <Section icon="list" title="Recent Attendance" count={records.length} live>
+          <Section icon="list" title="Recent Attendance" count={Object.keys(sessions).length} live>
             {loading ? (
               <Spinner />
             ) : (
               <Table
-                headers={["Date", "Type", "Action", "Time In", "Time Out"]}
-                rows={recent.map((r) => [
-                  r.date,
-                  <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
-                  <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-                  <span className="adm-time">{fmtTime(r.checked_in_at)}</span>,
-                  r.checked_out_at
-                    ? <span className="adm-time">{fmtTime(r.checked_out_at)}</span>
-                    : <span className="ix-muted">—</span>,
+                headers={["Date", "Type", "Time In", "Time Out", "Hours"]}
+                rows={recentDays.map((r) => [
+                  <strong>{dayLabel(r.date)}</strong>,
+                  <Badge label={r.online ? "Online" : "Onsite"} type={r.online ? "online" : "onsite"} />,
+                  r.in ? <span className="adm-time">{fmtTime(r.in)}</span> : <span className="ix-muted">—</span>,
+                  r.out ? <span className="adm-time">{fmtTime(r.out)}</span>
+                    : r.date === today ? <Badge label="On the clock" type="in" /> : <Badge label="No time out" type="pending" />,
+                  r.hrs != null ? <strong>{Math.round(r.hrs * 10) / 10}h</strong> : <span className="ix-muted">—</span>,
                 ])}
                 empty="No records yet. Tap your card to log your first day."
               />
@@ -282,6 +431,81 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
         <HomeCalendar />
         <AnnouncementBoard />
       </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Getting started (new interns) ─────────────────────────
+   Upload the MOA → get the NFC card → first attendance. Hidden once every step is done. */
+function GettingStarted({ user, records, needsCard, go, onApply }) {
+  const [moa, setMoa] = useState(null);   // null (loading) | "none" | "pending" | "rejected" | "approved"
+  const [card, setCard] = useState(null); // null (loading) | true | false
+
+  useEffect(() => {
+    const load = () => {
+      fetch(`${API}/intern/my-movs?user_id=${user.id}`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json())
+        .then((list) => {
+          if (!Array.isArray(list)) return;
+          const m = list.filter((x) => x.requirement === "moa");
+          setMoa(m.some((x) => x.status === "approved") ? "approved"
+            : m.some((x) => x.status === "pending") ? "pending" : m.length ? "rejected" : "none");
+        })
+        .catch(() => {});
+      fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json())
+        .then((d) => setCard(!!(d?.user || d)?.nfc_uid))
+        .catch(() => {});
+    };
+    load();
+    return liveRefresh(load);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (moa === null) return null;
+
+  const steps = [
+    {
+      key: "moa", title: "Upload your MOA",
+      state: moa === "approved" ? "done" : moa === "pending" ? "wait" : "todo",
+      sub: moa === "approved" ? "Approved by your OJT coordinator."
+        : moa === "pending" ? "Uploaded. Waiting for your OJT coordinator to approve it."
+        : moa === "rejected" ? "It was returned. Please upload it again." : "Your taps won't count until the MOA is approved.",
+      action: moa === "approved" || moa === "pending" ? null : { label: "Upload", run: () => go("/intern/movs") },
+    },
+    // interns who work offsite or are output-based don't need a card
+    ...(needsCard || card ? [{
+      key: "card", title: "Get your NFC card",
+      state: card ? "done" : "todo",
+      sub: card ? "Your card is linked to your account." : "Apply for a card, then your coordinator links it.",
+      action: card ? null : { label: "Apply", run: onApply },
+    }] : []),
+    {
+      key: "tap", title: "Log your first attendance",
+      state: records.length ? "done" : "todo",
+      sub: records.length ? "You're all set." : "Tap your card on the kiosk when you arrive.",
+      action: null,
+    },
+  ];
+  const doneCount = steps.filter((s) => s.state === "done").length;
+  if (doneCount === steps.length) return null;
+
+  return (
+    <div className="ix-card gs-card">
+      <div className="gs-head">
+        <strong>Getting started</strong>
+        <span>{doneCount} of {steps.length} done</span>
+      </div>
+      <div className="gs-bar"><i style={{ width: `${(doneCount / steps.length) * 100}%` }} /></div>
+      <ol className="gs-list">
+        {steps.map((s, i) => (
+          <li key={s.key} className={s.state}>
+            <span className="gs-dot">{s.state === "done" ? "✓" : i + 1}</span>
+            <span className="gs-text"><b>{s.title}</b><small>{s.sub}</small></span>
+            {s.action && <button type="button" className="ix-b primary sm" onClick={s.action.run}>{s.action.label}</button>}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -403,6 +627,7 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
               const f = t.openId && fixOf(t.openId);
               const past = date < manilaToday();          // today you can still tap out at the kiosk
               if (f?.status === "pending") return <Badge label="Fix requested" type="pending" />;
+              if (f?.status === "endorsed") return <Badge label="Fix confirmed by supervisor" type="pending" />;
               return (
                 <div className="at-fix">
                   <Badge label={f?.status === "rejected" ? "Fix rejected" : "No checkout"} type={f?.status === "rejected" ? "rejected" : "pending"} />
@@ -592,8 +817,7 @@ function SubmitOnline({ user }) {
 
   useEffect(() => {
     fetchSubs();
-    const iv = setInterval(() => { if (!document.hidden) fetchSubs(); }, 15000);
-    return () => clearInterval(iv);
+    return liveRefresh(fetchSubs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -629,11 +853,12 @@ function SubmitOnline({ user }) {
   return (
     <>
       <PageHeader title="Submit Online Attendance" sub="For asynchronous or remote workdays." />
-      <div className="intern-split">
+      <WorkModeCard user={user} />
+      <div className="intern-split online-split">
         <div className="ix-card">
           <div className="ix-note">
             <Icon name="info" size={18} />
-            Submit your attendance for days you worked remotely. Your OJT coordinator will review and approve or reject it.
+            Submit your attendance for days you worked remotely. Your HTE supervisor confirms it first, then your OJT coordinator approves or rejects it.
           </div>
           <Msg msg={msg} />
           <form onSubmit={handleSubmit} className="ix-form">
@@ -654,7 +879,7 @@ function SubmitOnline({ user }) {
               />
             </div>
             <button type="submit" disabled={submitting} className="ix-btn">
-              {submitting ? "Submitting..." : "Submit for Coordinator Approval"}
+              {submitting ? "Submitting..." : "Submit for Approval"}
             </button>
           </form>
         </div>
@@ -673,7 +898,9 @@ function SubmitOnline({ user }) {
                   {s.description}
                   {s.remarks && <small>Remarks: {s.remarks}</small>}
                 </div>,
-                <span className={`os-status ${statusType(s.status)}`}>{cap(s.status || "pending")}</span>,
+                <span className={`os-status ${statusType(s.status)}`}>
+                  {s.status === "endorsed" ? "Confirmed by supervisor" : cap(s.status || "pending")}
+                </span>,
                 (s.status || "pending") === "pending" ? <RemoveBtn onConfirm={() => removeSub(s.id)} /> : "",
               ])}
               empty="No online submissions yet."
@@ -682,6 +909,139 @@ function SubmitOnline({ user }) {
         </div>
       </div>
     </>
+  );
+}
+
+/* ───────────────────────── Work arrangement (WFH) ─────────────────────────
+   From the OJT coordinator: WFH needs a letter from the HTE approving it (plus the student's request),
+   unless WFH is already stated in the MOA or Student Contract. Online attendance is for approved WFH. */
+function WorkModeCard({ user }) {
+  const [mode, setMode] = useState(null);          // onsite | offsite
+  const [reqs, setReqs] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ reason: "", in_moa: false, file: null });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const load = () => {
+    fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => setMode((d?.user || d)?.work_mode || "onsite")).catch(() => {});
+    fetch(`${API}/intern/work-mode-requests`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => { if (Array.isArray(d)) setReqs(d); }).catch(() => {});
+  };
+  useEffect(() => {
+    load();
+    return liveRefresh(load);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!mode) return null;
+  const wfh = mode === "offsite";
+  const want = wfh ? "onsite" : "offsite";
+  const pending = reqs.find((r) => r.status === "pending");
+  const last = reqs[0];
+
+  const send = async (e) => {
+    e.preventDefault();
+    setBusy(true); setMsg(null);
+    try {
+      const fd = new FormData();
+      fd.append("requested_mode", want);
+      fd.append("reason", form.reason);
+      fd.append("in_moa", form.in_moa ? "1" : "0");
+      if (form.file) fd.append("file", form.file);
+      const res = await fetch(`${API}/intern/work-mode-requests`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || (data.errors && Object.values(data.errors)[0]?.[0]) || "Something went wrong.");
+      setOpen(false);
+      setForm({ reason: "", in_moa: false, file: null });
+      setMsg({ type: "success", text: data.message });
+      load();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (!pending || !window.confirm("Cancel your work arrangement request?")) return;
+    const res = await fetch(`${API}/intern/work-mode-requests/${pending.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+    const data = await res.json().catch(() => ({}));
+    setMsg({ type: res.ok ? "success" : "error", text: data.message || "Something went wrong." });
+    load();
+  };
+
+  return (
+    <div className="ix-card wm-card">
+      <div className="wm-row">
+        <span className={wfh ? "wm-ic wfh" : "wm-ic"}><Icon name={wfh ? "globe" : "home"} size={18} /></span>
+        <div className="wm-text">
+          <strong>Work arrangement: {wfh ? "Work from home (approved)" : "Onsite"}</strong>
+          <small>
+            {pending
+              ? `Your request to ${pending.requested_mode === "offsite" ? "work from home" : "go back onsite"} is waiting for your OJT coordinator.`
+              : wfh
+                ? "You can submit online attendance for the days you work from home."
+                : "Online attendance is for approved work-from-home. Request it with the letter from your HTE."}
+            {!pending && last?.status === "rejected" && ` Your last request was not approved${last.remarks ? `: ${last.remarks}` : "."}`}
+          </small>
+        </div>
+        {pending
+          ? <button type="button" className="ix-b ghost sm" onClick={cancel}>Cancel request</button>
+          : <button type="button" className="ix-b primary sm" onClick={() => { setMsg(null); setOpen(true); }}>
+              {wfh ? "Request to go back onsite" : "Request WFH"}
+            </button>}
+      </div>
+      <Msg msg={msg} />
+
+      {open && (
+        <Modal title={wfh ? "Go back onsite" : "Request work from home"} sub="Your OJT coordinator reviews this request." onClose={() => setOpen(false)}>
+          <form onSubmit={send} className="ix-form">
+            <div className="ix-field">
+              <label htmlFor="wm-reason">Reason</label>
+              <textarea id="wm-reason" rows={3} required maxLength={500} value={form.reason}
+                placeholder={wfh ? "e.g. My HTE asked us to report onsite again." : "e.g. My HTE allows remote work every Friday."}
+                onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
+            </div>
+            {!wfh && (
+              <>
+                <label className="wm-check">
+                  <input type="checkbox" checked={form.in_moa} onChange={(e) => setForm((f) => ({ ...f, in_moa: e.target.checked }))} />
+                  WFH is already stated in our MOA / Student Internship Contract
+                </label>
+                {!form.in_moa && (
+                  <div className="ix-field">
+                    <label>Letter from the HTE approving the WFH</label>
+                    <label className={form.file ? "ix-drop has-file" : "ix-drop"}>
+                      <input type="file" accept={ACCEPT} onChange={(e) => setForm((f) => ({ ...f, file: e.target.files[0] || null }))} />
+                      <span className="ix-drop-icon"><Icon name={form.file ? "file" : "upload"} size={22} /></span>
+                      <span className="ix-drop-text">
+                        {form.file ? form.file.name : "Click to choose a file"}
+                        <small>{form.file ? "Click to change" : "PDF, JPG, PNG, DOC or DOCX"}</small>
+                      </span>
+                    </label>
+                  </div>
+                )}
+              </>
+            )}
+            <button type="submit" className="ix-btn" disabled={busy}>{busy ? "Sending..." : "Send request"}</button>
+          </form>
+        </Modal>
+      )}
+      <style>{`
+        .ix-content .ix-card.wm-card { margin-bottom: 16px; padding: 12px 16px !important; }
+        .wm-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .wm-ic { width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+          background: #fff1e6; color: #ea580c; }
+        .wm-ic.wfh { background: #e8f6ea; color: #2e7d32; }
+        .wm-text { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 2px; }
+        .wm-text strong { font-size: 14px; }
+        .wm-text small { font-size: 12.5px; color: #6b7280; }
+        .wm-check { display: flex; align-items: center; gap: 8px; margin: 4px 0 12px; font-size: 13px; color: #374151; cursor: pointer; }
+        .wm-check input { width: 16px; height: 16px; accent-color: #e8582a; }
+      `}</style>
+    </div>
   );
 }
 
@@ -696,8 +1056,18 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   const [msg, setMsg] = useState(null);
   const [otherTitle, setOtherTitle] = useState("");
   const [otherFile, setOtherFile] = useState(null);
+  const [deadlines, setDeadlines] = useState({});   // { "pre:moa": "2026-11-05", ... }
 
-  useEffect(() => { fetchMovs(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    const loadDue = () =>
+      fetch(`${API}/requirement-deadlines`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json())
+        .then((d) => { if (Array.isArray(d)) setDeadlines(Object.fromEntries(d.map((x) => [`${x.phase}:${x.requirement}`, x.due_date]))); })
+        .catch(() => {});
+    fetchMovs(); loadDue();
+    return liveRefresh(() => { fetchMovs(); loadDue(); });
+    /* eslint-disable-next-line */
+  }, []);
 
   const fetchMovs = async () => {
     try {
@@ -707,8 +1077,8 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
     } finally { setLoading(false); }
   };
 
-  const phase = tab; // "pre" | "post"
-  const list = phase === "pre" ? PRE_REQUIREMENTS : POST_REQUIREMENTS;
+  const phase = tab; // "pre" | "during" | "post"
+  const list = REQUIREMENTS_BY_PHASE[phase] || PRE_REQUIREMENTS;
   const inPhase = (m) => (m.phase || "pre") === phase;
   // newest submission for each requirement (movs come newest first)
   const latest = (key) => movs.find((m) => m.requirement === key && inPhase(m));
@@ -756,7 +1126,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   };
 
   const fileLink = (m) => (
-    <a className="ix-link" href={`http://localhost:8000/storage/${m.file_path}`} target="_blank" rel="noopener noreferrer">
+    <a className="ix-link" href={`${STORAGE}${m.file_path}`} target="_blank" rel="noopener noreferrer">
       {m.original_name}
     </a>
   );
@@ -764,10 +1134,17 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   return (
     <>
       <PageHeader title="Submit MOV" sub="Upload your internship requirements for your coordinator to review." />
+      <style>{`
+        .req-due { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; vertical-align: 1px; background: #f1f5f9; color: #475569; }
+        .req-due.pending { background: #fff4d6; color: #9a5b00; }
+        .req-due.rejected { background: #fee2e2; color: #b91c1c; }
+      `}</style>
 
       <div className="req-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === "pre"} className={tab === "pre" ? "on" : ""}
           onClick={() => { setTab("pre"); setMsg(null); }}>Pre-Internship</button>
+        <button type="button" role="tab" aria-selected={tab === "during"} className={tab === "during" ? "on" : ""}
+          onClick={() => { setTab("during"); setMsg(null); }}>During Internship</button>
         <button type="button" role="tab" aria-selected={tab === "post"} className={tab === "post" ? "on" : ""}
           onClick={() => { setTab("post"); setMsg(null); }}>
           {!unlocked && <Icon name="lock" size={14} />} Post-Internship
@@ -793,7 +1170,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
           <div className="ix-card">
             <div className="req-head">
               <div>
-                <div className="ix-card-label">{phase === "pre" ? "Pre-internship requirements" : "Post-internship requirements"}</div>
+                <div className="ix-card-label">{phase === "pre" ? "Pre-internship requirements" : phase === "during" ? "During the internship" : "Post-internship requirements"}</div>
                 <small className="req-sub">{doneCount} of {list.length} approved</small>
               </div>
             </div>
@@ -801,11 +1178,18 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
               <ul className="req-list">
                 {list.map((r) => {
                   const m = latest(r.key);
-                  const canUpload = !m || m.status === "rejected";
+                  const many = movs.filter((x) => x.requirement === r.key && inPhase(x)).length;
+                  // reports can be sent again and again; other requirements once (or again after a rejection)
+                  const canUpload = r.repeat || !m || m.status === "rejected";
+                  const due = dueStatus(deadlines[`${phase}:${r.key}`], r.repeat ? null : m);
                   return (
                     <li key={r.key} className="req-item">
                       <div className="req-main">
-                        <strong>{r.label}</strong>
+                        <strong>
+                          {r.label}
+                          {due && <span className={`req-due ${due.tone}`}>{due.label}</span>}
+                          {r.repeat && many > 0 && <span className="req-due none">{many} submitted</span>}
+                        </strong>
                         {r.hint && <small>{r.hint}</small>}
                         {m && <span className="req-file">{fileLink(m)}</span>}
                         {m?.status === "rejected" && m.remarks && <small className="req-reject">Remarks: {m.remarks}</small>}
@@ -821,7 +1205,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                               if (f) upload({ key: r.key, title: r.label, file: f });
                             }}
                           />
-                          <Icon name="upload" size={14} /> {busyKey === r.key ? "Uploading..." : m ? "Re-upload" : "Upload"}
+                          <Icon name="upload" size={14} /> {busyKey === r.key ? "Uploading..." : r.repeat && m ? "Upload new" : m ? "Re-upload" : "Upload"}
                         </label>
                       ) : m.status === "pending" ? (
                         <RemoveBtn onConfirm={() => removeMov(m.id)} />
@@ -979,7 +1363,261 @@ export function dtrFormHtml({ name, office, periodLabel, officialHours = "", row
    mode "four": AM arrival / AM departure / PM arrival / PM departure
    The times shown are the real tap times. Each day's Undertime/Tardiness column is the
    minutes late (no grace period) plus the minutes left early, measured against SCHEDULE. */
-export function buildDtr({ records, month, from, to, mode }) {
+/* ───────── MOA notice: taps don't count until the MOA is approved (Internship FAQ #6–7) ─────────
+   A small card that floats at the bottom-right of the screen. The X hides it until the next sign-in,
+   or until the MOA status changes (e.g. pending -> rejected), whichever comes first.
+   The "closed" mark is tied to this sign-in's token: logging out keeps the browser tab's storage,
+   but a new sign-in gets a new token, so the notice comes back.                                   */
+const MOA_HIDE_KEY = "mytrack_moa_notice_hidden";
+const MOA_TOAST_CSS = `
+        .moa-toast {
+          position: fixed; right: 24px; bottom: 24px; z-index: 60; width: min(360px, calc(100vw - 32px));
+          display: flex; gap: 12px; align-items: flex-start; padding: 14px 14px 14px 16px;
+          background: #fff; border-radius: 14px; border-left: 4px solid #f59e0b;
+          box-shadow: 0 18px 40px rgba(15,23,42,0.18), 0 2px 6px rgba(15,23,42,0.06);
+          animation: moa-in .35s cubic-bezier(.2,.8,.2,1);
+        }
+        .moa-toast.rejected { border-left-color: #dc2626; }
+        .moa-toast-ic { flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+          background: #fef3c7; color: #b45309; }
+        .moa-toast.rejected .moa-toast-ic { background: #fee2e2; color: #b91c1c; }
+        .moa-toast-body { flex: 1; min-width: 0; }
+        .moa-toast-body strong { display: block; font-size: 14px; color: #111827; margin-bottom: 3px; }
+        .moa-toast-body p { margin: 0; font-size: 12.5px; line-height: 1.45; color: #4b5563; }
+        .moa-toast-link { margin-top: 8px; padding: 0; border: 0; background: none; cursor: pointer; font: inherit;
+          font-size: 12.5px; font-weight: 600; color: #ea580c; display: inline-flex; align-items: center; gap: 4px; }
+        .moa-toast-link:hover { text-decoration: underline; }
+        .moa-toast-x { flex-shrink: 0; width: 28px; height: 28px; margin: -4px -4px 0 0; border: 0; border-radius: 8px; background: none;
+          color: #9ca3af; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .moa-toast-x:hover { background: #f3f4f6; color: #111827; }
+        .moa-toast-x:focus-visible, .moa-toast-link:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
+        @keyframes moa-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+        @media (max-width: 600px) { .moa-toast { right: 16px; bottom: 16px; } }
+        @media (prefers-reduced-motion: reduce) { .moa-toast { animation: none; } }
+        .moa-due { margin: 2px 0 0; padding-left: 16px; font-size: 12.5px; color: #4b5563; line-height: 1.5; }
+`;
+
+function MoaNotice({ user, go }) {
+  const [moa, setMoa] = useState(null);   // null = loading | "none" | "pending" | "rejected" | "approved"
+  const [dueItems, setDueItems] = useState([]);   // requirements overdue or due within 3 days, not submitted
+  const [hidden, setHidden] = useState(() => {
+    try { return sessionStorage.getItem(MOA_HIDE_KEY) || ""; } catch { return ""; }
+  });
+
+  useEffect(() => {
+    const load = () =>
+      fetch(`${API}/intern/my-movs?user_id=${user.id}`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json())
+        .then((list) => {
+          if (!Array.isArray(list)) return;
+          const m = list.filter((x) => x.requirement === "moa");
+          setMoa(m.some((x) => x.status === "approved") ? "approved"
+            : m.some((x) => x.status === "pending") ? "pending"
+            : m.length ? "rejected" : "none");
+          // due dates set by the coordinator (pre- and during-internship requirements)
+          fetch(`${API}/requirement-deadlines`, { headers: { Accept: "application/json" } })
+            .then((r) => r.json())
+            .then((dl) => {
+              if (!Array.isArray(dl)) return;
+              const items = [];
+              dl.filter((d) => d.phase !== "post").forEach((d) => {
+                const req = (REQUIREMENTS_BY_PHASE[d.phase] || []).find((r) => r.key === d.requirement);
+                if (!req || req.repeat) return;
+                const sub = list.find((x) => x.requirement === d.requirement && (x.phase || "pre") === d.phase);
+                const st = dueStatus(d.due_date, sub);
+                if (st && st.tone !== "none") items.push({ key: d.requirement, label: req.label, status: st.label, overdue: st.tone === "rejected" });
+              });
+              setDueItems(items);
+            })
+            .catch(() => {});
+        })
+        .catch(() => {});
+    load();
+    return liveRefresh(load);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // "<this sign-in's token>|<MOA status>" — a new sign-in or a new status shows the notice again
+  const mark = `${user.token || user.id}|${moa}`;
+  const close = () => {
+    setHidden(mark);
+    try { sessionStorage.setItem(MOA_HIDE_KEY, mark); } catch { /* ignore */ }
+  };
+
+  // the MOA comes first; once it is approved, remind about requirements that are due
+  const dueMark = `${user.token || user.id}|due|${dueItems.map((d) => d.key + d.status).join(",")}`;
+  if (moa === "approved" && dueItems.length && hidden !== dueMark) {
+    const overdue = dueItems.some((d) => d.overdue);
+    const closeDue = () => {
+      setHidden(dueMark);
+      try { sessionStorage.setItem(MOA_HIDE_KEY, dueMark); } catch { /* ignore */ }
+    };
+    return (
+      <div className={`moa-toast ${overdue ? "rejected" : "pending"}`} role="status" aria-live="polite">
+        <span className="moa-toast-ic"><Icon name="calendar" size={18} /></span>
+        <div className="moa-toast-body">
+          <strong>{overdue ? "Requirements overdue" : "Requirements due soon"}</strong>
+          <ul className="moa-due">
+            {dueItems.slice(0, 3).map((d) => <li key={d.key}>{d.label} — <b>{d.status}</b></li>)}
+            {dueItems.length > 3 && <li>+{dueItems.length - 3} more</li>}
+          </ul>
+          <button type="button" className="moa-toast-link" onClick={() => go("/intern/movs")}>
+            <Icon name="upload" size={13} /> Go to Submit MOV
+          </button>
+        </div>
+        <button type="button" className="moa-toast-x" onClick={closeDue} aria-label="Close notice">
+          <Icon name="x" size={16} />
+        </button>
+        <style>{MOA_TOAST_CSS}</style>
+      </div>
+    );
+  }
+
+  if (!moa || moa === "approved" || hidden === mark) return null;
+
+  const TEXT = {
+    none: ["Upload your MOA", "Upload your approved and notarized MOA. The kiosk won't count your taps until your OJT coordinator approves it."],
+    pending: ["MOA waiting for approval", "Your OJT coordinator is reviewing your MOA. The kiosk won't count your taps until it is approved."],
+    rejected: ["MOA not approved", "Your MOA was not approved. Upload a corrected copy — the kiosk won't count your taps until it is approved."],
+  };
+  const [title, body] = TEXT[moa];
+
+  return (
+    <div className={`moa-toast ${moa}`} role="status" aria-live="polite">
+      <span className="moa-toast-ic"><Icon name="warn" size={18} /></span>
+      <div className="moa-toast-body">
+        <strong>{title}</strong>
+        <p>{body}</p>
+        {moa !== "pending" && (
+          <button type="button" className="moa-toast-link" onClick={() => { go("/intern/movs"); }}>
+            <Icon name="upload" size={13} /> Go to Submit MOV
+          </button>
+        )}
+      </div>
+      <button type="button" className="moa-toast-x" onClick={close} aria-label="Close notice">
+        <Icon name="x" size={16} />
+      </button>
+      <style>{MOA_TOAST_CSS}</style>
+    </div>
+  );
+}
+
+/* ───────── DTR certification by the HTE supervisor (shown on every DTR page) ─────────
+   intern = the intern; from/to = "YYYY-MM-DD"; canCertify = the signed-in user is a supervisor */
+export function CertifyBar({ intern, from, to, canCertify = false, hasDays = true, currentHours = null }) {
+  const me = JSON.parse(sessionStorage.getItem("user") || "{}");
+  const [certs, setCerts] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const load = () =>
+    fetch(`${API}/dtr-certifications?user_id=${intern.id}`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setCerts(d); })
+      .catch(() => {});
+  useEffect(() => {
+    setMsg(null);
+    load();
+    return liveRefresh(load);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intern.id]);
+
+  const cert = certs.find((c) => String(c.period_from).slice(0, 10) === from && String(c.period_to).slice(0, 10) === to);
+  const ended = to < todayManila();
+  // the hours can still change after certifying (e.g. a late time correction): then the certification is out of date
+  const changed = !!cert && currentHours !== null && Math.abs(Number(cert.hours) - Number(currentHours)) > 0.06;
+
+  const call = async (method, url, body) => {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch(`${API}${url}`, {
+        method, headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "Something went wrong.");
+      setMsg({ type: "success", text: data.message });
+      load();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const when = (v) => new Date(v).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+
+  return (
+    <div className="dtr-cert">
+      {cert ? (
+        <div className="dtr-cert-row ok">
+          <Icon name="check" size={18} />
+          <span>
+            <strong>Certified</strong> by {cert.certified_by_name || "the supervisor"} on {when(cert.certified_at)}
+            {" · "}{Number(cert.hours).toFixed(1)}h{cert.remarks ? ` · ${cert.remarks}` : ""}
+          </span>
+          {changed && (
+            <span className="dtr-cert-changed">
+              <Icon name="warn" size={14} /> Hours changed after certification (now {Number(currentHours).toFixed(1)}h)
+              {canCertify ? " — undo, then certify again." : " — the supervisor needs to certify it again."}
+            </span>
+          )}
+          {canCertify && Number(cert.certified_by) === Number(me.id) && (
+            <button type="button" className="ix-b ghost sm" disabled={busy}
+              onClick={() => window.confirm("Remove the certification of this DTR period?") && call("DELETE", `/supervisor/dtr-certifications/${cert.id}`)}>
+              Undo
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="dtr-cert-row">
+          <Icon name="info" size={18} />
+          <span>
+            {canCertify
+              ? (ended ? "Check the DTR below, then certify that it is true and correct." : "You can certify this period once it has ended.")
+              : "Not yet certified by the HTE supervisor."}
+          </span>
+          {canCertify && (
+            <button type="button" className="ix-b primary sm" disabled={busy || !ended || !hasDays}
+              onClick={() => window.confirm(`Certify ${intern.name}'s DTR for this period as true and correct?`)
+                && call("POST", "/supervisor/dtr-certifications", { user_id: intern.id, from, to })}>
+              <Icon name="check" size={14} /> Certify DTR
+            </button>
+          )}
+        </div>
+      )}
+      {msg && <Msg msg={msg} />}
+      <style>{`
+        .dtr-cert { margin: 0 0 14px; }
+        .dtr-cert-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 10px;
+          background: #fff7ed; color: #9a3412; font-size: 13.5px; }
+        .dtr-cert-row.ok { background: #ecfdf5; color: #065f46; }
+        .dtr-cert-changed { flex-basis: 100%; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #b45309; }
+        .dtr-cert-row > span { flex: 1; min-width: 200px; }
+        .dtr-cert .ix-msg { margin-top: 8px; }
+      `}</style>
+    </div>
+  );
+}
+
+/* Holidays / non-working days from the admin's Calendar: { "2026-11-01": "All Saints' Day", ... } */
+export function useHolidays() {
+  const [holidays, setHolidays] = useState({});
+  useEffect(() => {
+    fetch(`${API}/calendar`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json())
+      .then((list) => {
+        if (!Array.isArray(list)) return;
+        const map = {};
+        list.forEach((e) => { map[String(e.date).slice(0, 10)] = e.title || "Holiday"; });
+        setHolidays(map);
+      })
+      .catch(() => {});
+  }, []);
+  return holidays;
+}
+
+export function buildDtr({ records, month, from, to, mode, holidays = {} }) {
   const S = SCHEDULE;
   const mins = (h) => Math.max(Math.floor(h * 60 + 1e-6), 0);   // hours → whole minutes, never negative
   const inRange = records.filter((r) => {
@@ -997,6 +1635,8 @@ export function buildDtr({ records, month, from, to, mode }) {
     const iso = `${month}-${String(d).padStart(2, "0")}`;
     const s = byDate[iso] || [];
     const wi = weekdayIdx(iso);
+    // a holiday in the Calendar is printed on the DTR (and is not counted)
+    if (!s.length && holidays[iso]) return { d, weekend: String(holidays[iso]).toUpperCase().slice(0, 28) };
     if (!s.length) return wi >= 5 ? { d, weekend: wi === 5 ? "SATURDAY" : "SUNDAY" } : { d };
     if (s.every((x) => x.online)) return { d, weekend: "ONLINE (approved)" };
 
@@ -1032,37 +1672,56 @@ export function buildDtr({ records, month, from, to, mode }) {
 }
 
 function MyDtr({ user, records, loading, mode }) {
+  // Month and year start on the current month; the period starts blank.
+  // Nothing is shown until the user picks a period and clicks "Display DTR".
   const nowManila = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
   const [year, setYear] = useState(nowManila.slice(0, 4));
   const [mon, setMon] = useState(nowManila.slice(5, 7));
-  const [period, setPeriod] = useState("full"); // "first" | "second" | "full"
+  const [period, setPeriod] = useState("");       // "" | "first" | "second" | "full"
+  const [shown, setShown] = useState(null);       // { year, mon, period } of the DTR on screen
+  const [err, setErr] = useState("");
 
-  const month = `${year}-${mon}`;
-  const lastDay = new Date(Number(year), Number(mon), 0).getDate(); // days in that month
-  const PERIODS = [
-    { key: "first", label: "1–15", from: 1, to: 15 },
-    { key: "second", label: `16–${lastDay}`, from: 16, to: lastDay },
-    { key: "full", label: `1–${lastDay}`, from: 1, to: lastDay },
-  ];
-  const range = PERIODS.find((p) => p.key === period) || PERIODS[2];
   const MONTHS = Array.from({ length: 12 }, (_, i) => ({
     value: String(i + 1).padStart(2, "0"),
     label: new Date(2000, i, 1).toLocaleDateString("en-US", { month: "long" }),
   }));
   const years = [...new Set([nowManila.slice(0, 4), year, ...records.map((r) => String(r.date || "").slice(0, 4)).filter(Boolean)])]
     .sort((a, b) => b.localeCompare(a));
+  const periodsOf = (y, m) => {
+    const last = new Date(Number(y), Number(m), 0).getDate();   // days in that month
+    return [
+      { key: "first", label: "1–15", from: 1, to: 15 },
+      { key: "second", label: `16–${last}`, from: 16, to: last },
+      { key: "full", label: `Whole month (1–${last})`, from: 1, to: last },
+    ];
+  };
 
-  const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } = buildDtr({ records, month, from: range.from, to: range.to, mode });
-  const monthName = MONTHS.find((m) => m.value === mon)?.label || "";
-  const monthLabel = `${monthName} ${year}`;
-  const periodLabel = `${monthName} ${range.from} - ${range.to}, ${year}`;
-  const office = "Caraga State University - MAIN";
+  const display = () => {
+    if (!period) { setErr("Choose a period first."); return; }
+    setErr("");
+    setShown({ year, mon, period });
+  };
 
-  const formHtml = dtrFormHtml({
-    name: user.name, office, periodLabel, officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin,
-  });
+  const holidays = useHolidays();
+
+  // everything below is for the DTR that was displayed (not the dropdowns being changed)
+  let view = null;
+  if (shown) {
+    const month = `${shown.year}-${shown.mon}`;
+    const range = periodsOf(shown.year, shown.mon).find((p) => p.key === shown.period);
+    const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } =
+      buildDtr({ records, month, from: range.from, to: range.to, mode, holidays });
+    const monthName = MONTHS.find((m) => m.value === shown.mon)?.label || "";
+    const periodLabel = `${monthName} ${range.from} - ${range.to}, ${shown.year}`;
+    const formHtml = dtrFormHtml({
+      name: user.name, office: "Caraga State University - MAIN", periodLabel,
+      officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin,
+    });
+    view = { month, range, totalHrs, daysPresent, monthName, formHtml };
+  }
 
   const handlePrint = () => {
+    if (!view) return;
     const w = window.open("", "_blank");
     if (!w) return;
     w.document.write(`<html><head><title>DTR - ${esc(user.name)}</title><style>
@@ -1071,47 +1730,113 @@ function MyDtr({ user, records, loading, mode }) {
       .sheet { display: flex; gap: 10mm; align-items: flex-start; }
       .sheet .cs48 { flex: 1; }
       ${CS48_CSS}
-    </style></head><body><div class="sheet">${formHtml}${formHtml}</div></body></html>`);
+    </style></head><body><div class="sheet">${view.formHtml}${view.formHtml}</div></body></html>`);
     w.document.close(); w.print();
   };
 
   return (
     <>
       <style>{CS48_CSS}</style>
-      <PageHeader title="My DTR" sub="Your Daily Time Record. Pick a month to view or print it." />
+      <PageHeader title="My DTR" sub="Your Daily Time Record. Choose the month, year and period, then click Display DTR." />
       <div className="ix-card">
-        <div className="req-head">
-          <div className="dtr-filters">
-            <select className="dtr-sel" value={mon} onChange={(e) => setMon(e.target.value)} aria-label="Month">
+        <div className="dtr-pick">
+          <label className="fl-field">
+            <span className="fl-label">Month *</span>
+            <select value={mon} onChange={(e) => setMon(e.target.value)}>
               {MONTHS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
-            <select className="dtr-sel" value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year">
+          </label>
+          <label className="fl-field">
+            <span className="fl-label">Year *</span>
+            <select value={year} onChange={(e) => setYear(e.target.value)}>
               {years.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
-            <select className="dtr-sel" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period">
-              {PERIODS.map((p) => <option key={p.key} value={p.key}>Period: {p.label}</option>)}
+          </label>
+          <label className={period ? "fl-field" : "fl-field empty"}>
+            <span className="fl-label">Period *</span>
+            <select value={period} onChange={(e) => { setPeriod(e.target.value); setErr(""); }}>
+              <option value="" disabled hidden></option>
+              {periodsOf(year, mon).map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
-          </div>
-          <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!daysPresent}>
-            <Icon name="print" size={16} /> Print DTR
+          </label>
+          <button type="button" className="fl-btn" onClick={display}>
+            <Icon name="send" size={18} /> Display DTR
           </button>
         </div>
-        <div className="req-dtr-meta">
-          <span><strong>{monthLabel}</strong> · {range.label}</span>
-          <span>{DTR_MODES[mode]}</span>
-          <span>{daysPresent} day{daysPresent === 1 ? "" : "s"} present</span>
-          <span>Total: <strong>{totalHrs}h</strong></span>
-        </div>
-        {loading ? <Spinner /> : (
-          <div className="cs48-pair">
-            <div className="cs48-card" dangerouslySetInnerHTML={{ __html: formHtml }} />
-            <div className="cs48-card" dangerouslySetInnerHTML={{ __html: formHtml }} />
+        {err && <div className="fl-err">{err}</div>}
+
+        {!view ? (
+          <div className="dtr-wait">
+            <span className="dtr-wait-ic"><Icon name="file" size={26} /></span>
+            <strong>No DTR displayed yet</strong>
+            <p>Choose a period, then click <b>Display DTR</b>.</p>
           </div>
+        ) : (
+          <>
+            <div className="dtr-shown-head">
+              <div className="req-dtr-meta">
+                <span><strong>{view.monthName} {shown.year}</strong> · {view.range.label}</span>
+                <span>{DTR_MODES[mode]}</span>
+                <span>{view.daysPresent} day{view.daysPresent === 1 ? "" : "s"} present</span>
+                <span>Total: <strong>{view.totalHrs}h</strong></span>
+              </div>
+              <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!view.daysPresent}>
+                <Icon name="print" size={16} /> Print DTR
+              </button>
+            </div>
+            <CertifyBar
+              intern={user}
+              from={`${view.month}-${String(view.range.from).padStart(2, "0")}`}
+              to={`${view.month}-${String(view.range.to).padStart(2, "0")}`}
+              currentHours={view.totalHrs}
+            />
+            {loading ? <Spinner /> : (
+              <div className="cs48-pair">
+                <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
+                <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
+              </div>
+            )}
+          </>
         )}
       </div>
+      <style>{DTR_PICK_CSS}</style>
     </>
   );
 }
+
+/* Month / Year / Period fields + "Display DTR" button (used on every DTR page) */
+export const DTR_PICK_CSS = `
+        .dtr-pick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; align-items: stretch; }
+        .fl-field { position: relative; display: block; margin: 0; }
+        .fl-field select {
+          width: 100%; height: 56px; padding: 18px 40px 8px 14px; border: 1px solid #c4c4c4; border-radius: 6px;
+          background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z' fill='%23757575'/%3E%3C/svg%3E") no-repeat right 14px center;
+          appearance: none; -webkit-appearance: none; font: inherit; font-size: 15px; color: #1f2937; cursor: pointer;
+        }
+        .fl-field select:hover { border-color: #6b7280; }
+        .fl-field select:focus { outline: none; border: 2px solid #f97316; padding: 17px 39px 7px 13px; }
+        .fl-label { position: absolute; left: 14px; top: 7px; font-size: 11.5px; color: #6b7280; pointer-events: none; transition: all .15s; }
+        .fl-field:focus-within .fl-label { color: #ea580c; }
+        /* blank period: the label sits in the middle like a placeholder */
+        .fl-field.empty .fl-label { top: 50%; transform: translateY(-50%); font-size: 15px; color: #6b7280; }
+        .fl-field.empty:focus-within .fl-label { top: 7px; transform: none; font-size: 11.5px; color: #ea580c; }
+        .fl-btn {
+          height: 56px; padding: 0 20px; border: 1px solid #f97316; border-radius: 6px; background: #fff; color: #ea580c;
+          font: inherit; font-size: 14.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+          display: inline-flex; align-items: center; gap: 10px; cursor: pointer; white-space: nowrap; transition: background .15s;
+        }
+        .fl-btn:hover { background: #fff7ed; }
+        .fl-btn:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
+        .fl-err { margin-top: 8px; font-size: 13px; color: #dc2626; }
+        .dtr-wait { padding: 48px 20px 36px; text-align: center; color: #6b7280; }
+        .dtr-wait-ic { width: 56px; height: 56px; margin: 0 auto 12px; border-radius: 50%; background: #fdeee7; color: #e8582a;
+          display: flex; align-items: center; justify-content: center; }
+        .dtr-wait strong { display: block; font-size: 15px; color: #1f2937; }
+        .dtr-wait p { margin: 4px 0 0; font-size: 13px; }
+        .dtr-shown-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 18px 0 10px; }
+        .dtr-shown-head .req-dtr-meta { margin: 0; }
+        @media (max-width: 800px) { .dtr-pick { grid-template-columns: 1fr 1fr; } .fl-btn { grid-column: 1 / -1; justify-content: center; } }
+`;
 
 /* ───────────────────────── NFC card application ───────────────────────── */
 const STEPS = ["Submitted", "Approved", "Card issued"];
@@ -1151,8 +1876,7 @@ function NfcApply({ user }) {
 
   useEffect(() => {
     load();
-    const iv = setInterval(() => { if (!document.hidden) load(); }, 15000);
-    return () => clearInterval(iv);
+    return liveRefresh(load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1302,68 +2026,27 @@ function NfcApply({ user }) {
 }
 
 /* ───────────────────────── Profile ───────────────────────── */
-function Profile({ user, program, dtrMode }) {
-  const [acct, setAcct] = useState({});
+function Profile({ user }) {
+  const [acct, setAcct] = useState(null);
 
-  // pull the full account so student ID / year level show up even if login didn't return them
+  // the full account (program, supervisor, NFC card, emergency contact...)
   useEffect(() => {
     fetch(`${API}/me?user_id=${user.id}`)
       .then((r) => r.json())
       .then((d) => setAcct(d?.user || d || {}))
-      .catch(() => {});
+      .catch(() => setAcct({}));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const pick = (...keys) => {
-    for (const k of keys) {
-      const v = acct?.[k] ?? user?.[k];
-      if (v !== undefined && v !== null && String(v).trim() !== "") return v;
-    }
-    return "";
-  };
-
-  const studentId = pick("student_id", "studentId", "id_number", "student_no");
-
-  // the year lives inside the program, e.g. "BSIT - 4"
-  const progYear = String(pick("program", "course") || program || "").split(/\s*-\s*/)[1] || "";
-  const rawYear = String(pick("year_level", "yearLevel", "year") || progYear).trim();
-
-  const yearLevel = /^[1-9]$/.test(rawYear)
-    ? `${rawYear}${["th", "st", "nd", "rd"][Number(rawYear) <= 3 ? Number(rawYear) : 0]} Year`
-    : rawYear;
-  const prog = programKey(program) || pick("program", "course");
-
-  const ROLE_LABELS = { intern: "OJT Intern", admin: "Admin", supervisor: "Supervisor", coordinator: "Coordinator" };
-  const roleKey = String(pick("role", "user_type", "type")).toLowerCase();
-  const status = ROLE_LABELS[roleKey] || "OJT Intern";
-
-  const details = [
-    ["Student ID", studentId],
-    ["Year level", yearLevel],
-    ["Program", prog],
-    ["Required hours", `${requiredHoursFor(program)}h`],
-    ["DTR type", dtrMode === "four" ? "4 taps" : "2 taps"],
-    ["Status", status],
-  ];
-
   return (
     <>
-      <PageHeader title="My Profile" sub="Your account information and security." />
-      <div className="ix-profile">
-        <div className="ix-card ix-profile-card">
-          <div className="ix-profile-avatar"><Avatar name={user.name} photo={user.photo} size={96} /></div>
-          <h2 className="ix-profile-name">{user.name}</h2>
-          <dl>
-            {details.map(([k, v]) => (
-              <div key={k}><dt>{k}</dt><dd>{v || "—"}</dd></div>
-            ))}
-          </dl>
+      <PageHeader title="My Profile" sub="Your account information. Ask the admin if something needs to be changed." />
+      {!acct ? <Spinner /> : (
+        <div className="prof-stack">
+          <div className="ix-card prof-main"><UserDetails u={{ ...user, ...acct }} /></div>
+          <div className="prof-sec"><AccountSecurity user={user} /></div>
         </div>
-
-        <div className="ix-profile-sec">
-          <AccountSecurity user={user} />
-        </div>
-      </div>
+      )}
     </>
   );
 }
@@ -1578,12 +2261,22 @@ export const internCss = `
 .intern-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 .intern-split > * { min-width: 0; margin: 0; }
 .intern-split .ix-table-wrap { overflow-x: auto; }
+/* Submit Online: "My Online Submissions" is exactly as tall as the form beside it;
+   a long list scrolls inside the card instead of stretching the page */
+.online-split { align-items: stretch; }
+.online-split > .os-card { height: 0; min-height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.online-split > .os-card > .ix-table-wrap { flex: 1; overflow-y: auto; }
+.online-split > .os-card > .ix-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .intern-task { max-width: 280px; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .intern-task { color: #3b2f29; font-size: 13px; }
 .intern-task small { display: block; margin-top: 3px; font-size: 11.5px; color: #6b5a50; }
 
 /* MOV "Others": narrow form, wide documents card (no sideways scroll) */
-.mov-split { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); }
+.mov-split { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); align-items: stretch; }
+/* "Others" form and "Other documents" list: same height, the list's empty state centered in the card */
+.mov-split > .ix-card, .mov-split > .os-card { height: 100%; }
+.mov-split > .os-card { display: flex; flex-direction: column; }
+.mov-split > .os-card > .ix-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .mov-split .os-card th, .mov-split .os-card td { white-space: normal; }
 .mov-split .os-card .ix-table-wrap { overflow-x: visible; }
 .mov-doc { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 230px; }
@@ -1675,6 +2368,7 @@ export const internCss = `
 /* ═════════ RESPONSIVE ═════════ */
 @media (max-width: 1100px) {
   .intern-split { grid-template-columns: 1fr; }
+  .online-split > .os-card { height: auto; min-height: 0; overflow: visible; }
   .ih-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hv-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -1779,4 +2473,24 @@ export const internCss = `
 .req-item .rm-btn, .req-item .rm-yes, .req-item .rm-no { padding: 3px 8px; font-size: 11px; flex-shrink: 0; }
 .req-item .rm-confirm { flex-shrink: 0; }
 
+
+/* My Requests */
+.rq-what { display: flex; align-items: flex-start; gap: 10px; min-width: 220px; max-width: 420px; }
+.rq-what > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rq-what strong { font-size: 13.5px; color: #111827; }
+.rq-what small { font-size: 12px; color: #6b7280; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rq-ic { width: 30px; height: 30px; flex-shrink: 0; border-radius: 8px; background: #fdeee7; color: #e8582a; display: inline-flex; align-items: center; justify-content: center; }
+.rq-steps { list-style: none; margin: 0; padding: 0; display: flex; align-items: flex-start; }
+.rq-steps li { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 78px; font-size: 11px; color: #9ca3af; text-align: center; }
+.rq-steps li + li::before { content: ""; position: absolute; top: 9px; right: 50%; width: 100%; height: 2px; background: #e5e7eb; z-index: 0; }
+.rq-steps li.done + li::before, .rq-steps li.done + li.fail::before { background: #16a34a; }
+.rq-steps i { position: relative; z-index: 1; width: 20px; height: 20px; border-radius: 50%; border: 2px solid #d1d5db; background: #fff; font-style: normal; font-size: 11px; font-weight: 700; line-height: 16px; color: #fff; }
+.rq-steps li.done i { background: #16a34a; border-color: #16a34a; }
+.rq-steps li.now i { border-color: #f59e0b; background: #fffbeb; box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
+.rq-steps li.fail i { background: #dc2626; border-color: #dc2626; }
+.rq-steps li.done span { color: #15803d; font-weight: 600; }
+.rq-steps li.now span { color: #b45309; font-weight: 600; }
+.rq-steps li.fail span { color: #dc2626; font-weight: 600; }
+.rq-status { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.rq-status small { font-size: 11.5px; color: #6b7280; font-style: italic; max-width: 220px; white-space: normal; }
 `;

@@ -1,9 +1,8 @@
 //App.jsx
 import { useState, useEffect, useRef } from "react";
 import schoolLogo from "./assets/logo.png";
+import { API, STORAGE } from "./config.js";
 
-const API = "http://localhost:8000/api";
-const STORAGE = "http://localhost:8000/storage/";
 const RESET_MS = 6000; // how long the result stays on screen
 // Secret that proves this screen is the real kiosk (same value as KIOSK_KEY in the Laravel .env)
 const KIOSK_KEY = import.meta.env.VITE_KIOSK_KEY || "";

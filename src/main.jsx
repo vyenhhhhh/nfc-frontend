@@ -9,10 +9,11 @@ import OjtCoordinatorDashboard from "./pages/OjtCoordinatorDashboard.jsx";
 import AdminDashboard          from "./pages/AdminDashboard.jsx";
 import SupervisorDashboard     from "./pages/SupervisorDashboard.jsx";
 import "./index.css";
+import { API } from "./config.js";
 
 /* ── Sends the sign-in token with every request to the Laravel API ──
    If the server says the session is over (401), go back to the login page. */
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = API;
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input, init = {}) => {
   const url = typeof input === "string" ? input : input?.url || "";
@@ -47,11 +48,10 @@ const internRoutes = [
   "/intern/records",
   "/intern/hours",
   "/intern/dtr",
+  "/intern/requests",
   "/intern/online",
   "/intern/movs",
   "/intern/nfc",
-  "/intern/calendar",
-  "/intern/notifications",
   "/intern/profile",
 ];
 
@@ -88,6 +88,7 @@ const adminRoutes = [
 
 const supervisorRoutes = [
   "/supervisor",
+  "/supervisor/approvals",
   "/supervisor/interns",
   "/supervisor/records",
   "/supervisor/dtr",

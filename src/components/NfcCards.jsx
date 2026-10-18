@@ -4,8 +4,8 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import logo from "../assets/logo.png";
-import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl } from "./DashKit.jsx";
-const API = "http://localhost:8000/api";
+import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh } from "./DashKit.jsx";
+import { API } from "../config.js";
 
 
 const STATUS = {
@@ -48,8 +48,7 @@ export default function NfcCards({ user, interns, onRefresh }) {
 
   useEffect(() => {
     fetchRequests();
-    const iv = setInterval(() => { if (!document.hidden) fetchRequests(); }, 10000);
-    return () => clearInterval(iv);
+    return liveRefresh(fetchRequests);
   }, []);
 
   const open = requests.filter((r) => r.status === "pending" || r.status === "approved");

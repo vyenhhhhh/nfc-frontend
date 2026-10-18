@@ -3,8 +3,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
 import campus from "../assets/campus.jpg";
+import { API } from "../config.js";
 
-const API = "http://localhost:8000/api";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const REMEMBER_KEY = "ojt_remember";
 const REMEMBER_DAYS = 7;
@@ -39,7 +39,7 @@ a: "You can access the features available to your account, such as attendance re
 },
 {
 q: "I forgot my password. What should I do?",
-a: "Contact your assigned administrator or coordinator to reset your account and regain access."
+a: "Click \"Forgot password?\" on the log in form and enter your ID number with your recovery code. No code? Choose \"Forgot recovery code?\" to get it by email, or ask the administrator to set a new password."
 },
 {
 q: "How is attendance recorded?",
@@ -73,13 +73,11 @@ const WaveIcon = ({ size = 22 }) => (
   </svg>
 );
 
-/* Forgot password flow: recover with a code / date of birth, or get the code by email */
+/* Forgot password flow: recover with your recovery code, or get the code by email */
 function RecoverFlow({ onDone }) {
   const [step, setStep] = useState("verify"); // "verify" | "newpass" | "email"
   const [identifier, setIdentifier] = useState("");
-  const [proof, setProof] = useState("code");  // "code" | "dob"
   const [code, setCode] = useState("");
-  const [dob, setDob] = useState("");
   const [pass, setPass] = useState(null);      // { reset_token, name } once step 1 matched
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
@@ -104,12 +102,10 @@ function RecoverFlow({ onDone }) {
     } finally { setBusy(false); }
   };
 
-  // Step 1: only the ID number and the recovery code / date of birth
+  // Step 1: the ID number and the recovery code (date of birth is not accepted: others may know it)
   const verify = async (e) => {
     e.preventDefault();
-    const d = await post("/recovery/verify", {
-      identifier, ...(proof === "code" ? { code } : { date_of_birth: dob }),
-    });
+    const d = await post("/recovery/verify", { identifier, code });
     if (d) { setPass(d); setStep("newpass"); }
   };
 
@@ -136,18 +132,13 @@ function RecoverFlow({ onDone }) {
       {step === "verify" && (
         <>
           <h3>Recover account</h3>
-          <p className="lf-modal-lead">Enter your ID number and your recovery code or date of birth.</p>
+          <p className="lf-modal-lead">Enter your ID number and your recovery code.</p>
           <form onSubmit={verify}>
             <label>ID number (student or employee ID)</label>
             <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoComplete="username" placeholder="Your ID number" />
 
-            <div className="lf-rec-tabs" role="tablist">
-              <button type="button" className={proof === "code" ? "on" : ""} onClick={() => setProof("code")}>Recovery code</button>
-              <button type="button" className={proof === "dob" ? "on" : ""} onClick={() => setProof("dob")}>Date of birth</button>
-            </div>
-            {proof === "code"
-              ? <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="XXXX-XXXX" autoComplete="off" style={{ textTransform: "uppercase" }} />
-              : <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} required aria-label="Date of birth" />}
+            <label>Recovery code</label>
+            <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="XXXX-XXXX" autoComplete="off" style={{ textTransform: "uppercase" }} />
 
             <Msg />
             <button type="submit" className="lf-rec-btn" disabled={busy}>{busy ? "Checking..." : "Continue"}</button>
@@ -175,7 +166,7 @@ function RecoverFlow({ onDone }) {
       {step === "email" && (
         <>
           <h3>Get your recovery code</h3>
-          <p className="lf-modal-lead">We'll email it to the address on your account.</p>
+          <p className="lf-modal-lead">We'll email it to the address on your account. If you never had one, a new code is made for you.</p>
           <form onSubmit={sendEmail}>
             <label>ID number (student or employee ID)</label>
             <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoComplete="username" placeholder="Your ID number" />
@@ -242,6 +233,9 @@ export default function LoginForm({ variant = "student" }) {
     const iv = setInterval(() => setSlide((n) => (n + 1) % SLIDES.length), 5000);
     return () => clearInterval(iv);
   }, []);
+
+  // the demo card taps in, then out, then in again… (flips each time the 6s animation repeats)
+  const [demoIn, setDemoIn] = useState(true);
 
   // Live clock for the little "checked in" demo in the hero
   useEffect(() => {
@@ -547,12 +541,12 @@ export default function LoginForm({ variant = "student" }) {
 
               {/* The one big moment: a card taps the reader, the check-in lands */}
               <div className="lf-scene" aria-hidden="true">
-                <div className="lf-toast">
+                <div className={demoIn ? "lf-toast" : "lf-toast out"} onAnimationIteration={() => setDemoIn((v) => !v)}>
                   <span className="lf-toast-ok">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
                   </span>
                   <span className="lf-toast-body">
-                    <b>Checked in</b>
+                    <b>{demoIn ? "Checked in" : "Checked out"}</b>
                     <small>{clock} · ID 221-02399</small>
                   </span>
                 </div>
@@ -611,7 +605,7 @@ export default function LoginForm({ variant = "student" }) {
                   <div><UserIcon /><b>Interns</b><small>Hours, MOVs, DTR</small></div>
                   <div><StaffIcon /><b>Coordinators</b><small>Review and monitor</small></div>
                   <div><HomeIcon /><b>Supervisors</b><small>Attendance reports</small></div>
-                  <div><LockIcon /><b>Admins</b><small>Accounts and calendar</small></div>
+                  <div><LockIcon /><b>Admins</b><small>Accounts, calendar</small></div>
                 </div>
 
                 <button type="button" className="lf-login-btn lf-info-cta" onClick={() => { setLoginOpen(true); setMenuOpen(false); }}>
@@ -677,19 +671,19 @@ export default function LoginForm({ variant = "student" }) {
 }
 
 const css = `
-  @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body, #root { height: 100%; width: 100%; }
-  body { font-family: 'Figtree', 'Segoe UI', sans-serif; color: #1b1410; }
+  body { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1b1410; }
   button { font-family: inherit; }
 
   .lf-page {
     --o: #e8582a; --o2: #f2733a; --o-soft: #fdeee7; --o-glow: rgba(232,88,42,0.35);
     --ink: #1b1410; --mut: #6f625b; --line: #eadfd8; --field: #f6f2ef;
-    --display: 'Bricolage Grotesque', 'Figtree', 'Segoe UI', sans-serif;
+    --display: 'Poppins', 'Segoe UI', sans-serif;
     height: 100vh; min-height: 680px; display: flex; flex-direction: column; background: #fff; position: relative;
-    font-family: 'Figtree', 'Segoe UI', sans-serif;
+    font-family: 'Poppins', 'Segoe UI', sans-serif;
   }
 
   /* ───── Navbar ───── */
@@ -747,6 +741,28 @@ const css = `
     white-space: nowrap; opacity: 0; transition: opacity .2s;
   }
   .lf-side.open .lf-side-foot { opacity: 1; transition-delay: .15s; }
+
+  /* same look as the dashboards' sidebar (DashKit): compact items, orange bar on the active one */
+  .lf-strip { width: 64px; }
+  .lf-strip.open { width: 240px; }
+  .lf-side { width: 64px; padding-top: 12px; box-shadow: none; }
+  .lf-side.open { width: 240px; box-shadow: 6px 0 20px rgba(15,23,42,0.06); }
+  .lf-side-item {
+    position: relative; gap: 14px; height: 42px; margin: 2px 8px; padding: 0 0 0 14px;
+    border-radius: 6px; color: #4b5563; overflow: visible;
+  }
+  .lf-side-item:hover { background: #f3f4f6; color: #111827; }
+  .lf-side-item.active, .lf-side-item.active:hover { background: #fdf1ea; color: #c2410c; }
+  .lf-side-item.active::before {
+    content: ""; position: absolute; left: -8px; top: 7px; bottom: 7px; width: 3px;
+    border-radius: 0 4px 4px 0; background: #e8582a;
+  }
+  .lf-side-icon svg { width: 18px; height: 18px; }
+  .lf-side-label { font-size: 13.5px; font-weight: 500; }
+  .lf-side-foot {
+    padding: 14px 18px; border-top: 1px solid #eceef1; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .06em; color: #6b7280;
+  }
 
   .lf-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #f7f3f0; }
   .lf-split { flex: 1; display: flex; min-height: 0; }
@@ -833,20 +849,29 @@ const css = `
     background: #fff; color: var(--ink); border-radius: 16px; box-shadow: 0 18px 40px rgba(0,0,0,0.35);
     opacity: 0; animation: lf-toast 6s ease-out infinite;
   }
-  .lf-toast-ok { width: 28px; height: 28px; border-radius: 50%; background: #22a06b; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .lf-toast-ok { width: 28px; height: 28px; border-radius: 50%; background: #22a06b; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .2s; }
+  .lf-toast.out .lf-toast-ok { background: #e8582a; }   /* check-out: orange */
   .lf-toast-body { display: flex; flex-direction: column; line-height: 1.25; }
   .lf-toast-body b { font-size: 13.5px; font-weight: 700; }
   .lf-toast-body small { font-size: 11.5px; color: var(--mut); }
 
   /* ───── Right side ───── */
-  .lf-right { position: relative; flex: 0 0 460px; display: flex; align-items: center; justify-content: center; padding: 16px 24px; overflow: hidden; background: linear-gradient(160deg, #fffaf7 0%, #ffeee4 100%); }
+  /* the card is centred with margin:auto, so on a short screen it scrolls instead of being cut off */
+  .lf-right { position: relative; flex: 0 0 460px; display: flex; justify-content: center; padding: 16px 24px; overflow-x: hidden; overflow-y: auto;
+    /* the soft orange glows are drawn in the background (as separate shapes they made the panel scroll) */
+    background:
+      radial-gradient(150px 150px at calc(100% - 70px) 40px, rgba(242,134,79,0.40), rgba(242,134,79,0) 100%),
+      radial-gradient(170px 170px at 60px calc(100% - 30px), rgba(232,88,42,0.22), rgba(232,88,42,0) 100%),
+      radial-gradient(80px 80px at calc(100% - 30px) calc(100% - 170px), rgba(255,190,150,0.45), rgba(255,190,150,0) 100%),
+      linear-gradient(160deg, #fffaf7 0%, #ffeee4 100%); }
+  .lf-right > .lf-orb { display: none; }
   .lf-orb { position: absolute; border-radius: 50%; pointer-events: none; }
   .lf-orb.o1 { width: 300px; height: 300px; top: -110px; right: -80px; background: radial-gradient(circle, rgba(242,134,79,0.45), rgba(242,134,79,0)); }
   .lf-orb.o2 { width: 340px; height: 340px; bottom: -140px; left: -110px; background: radial-gradient(circle, rgba(232,88,42,0.28), rgba(232,88,42,0)); }
   .lf-orb.o3 { width: 160px; height: 160px; bottom: 90px; right: -50px; background: radial-gradient(circle, rgba(255,190,150,0.5), rgba(255,190,150,0)); }
 
   .lf-card {
-    position: relative; margin: auto; background: rgba(255,255,255,0.92); width: 100%; max-width: 400px; border-radius: 10px;
+    position: relative; margin: auto; flex-shrink: 0; background: rgba(255,255,255,0.92); width: 100%; max-width: 400px; border-radius: 10px;
     padding: 24px 30px 22px;
     box-shadow: 0 30px 70px rgba(150,52,20,0.16), 0 2px 8px rgba(27,20,16,0.05);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -1012,15 +1037,24 @@ const css = `
   .lf-steps li > span { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--o-soft); color: var(--o); font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; }
   .lf-steps b { display: block; font-size: 13.5px; }
   .lf-steps small { display: block; margin-top: 1px; font-size: 12px; line-height: 1.45; color: var(--mut); }
-  .lf-roles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .lf-roles-grid > div { display: grid; grid-template-columns: auto 1fr; column-gap: 9px; align-items: center; padding: 9px 11px; background: var(--field); border-radius: 12px; color: var(--o); }
-  .lf-roles-grid svg { grid-row: span 2; width: 18px; height: 18px; }
-  .lf-roles-grid b { font-size: 12.5px; color: var(--ink); }
-  .lf-roles-grid small { font-size: 11px; color: var(--mut); }
+  /* "Who uses it": four tiles of the same size — icon on the left, name and what they do on the right */
+  .lf-roles-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 8px; }
+  .lf-roles-grid > div {
+    display: grid; grid-template-columns: 18px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 10px; row-gap: 1px;
+    align-content: center; padding: 10px 12px; background: var(--field); border-radius: 10px; color: var(--o); min-width: 0;
+  }
+  .lf-roles-grid svg { grid-column: 1; grid-row: 1 / span 2; align-self: center; width: 18px; height: 18px; }
+  .lf-roles-grid b { grid-column: 2; font-size: 12.5px; line-height: 1.3; color: var(--ink); }
+  .lf-roles-grid small { grid-column: 2; font-size: 11px; line-height: 1.35; color: var(--mut); }
   .lf-info-cta { width: 100%; margin-top: 16px; }
-  @media (max-height: 900px) and (min-width: 901px) {
+  @media (max-height: 1000px) and (min-width: 901px) {
     .lf-info .lf-welcome-sub, .lf-now { display: none; }
-    .lf-info-h { margin-top: 12px; }
+    .lf-info .lf-welcome { font-size: 20px; margin-top: 10px; }
+    .lf-info-h { margin: 12px 0 7px; font-size: 12px; }
+    .lf-steps { gap: 8px; }
+    .lf-steps small { font-size: 11.5px; line-height: 1.4; }
+    .lf-roles-grid > div { padding: 8px 11px; }
+    .lf-info-cta { margin-top: 14px; }
   }
 
   /* ───── Motion ───── */

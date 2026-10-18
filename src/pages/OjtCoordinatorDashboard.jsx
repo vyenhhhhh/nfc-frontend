@@ -6,7 +6,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   Spinner, PageHeader, Badge, Table, Section, Msg, Avatar, Icon,
   InternMonitor, AnnouncementManager, todayManila, fmtTime, greeting,
-  PRE_REQUIREMENTS, POST_REQUIREMENTS, SCHEDULE, fmtMinutes,
+  PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, SCHEDULE, fmtMinutes, Modal, liveRefresh,
 } from "../components/DashKit.jsx";
 import NfcCards from "../components/NfcCards.jsx";
 import {
@@ -16,9 +16,9 @@ import { internCss, cardUnify } from "./InternDashboard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 
-const API = "http://localhost:8000/api";
+import { API, STORAGE } from "../config.js";
 const NAV = [
-  { path: "/coordinator",               label: "Dashboard",     icon: "home" },
+  { path: "/coordinator",               label: "Home",     icon: "home" },
   { path: "/coordinator/approvals",     label: "Approvals",     icon: "inbox" },
   { path: "/coordinator/interns",       label: "Interns",       icon: "users" },
   { path: "/coordinator/nfc",           label: "NFC Cards",     icon: "card" },
@@ -34,10 +34,11 @@ const GROUPS = {
     title: "Approvals",
     live: true,
     tabs: [
-      { key: "online",      label: "Online Attendance", icon: "inbox",  sub: "Review intern online attendance submissions." },
+      { key: "online",      label: "Online Attendance", icon: "inbox",  sub: "Remote workdays: the supervisor confirms first, then you give the final decision." },
       { key: "movs",        label: "MOV Submissions",   icon: "folder", sub: "Review intern-submitted documents (MOVs, forms, certificates)." },
-      { key: "overtime",    label: "Overtime",          icon: "clock",  sub: "Time after 5:00 PM only counts when you approve it." },
-      { key: "corrections", label: "Time Corrections",  icon: "pencil", sub: "Interns who forgot to tap out ask you to set their time out." },
+      { key: "overtime",    label: "Overtime",          icon: "clock",  sub: "Time after 5:00 PM: the supervisor approves first, then you give the final decision." },
+      { key: "corrections", label: "Time Corrections",  icon: "pencil", sub: "Forgotten tap-outs: the supervisor confirms the time first, then you decide." },
+      { key: "wfh",         label: "Work Arrangement",  icon: "globe",  sub: "WFH requests with the HTE's letter (or WFH stated in the MOA / Student Contract)." },
     ],
   },
   "/coordinator/interns": {
@@ -76,25 +77,26 @@ export default function OjtCoordinatorDashboard() {
   const [movs, setMovs] = useState([]);
   const [overtime, setOvertime] = useState([]); // overtime after 5:00 PM (pending + reviewed)
   const [corrections, setCorrections] = useState([]); // forgotten time-outs sent by interns
+  const [wfhReqs, setWfhReqs] = useState([]);         // work-from-home requests
   const [records, setRecords] = useState([]);
   const [interns, setInterns] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchAll();
-    const iv = setInterval(() => { if (!document.hidden) fetchAll(); }, 15000);
-    return () => clearInterval(iv);
+    return liveRefresh(fetchAll);
   }, []);
 
   const fetchAll = async () => {
     try {
-      const [p, m, r, u, ot, tc] = await Promise.all([
+      const [p, m, r, u, ot, tc, wm] = await Promise.all([
         fetch(`${API}/supervisor/pending`).then((r) => r.json()),
         fetch(`${API}/coordinator/movs`).then((r) => r.json()),
         fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
         fetch(`${API}/admin/users`).then((r) => r.json()),
         fetch(`${API}/coordinator/overtime`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/coordinator/time-corrections`).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/coordinator/work-mode-requests`).then((r) => r.json()).catch(() => []),
       ]);
       if (Array.isArray(p)) setPending(p);
       if (Array.isArray(m)) setMovs([...m]);
@@ -102,6 +104,7 @@ export default function OjtCoordinatorDashboard() {
       if (Array.isArray(u)) setInterns(u.filter((x) => x.role === "intern"));
       if (Array.isArray(ot)) setOvertime(ot);
       if (Array.isArray(tc)) setCorrections(tc);
+      if (Array.isArray(wm)) setWfhReqs(wm);
     } catch (err) {
       console.error("Poll error:", err);
     } finally {
@@ -110,8 +113,12 @@ export default function OjtCoordinatorDashboard() {
   };
 
   const pendingMovs = movs.filter((m) => m.status === "pending").length;
-  const pendingOt = overtime.filter((o) => o.ot_status === "pending").length;
-  const pendingFix = corrections.filter((c) => c.status === "pending").length;
+  // what the coordinator can decide now: approved by the supervisor, or no supervisor assigned
+  const pendingOt = overtime.filter(otForMe).length;
+  const pendingFix = corrections.filter(fixForMe).length;
+  const onlineForMe = pending.filter(fixForMe);      // confirmed by the supervisor, or no supervisor
+  const onlineWaiting = pending.filter(fixWaiting);  // still with the supervisor
+  const pendingWfh = wfhReqs.filter((w) => w.status === "pending").length;
 
   // old address -> the new page + tab (keeps the "View all records" search, if any)
   useEffect(() => {
@@ -124,7 +131,7 @@ export default function OjtCoordinatorDashboard() {
   const asked = new URLSearchParams(search).get("tab");
   const tab = group ? (group.tabs.find((t) => t.key === asked) || group.tabs[0]) : null;
   const pickTab = (key) => navigate(`${path}?tab=${key}`, { replace: true });
-  const counts = { online: pending.length, movs: pendingMovs, overtime: pendingOt, corrections: pendingFix };
+  const counts = { online: onlineForMe.length, movs: pendingMovs, overtime: pendingOt, corrections: pendingFix, wfh: pendingWfh };
 
   return (
     <Shell navItems={NAV} user={user}>
@@ -138,7 +145,7 @@ export default function OjtCoordinatorDashboard() {
       <style>{coordCss}</style>
       {path === "/coordinator" && (
         <Home
-          user={user} pending={pending} pendingMovs={pendingMovs} pendingOt={pendingOt} pendingFix={pendingFix} records={records}
+          user={user} pending={onlineForMe} pendingMovs={pendingMovs} pendingWfh={pendingWfh} pendingOt={pendingOt} pendingFix={pendingFix} records={records}
           interns={interns} loading={loading} go={navigate}
         />
       )}
@@ -146,7 +153,8 @@ export default function OjtCoordinatorDashboard() {
       {group && (
         <GroupPage group={group} tab={tab} onPick={pickTab} counts={counts}>
           {/* Approvals */}
-          {tab.key === "online" && <Pending pending={pending} interns={interns} user={user} onRefresh={fetchAll} />}
+          {tab.key === "online" && <Pending pending={onlineForMe} waiting={onlineWaiting} interns={interns} user={user} onRefresh={fetchAll} />}
+          {tab.key === "wfh" && <WorkModeReview requests={wfhReqs} onRefresh={fetchAll} />}
           {tab.key === "movs" && <MovReview movs={movs} user={user} onRefresh={fetchAll} />}
           {tab.key === "overtime" && <OvertimeReview overtime={overtime} onRefresh={fetchAll} />}
           {tab.key === "corrections" && <CorrectionReview corrections={corrections} onRefresh={fetchAll} />}
@@ -201,7 +209,7 @@ function GroupPage({ group, tab, onPick, counts, children }) {
 }
 
 /* ───────────────────────── Dashboard ───────────────────────── */
-function Home({ user, pending, pendingMovs, pendingOt = 0, pendingFix = 0, records, interns, loading, go }) {
+function Home({ user, pending, pendingMovs, pendingOt = 0, pendingFix = 0, pendingWfh = 0, records, interns, loading, go }) {
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
   const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
@@ -209,7 +217,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingFix = 0, recor
   const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
   const checkedIn = inNow.length;
   const pct = interns.length ? (checkedIn / interns.length) * 100 : 0;
-  const toReview = pending.length + pendingMovs + pendingOt + pendingFix;
+  const toReview = pending.length + pendingMovs + pendingOt + pendingFix + pendingWfh;
   const first = user.name?.split(" ")[0] || "there";
   const dateLabel = new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" });
 
@@ -311,7 +319,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingFix = 0, recor
           {toReview === 0 ? (
             <div className="crd-empty">
               <strong>All caught up!</strong>
-              <p>No online attendance, MOVs, overtime or time corrections waiting.</p>
+              <p>No online attendance, MOVs, overtime, time corrections or WFH requests waiting.</p>
             </div>
           ) : (
             <div className="crd-rows">
@@ -327,13 +335,18 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingFix = 0, recor
               </button>
               <button className="crd-row" onClick={() => go("/coordinator/approvals?tab=overtime")}>
                 <span className="crd-row-ico blue"><Icon name="clock" size={17} /></span>
-                <span className="crd-row-text"><strong>Overtime</strong><small>Time after 5:00 PM to credit</small></span>
+                <span className="crd-row-text"><strong>Overtime</strong><small>Approved by the supervisor, your final say</small></span>
                 <span className="crd-row-n">{pendingOt}</span>
               </button>
               <button className="crd-row" onClick={() => go("/coordinator/approvals?tab=corrections")}>
                 <span className="crd-row-ico purple"><Icon name="pencil" size={17} /></span>
-                <span className="crd-row-text"><strong>Time corrections</strong><small>Forgotten tap-outs</small></span>
+                <span className="crd-row-text"><strong>Time corrections</strong><small>Forgotten tap-outs confirmed by the supervisor</small></span>
                 <span className="crd-row-n">{pendingFix}</span>
+              </button>
+              <button className="crd-row" onClick={() => go("/coordinator/approvals?tab=wfh")}>
+                <span className="crd-row-ico blue"><Icon name="globe" size={17} /></span>
+                <span className="crd-row-text"><strong>Work arrangement</strong><small>WFH requests with the HTE letter</small></span>
+                <span className="crd-row-n">{pendingWfh}</span>
               </button>
             </div>
           )}
@@ -412,7 +425,7 @@ function HistoryToolbar({ q, setQ, status, setStatus, count, children }) {
 // (/intern/my-online), which your API already has, so no backend change is needed.
 const HISTORY_URL = `${API}/supervisor/history`;
 
-function Pending({ pending, interns, user, onRefresh }) {
+function Pending({ pending, waiting = [], interns, user, onRefresh }) {
   const [tab, setTab] = useState("pending");
   const [remarks, setRemarks] = useState({});
   const [processing, setProcessing] = useState(null);
@@ -485,6 +498,7 @@ function Pending({ pending, interns, user, onRefresh }) {
       <PageHeader title="Online Attendance" sub="Review intern online attendance submissions." live />
       <Msg msg={msg} />
       <ReviewTabs tab={tab} setTab={setTab} pendingCount={pending.length} historyCount={history.length} />
+      {tab === "pending" && <WaitingList items={waiting} what={() => "online workday"} />}
 
       {tab === "pending" ? (
         pending.length === 0 ? (
@@ -509,6 +523,14 @@ function Pending({ pending, interns, user, onRefresh }) {
                     <Badge label={String(sub.date).slice(0, 10)} type="pending" />
                   </div>
                   <div className="rv-desc" title={sub.description}>{sub.description}</div>
+                  {sub.status === "endorsed" ? (
+                    <div className="rv-endorsed">
+                      <Icon name="check" size={13} /> {sub.endorser_name || "Supervisor"} confirmed this workday
+                      {sub.endorse_remarks ? ` · “${sub.endorse_remarks}”` : ""}
+                    </div>
+                  ) : (
+                    <div className="rv-endorsed none">No supervisor assigned — you decide directly.</div>
+                  )}
                 </div>
                 <div className="rv-actions">
                   <input
@@ -571,10 +593,15 @@ function MovReview({ movs, user, onRefresh }) {
 
   const reqLabel = (m) => {
     if (!m.requirement || m.requirement === "others") return "Others";
-    const hit = [...PRE_REQUIREMENTS, ...POST_REQUIREMENTS].find((r) => r.key === m.requirement);
+    const hit = [...PRE_REQUIREMENTS, ...DURING_REQUIREMENTS, ...POST_REQUIREMENTS].find((r) => r.key === m.requirement);
     return hit ? hit.label : m.requirement;
   };
-  const phaseOf = (m) => ((m.phase || "pre") === "post" ? "post" : "pre");
+  const phaseOf = (m) => (["pre", "during", "post"].includes(m.phase) ? m.phase : "pre");
+  const phaseBadge = (m) => {
+    const ph = phaseOf(m);
+    return <Badge label={ph === "post" ? "Post" : ph === "during" ? "During" : "Pre"} type={ph === "post" ? "online" : ph === "during" ? "pending" : "onsite"} />;
+  };
+  const [showDue, setShowDue] = useState(false);
   const phaseOk = (m) => fPhase === "all" || phaseOf(m) === fPhase;
 
   const pendingAll = movs.filter((m) => m.status === "pending");
@@ -605,7 +632,7 @@ function MovReview({ movs, user, onRefresh }) {
   };
 
   const fileLink = (m) => (
-    <a className="ix-link rv-file" href={`http://localhost:8000/storage/${m.file_path}`} target="_blank" rel="noopener noreferrer" title={m.original_name}>
+    <a className="ix-link rv-file" href={`${STORAGE}${m.file_path}`} target="_blank" rel="noopener noreferrer" title={m.original_name}>
       <Icon name="clip" size={13} /> {m.original_name}
     </a>
   );
@@ -614,6 +641,7 @@ function MovReview({ movs, user, onRefresh }) {
     <select className="ix-select" value={fPhase} onChange={(e) => setFPhase(e.target.value)} aria-label="Filter by phase">
       <option value="all">All phases</option>
       <option value="pre">Pre-internship</option>
+      <option value="during">During internship</option>
       <option value="post">Post-internship</option>
     </select>
   );
@@ -621,6 +649,13 @@ function MovReview({ movs, user, onRefresh }) {
   return (
     <>
       <PageHeader title="MOV Submissions" sub="Review intern-submitted documents (MOVs, forms, certificates)." live />
+      <div className="dl-bar">
+        <span><Icon name="calendar" size={16} /> Set due dates for the requirements and remind interns who haven't submitted.</span>
+        <button type="button" className="ix-b primary sm" onClick={() => setShowDue(true)}>
+          <Icon name="calendar" size={14} /> Due dates &amp; reminders
+        </button>
+      </div>
+      {showDue && <DeadlinesModal onClose={() => setShowDue(false)} />}
       <Msg msg={msg} />
       <ReviewTabs tab={tab} setTab={setTab} pendingCount={pendingAll.length} historyCount={historyAll.length} />
 
@@ -647,7 +682,7 @@ function MovReview({ movs, user, onRefresh }) {
                   <div className="rv-main">
                     <div className="rv-main-top">
                       <span className="rv-title" title={m.title}>{m.title}</span>
-                      <Badge label={phaseOf(m) === "post" ? "Post" : "Pre"} type={phaseOf(m) === "post" ? "online" : "onsite"} />
+                      {phaseBadge(m)}
                       <Badge label={reqLabel(m)} type="none" />
                     </div>
                     {fileLink(m)}
@@ -687,7 +722,7 @@ function MovReview({ movs, user, onRefresh }) {
                   <strong>{m.title}</strong>
                   <small>{reqLabel(m)}</small>
                 </div>,
-                <Badge label={phaseOf(m) === "post" ? "Post" : "Pre"} type={phaseOf(m) === "post" ? "online" : "onsite"} />,
+                phaseBadge(m),
                 fileLink(m),
                 <span className={`os-status ${m.status}`}>{cap(m.status)}</span>,
                 <span className="os-remarks">{m.remarks || "—"}</span>,
@@ -705,8 +740,35 @@ function MovReview({ movs, user, onRefresh }) {
 
 /* ───────────────────────── Overtime review ─────────────────────────
    Time after 5:00 PM counts only when approved. The coordinator can credit all or part of it.
-   A day never credits more than SCHEDULE.dailyCap hours, overtime included. */
+   Official hours give at most SCHEDULE.dailyCap hours a day; approved overtime is added on top. */
 const clock = (v) => (v ? new Date(v).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" }) : "—");
+
+/* Two steps: the intern's HTE supervisor reviews first ("endorsed" = approved by the supervisor),
+   then the coordinator decides. An intern with no supervisor assigned comes straight here. */
+const otForMe = (o) => o.ot_status === "endorsed" || (o.ot_status === "pending" && !o.supervisor_id);
+const otWaiting = (o) => o.ot_status === "pending" && !!o.supervisor_id;
+const fixForMe = (c) => c.status === "endorsed" || (c.status === "pending" && !c.supervisor_id);
+const fixWaiting = (c) => c.status === "pending" && !!c.supervisor_id;
+
+// "Waiting for the supervisor" list under a review page
+function WaitingList({ items, what }) {
+  if (!items.length) return null;
+  return (
+    <div className="ix-card rv-waiting">
+      <div className="rv-waiting-head">
+        <Icon name="clock" size={16} /> Waiting for the supervisor ({items.length})
+      </div>
+      <ul>
+        {items.map((x) => (
+          <li key={x.id}>
+            <strong>{x.intern_name}</strong> · {String(x.date).slice(0, 10)} · {what(x)}
+            <span> — {x.supervisor_name || "supervisor"}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function OvertimeReview({ overtime, onRefresh }) {
   const [tab, setTab] = useState("pending");
@@ -717,16 +779,19 @@ function OvertimeReview({ overtime, onRefresh }) {
   const [hStatus, setHStatus] = useState("all");
   const [q, setQ] = useState("");
 
-  const pendingList = overtime.filter((o) => o.ot_status === "pending");
-  const historyAll = overtime.filter((o) => o.ot_status !== "pending");
+  const pendingList = overtime.filter(otForMe);
+  const waitingList = overtime.filter(otWaiting);
+  const historyAll = overtime.filter((o) => o.ot_status === "approved" || o.ot_status === "rejected");
+  const capOf = (o) => (o.ot_status === "endorsed" && o.ot_endorsed_minutes ? o.ot_endorsed_minutes : o.ot_minutes);
   const historyList = historyAll
     .filter((o) => hStatus === "all" || o.ot_status === hStatus)
     .filter((o) => (o.intern_name || "").toLowerCase().includes(q.trim().toLowerCase()));
 
   const review = async (o, status) => {
-    const credit = minutes[o.id] === undefined || minutes[o.id] === "" ? o.ot_minutes : Number(minutes[o.id]);
-    if (status === "approved" && (!credit || credit < 1 || credit > o.ot_minutes)) {
-      setMsg({ type: "error", text: `Credit between 1 and ${o.ot_minutes} minutes.` });
+    const cap = capOf(o);
+    const credit = minutes[o.id] === undefined || minutes[o.id] === "" ? cap : Number(minutes[o.id]);
+    if (status === "approved" && (!credit || credit < 1 || credit > cap)) {
+      setMsg({ type: "error", text: `Credit between 1 and ${cap} minutes.` });
       return;
     }
     setProcessing(o.id + status); setMsg(null);
@@ -753,12 +818,13 @@ function OvertimeReview({ overtime, onRefresh }) {
       <div className="ix-note" style={{ marginTop: 0, marginBottom: 16 }}>
         <Icon name="info" size={18} />
         <span>
-          A day credits at most <strong>{SCHEDULE.dailyCap} hours</strong>, overtime included. Approved overtime
-          mainly makes up for a late arrival or an early time-out on the same day.
+          Official hours give at most <strong>{SCHEDULE.dailyCap} hours</strong> a day. Any time after 5:00 PM shows
+          here, and only the minutes you approve are added on top of that day's hours.
         </span>
       </div>
       <Msg msg={msg} />
       <ReviewTabs tab={tab} setTab={setTab} pendingCount={pendingList.length} historyCount={historyAll.length} />
+      {tab === "pending" && <WaitingList items={waitingList} what={(o) => `${fmtMinutes(o.ot_minutes)} overtime`} />}
 
       {tab === "pending" ? (
         pendingList.length === 0 ? (
@@ -784,11 +850,19 @@ function OvertimeReview({ overtime, onRefresh }) {
                     <span className="rv-title">{fmtMinutes(o.ot_minutes)} overtime</span>
                   </div>
                   <div className="rv-desc">In {clock(o.checked_in_at)} · Out {clock(o.checked_out_at)}</div>
+                  {o.ot_status === "endorsed" ? (
+                    <div className="rv-endorsed">
+                      <Icon name="check" size={13} /> {o.endorser_name || "Supervisor"} approved {fmtMinutes(o.ot_endorsed_minutes)}
+                      {o.ot_endorse_remarks ? ` · “${o.ot_endorse_remarks}”` : ""}
+                    </div>
+                  ) : (
+                    <div className="rv-endorsed none">No supervisor assigned — you decide directly.</div>
+                  )}
                 </div>
                 <div className="rv-actions">
                   <input
-                    type="number" className="ix-input ot-min" min={1} max={o.ot_minutes}
-                    placeholder={`${o.ot_minutes} min`} aria-label="Minutes to credit"
+                    type="number" className="ix-input ot-min" min={1} max={capOf(o)}
+                    placeholder={`${capOf(o)} min`} aria-label="Minutes to credit"
                     value={minutes[o.id] ?? ""}
                     onChange={(e) => setMinutes((m) => ({ ...m, [o.id]: e.target.value }))}
                   />
@@ -848,8 +922,9 @@ function CorrectionReview({ corrections, onRefresh }) {
   const [hStatus, setHStatus] = useState("all");
   const [q, setQ] = useState("");
 
-  const pendingList = corrections.filter((c) => c.status === "pending");
-  const historyAll = corrections.filter((c) => c.status !== "pending");
+  const pendingList = corrections.filter(fixForMe);
+  const waitingList = corrections.filter(fixWaiting);
+  const historyAll = corrections.filter((c) => c.status === "approved" || c.status === "rejected");
   const historyList = historyAll
     .filter((c) => hStatus === "all" || c.status === hStatus)
     .filter((c) => (c.intern_name || "").toLowerCase().includes(q.trim().toLowerCase()));
@@ -878,6 +953,7 @@ function CorrectionReview({ corrections, onRefresh }) {
       <PageHeader title="Time Corrections" sub="Interns who forgot to tap out ask you to set their time out." live />
       <Msg msg={msg} />
       <ReviewTabs tab={tab} setTab={setTab} pendingCount={pendingList.length} historyCount={historyAll.length} />
+      {tab === "pending" && <WaitingList items={waitingList} what={(c) => `time out ${clock(c.requested_out)}`} />}
 
       {tab === "pending" ? (
         pendingList.length === 0 ? (
@@ -903,6 +979,14 @@ function CorrectionReview({ corrections, onRefresh }) {
                     <span className="rv-title">In {clock(c.checked_in_at)} → Out {clock(c.requested_out)}</span>
                   </div>
                   <div className="rv-desc" title={c.reason}>{c.reason}</div>
+                  {c.status === "endorsed" ? (
+                    <div className="rv-endorsed">
+                      <Icon name="check" size={13} /> {c.endorser_name || "Supervisor"} confirmed this time out
+                      {c.endorse_remarks ? ` · “${c.endorse_remarks}”` : ""}
+                    </div>
+                  ) : (
+                    <div className="rv-endorsed none">No supervisor assigned — you decide directly.</div>
+                  )}
                 </div>
                 <div className="rv-actions">
                   <input
@@ -949,6 +1033,188 @@ function CorrectionReview({ corrections, onRefresh }) {
   );
 }
 
+
+/* ───────────────────────── Requirement due dates + reminders ─────────────────────────
+   The coordinator sets a due date per requirement. Interns see "Due …" / "Overdue" on Submit MOV and get a
+   notice when a requirement is due within 3 days. "Remind" sends a notification to everyone who hasn't
+   submitted it (post-internship: only interns who already finished their hours). */
+function DeadlinesModal({ onClose }) {
+  const [dates, setDates] = useState({});      // "pre:moa" -> "2026-11-05"
+  const [missing, setMissing] = useState({});  // "pre:moa" -> 3
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const all = Object.entries(REQUIREMENTS_BY_PHASE).flatMap(([phase, list]) => list.map((r) => ({ ...r, phase, id: `${phase}:${r.key}` })));
+
+  const load = async () => {
+    try {
+      const [d, m] = await Promise.all([
+        fetch(`${API}/requirement-deadlines`, { headers: { Accept: "application/json" } }).then((r) => r.json()),
+        fetch(`${API}/coordinator/requirement-deadlines/missing?${all.map((r) => "keys[]=" + encodeURIComponent(r.id)).join("&")}`,
+          { headers: { Accept: "application/json" } }).then((r) => r.json()),
+      ]);
+      if (Array.isArray(d)) setDates(Object.fromEntries(d.map((x) => [`${x.phase}:${x.requirement}`, String(x.due_date).slice(0, 10)])));
+      if (m && typeof m === "object" && !Array.isArray(m)) setMissing(m);
+    } catch { setMsg({ type: "error", text: "Couldn't load the due dates." }); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  const call = async (method, url, body, key) => {
+    setBusy(key); setMsg(null);
+    try {
+      const res = await fetch(`${API}${url}`, {
+        method, headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "Something went wrong.");
+      setMsg({ type: "success", text: data.message });
+      return true;
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+      return false;
+    } finally { setBusy(null); }
+  };
+
+  const save = () => call("PUT", "/coordinator/requirement-deadlines", {
+    deadlines: all.map((r) => ({ requirement: r.key, phase: r.phase, due_date: dates[r.id] || null })),
+  }, "save");
+  const remind = (r) => call("POST", "/coordinator/requirement-deadlines/remind", { requirement: r.key, phase: r.phase, label: r.label }, r.id);
+
+  return (
+    <Modal wide title="Due dates & reminders" sub="Leave a date blank for no due date. Weekly reports remind interns with nothing sent in the last 7 days." onClose={onClose}>
+      <Msg msg={msg} />
+      {loading ? <Spinner /> : (
+        <div className="dl-list">
+          {["pre", "during", "post"].map((phase) => (
+            <div key={phase} className="dl-group">
+              <div className="dl-phase">{PHASE_LABEL[phase]}</div>
+              {all.filter((r) => r.phase === phase).map((r) => (
+                <div key={r.id} className="dl-row">
+                  <span className="dl-name">{r.label}</span>
+                  <input type="date" className="ix-input dl-date" value={dates[r.id] || ""}
+                    onChange={(e) => setDates((d) => ({ ...d, [r.id]: e.target.value }))} aria-label={`Due date of ${r.label}`} />
+                  <span className={missing[r.id] ? "dl-miss" : "dl-miss ok"}>
+                    {missing[r.id] === undefined ? "—" : missing[r.id] ? `${missing[r.id]} missing` : "All in"}
+                  </span>
+                  <button type="button" className="ix-b ghost sm" disabled={!!busy || !missing[r.id]} onClick={() => remind(r)}>
+                    {busy === r.id ? "..." : "Remind"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="dl-foot">
+        <button type="button" className="ix-b ghost" onClick={onClose}>Close</button>
+        <button type="button" className="ix-b primary" disabled={!!busy || loading} onClick={save}>{busy === "save" ? "Saving..." : "Save due dates"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ───────────────────────── Work arrangement (WFH) requests ─────────────────────────
+   WFH needs the HTE's letter, unless WFH is already stated in the MOA / Student Contract.
+   Approving changes the intern's work mode (online attendance opens for WFH interns). */
+function WorkModeReview({ requests, onRefresh }) {
+  const [tab, setTab] = useState("pending");
+  const [remarks, setRemarks] = useState({});
+  const [processing, setProcessing] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const pendingList = requests.filter((w) => w.status === "pending");
+  const historyList = requests.filter((w) => w.status !== "pending");
+  const modeLabel = (m) => (m === "offsite" ? "Work from home" : "Onsite");
+
+  const review = async (w, status) => {
+    setProcessing(w.id + status); setMsg(null);
+    try {
+      const res = await fetch(`${API}/coordinator/work-mode-requests/${w.id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ status, remarks: remarks[w.id] || "" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "Something went wrong.");
+      setMsg({ type: "success", text: data.message });
+      onRefresh();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  const proof = (w) => w.file_path
+    ? <a className="ix-link rv-file" href={`${STORAGE}${w.file_path}`} target="_blank" rel="noopener noreferrer"><Icon name="clip" size={13} /> {w.original_name || "HTE letter"}</a>
+    : w.in_moa ? <span className="rv-endorsed">WFH is stated in the MOA / Student Contract</span>
+    : <span className="rv-endorsed none">No letter (going back onsite)</span>;
+
+  return (
+    <>
+      <PageHeader title="Work Arrangement" sub="WFH requests." live />
+      <Msg msg={msg} />
+      <ReviewTabs tab={tab} setTab={setTab} pendingCount={pendingList.length} historyCount={historyList.length} />
+      {tab === "pending" ? (
+        pendingList.length === 0 ? (
+          <div className="ix-card ix-allgood">
+            <div className="ix-empty-icon"><Icon name="check" size={30} /></div>
+            <div className="ix-empty-title" style={{ fontSize: 17 }}>All caught up!</div>
+            <div className="ix-empty-sub">No work arrangement requests waiting.</div>
+          </div>
+        ) : (
+          <div className="rv-list">
+            {pendingList.map((w) => (
+              <div key={w.id} className="rv-card">
+                <div className="rv-who">
+                  <Avatar name={w.intern_name} photo={w.intern_photo} size={36} />
+                  <div>
+                    <strong>{w.intern_name}</strong>
+                    <span>{w.placement || w.intern_email}</span>
+                  </div>
+                </div>
+                <div className="rv-main">
+                  <div className="rv-main-top">
+                    <Badge label={`${modeLabel(w.current_mode)} → ${modeLabel(w.requested_mode)}`} type="pending" />
+                  </div>
+                  <div className="rv-desc" title={w.reason}>{w.reason}</div>
+                  {proof(w)}
+                </div>
+                <div className="rv-actions">
+                  <input type="text" className="ix-input" placeholder="Remarks (optional)"
+                    value={remarks[w.id] || ""} onChange={(e) => setRemarks((r) => ({ ...r, [w.id]: e.target.value }))} />
+                  <button className="ix-b danger" onClick={() => review(w, "rejected")} disabled={!!processing}>
+                    {processing === w.id + "rejected" ? "..." : "Reject"}
+                  </button>
+                  <button className="ix-b ok" onClick={() => review(w, "approved")} disabled={!!processing}>
+                    {processing === w.id + "approved" ? "..." : "Approve"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        <div className="ix-card flush">
+          <Table
+            headers={["Intern", "Request", "Proof", "Result", "Remarks", "Reviewed"]}
+            rows={historyList.map((w) => [
+              <div className="ix-actions"><Avatar name={w.intern_name} photo={w.intern_photo} size={30} /><strong>{w.intern_name}</strong></div>,
+              modeLabel(w.requested_mode),
+              proof(w),
+              <span className={`os-status ${w.status}`}>{cap(w.status)}</span>,
+              <span className="os-remarks">{w.remarks || "—"}</span>,
+              fmtDate(w.reviewed_at),
+            ])}
+            empty="No reviewed requests yet."
+          />
+        </div>
+      )}
+    </>
+  );
+}
 
 /* ───────────────────────── coordinator-only styles ─────────────────────────
    "Needs your review" card, compact review cards, print-card picker. Border / radius / shadow
@@ -1005,6 +1271,28 @@ const coordCss = `
 .rv-cell-text { display: flex; flex-direction: column; max-width: 260px; white-space: normal; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; }
 .rv-cell-text small { display: block; font-size: 11.5px; color: #94a3b8; }
+/* due dates & reminders */
+.dl-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 14px;
+  padding: 10px 14px; border-radius: 10px; background: #fff7ed; color: #9a3412; font-size: 13px; }
+.dl-bar > span { display: inline-flex; align-items: center; gap: 8px; }
+.dl-list { display: flex; flex-direction: column; gap: 14px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+.dl-phase { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #9a8c84; margin-bottom: 4px; }
+.dl-row { display: grid; grid-template-columns: minmax(0, 1fr) 160px 90px auto; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+.dl-name { font-size: 13px; color: #1f2937; }
+.dl-date { padding: 6px 8px !important; font-size: 12.5px !important; }
+.dl-miss { font-size: 12px; font-weight: 600; color: #b91c1c; text-align: right; }
+.dl-miss.ok { color: #15803d; }
+.dl-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+@media (max-width: 640px) { .dl-row { grid-template-columns: 1fr 1fr; } }
+
+/* supervisor's step on the coordinator's review cards */
+.rv-endorsed { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #047857; font-weight: 600; }
+.rv-endorsed.none { color: #94a3b8; font-weight: 500; }
+.rv-waiting { margin-bottom: 12px; padding: 12px 16px; }
+.rv-waiting-head { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #475569; margin-bottom: 6px; }
+.rv-waiting ul { margin: 0; padding-left: 18px; font-size: 12.5px; color: #475569; }
+.rv-waiting li span { color: #94a3b8; }
+
 /* tabs of the grouped pages (Approvals, Interns, Reports) */
 /* the tab row only scrolls sideways on small screens, and never shows a scrollbar */
 .ix-page .grp-tabs {

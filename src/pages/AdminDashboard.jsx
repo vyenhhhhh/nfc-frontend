@@ -1,23 +1,23 @@
 // AdminDashboard.jsx
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker,
   InternMonitor, AccountSecurity, UserDetails, UserForm, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
-  DTR_MODES, dtrModeOf,
+  DTR_MODES, dtrModeOf, liveRefresh,
 } from "../components/DashKit.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
-import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS } from "./InternDashboard.jsx";
+import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, CertifyBar, DTR_PICK_CSS } from "./InternDashboard.jsx";
 import { PrintCards } from "../components/NfcCards.jsx";
-const API = "http://localhost:8000/api";
-const STORAGE = "http://localhost:8000/storage/";
+import { API, STORAGE } from "../config.js";
 
 const NAV = [
-  { path: "/admin",          label: "Dashboard",  icon: "home" },
+  { path: "/admin",          label: "Home",  icon: "home" },
   { path: "/admin/interns",  label: "Interns",    icon: "users" },
-  { path: "/admin/reports",  label: "Reports",    icon: "chart" },
   { path: "/admin/accounts", label: "Accounts",   icon: "settings" },
+  { path: "/admin/reports",  label: "Reports",    icon: "chart" },
   { path: "/admin/calendar", label: "Calendar",   icon: "calendar" },
   { path: "/admin/profile",  label: "My Profile", icon: "user" },
 ];
@@ -60,7 +60,7 @@ const OLD_PATHS = {
 /* ───────── Page with tabs (one title, a row of tabs, then the open tab) ─────────
    The open tab's own title is hidden (the group title + the tab's description replace it);
    a button the tab had in its header (e.g. "Add New User") stays, on the right. */
-function GroupPage({ group, tab, onPick, children }) {
+export function GroupPage({ group, tab, onPick, children }) {
   return (
     <>
       <style>{grpCss}</style>
@@ -83,7 +83,7 @@ function GroupPage({ group, tab, onPick, children }) {
   );
 }
 
-const grpCss = `
+export const grpCss = `
 /* the tab row only scrolls sideways on small screens, and never shows a scrollbar */
 .ix-page .grp-tabs {
   display: flex; gap: 4px; margin: -4px 0 18px; box-shadow: inset 0 -1px 0 #ece4df;
@@ -104,6 +104,12 @@ const grpCss = `
 /* Manage Accounts: search, role filter and count on the left, "Add New User" on the right, one row */
 .ix-page .acc-role { min-width: 170px; }
 .ix-page .acc-add { margin-left: auto; }
+.ix-page .acc-who { display: flex; flex-direction: column; line-height: 1.25; }
+.ix-page .acc-who small { font-size: 11.5px; color: #94a3b8; font-weight: 500; }
+.ix-page .acc-open { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.ix-page .acc-open:hover strong { color: #e8582a; text-decoration: underline; }
+.ix-page .acc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.ix-page .acc-bar .acc-bar-r { margin-left: auto; display: flex; gap: 8px; }
 @media (max-width: 700px) { .ix-page .acc-add { margin-left: 0; width: 100%; justify-content: center; } }
 
 /* the tab's own title is replaced by the group title above the tabs */
@@ -124,8 +130,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchAll();
-    const iv = setInterval(() => { if (!document.hidden) fetchAll(); }, 15000);
-    return () => clearInterval(iv);
+    return liveRefresh(fetchAll);
   }, []);
 
   const fetchAll = async () => {
@@ -379,9 +384,29 @@ export const adminMatch = `
 /* ───────────────────────── Home Calendar ───────────────────────── */
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// hover card on the calendar (rendered on <body> so the card's edges never cut it off)
+const CAL_TIP_CSS = `
+  .cal-tip { position: fixed; z-index: 9999; transform: translate(-50%, -100%); width: max-content; max-width: 260px;
+    padding: 10px 12px 9px; background: #fff; border: 1px solid #f1e2d9; border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(15,23,42,.16); font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1f2937;
+    display: flex; flex-direction: column; gap: 3px; pointer-events: none; animation: cal-tip-in .12s ease-out; }
+  .cal-tip.below { transform: translate(-50%, 0); }
+  .cal-tip::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: #fff;
+    border-right: 1px solid #f1e2d9; border-bottom: 1px solid #f1e2d9; transform: translateX(-50%) rotate(45deg); }
+  .cal-tip.below::after { bottom: auto; top: -6px; transform: translateX(-50%) rotate(225deg); }
+  .cal-tip-type { align-self: flex-start; padding: 2px 8px; border-radius: 99px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+  .cal-tip-type.holiday { background: #dcfce7; color: #15803d; }
+  .cal-tip-type.nonwork { background: #fef3c7; color: #b45309; }
+  .cal-tip strong { font-size: 13.5px; font-weight: 700; line-height: 1.3; }
+  .cal-tip p { margin: 0; font-size: 12.5px; line-height: 1.45; color: #4b5563; white-space: pre-line; overflow-wrap: anywhere; }
+  .cal-tip small { margin-top: 2px; font-size: 11px; color: #9ca3af; }
+  @keyframes cal-tip-in { from { opacity: 0; } to { opacity: 1; } }
+`;
+
 export function HomeCalendar() {
   const [events, setEvents] = useState([]);
   const [viewDate, setViewDate] = useState(new Date());
+  const [tip, setTip] = useState(null); // { ev, x, y, below } — the hover card for a holiday / non-working day
 
   useEffect(() => {
     const load = () =>
@@ -390,8 +415,7 @@ export function HomeCalendar() {
         .then((data) => { if (Array.isArray(data)) setEvents(data); })
         .catch((err) => console.error("Calendar error:", err));
     load();
-    const iv = setInterval(load, 60000);
-    return () => clearInterval(iv);
+    return liveRefresh(load);
   }, []);
 
   const year = viewDate.getFullYear();
@@ -400,14 +424,15 @@ export function HomeCalendar() {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthName = viewDate.toLocaleString("en-US", { month: "long" });
 
-  const now = new Date();
+  // "today" in Philippine time, even on a computer set to another timezone
+  const todayKey = todayManila();
+  const [ty, tm, td] = todayKey.split("-").map(Number);
   const pad = (n) => String(n).padStart(2, "0");
-  const isToday = (d) => d === now.getDate() && month === now.getMonth() && year === now.getFullYear();
+  const isToday = (d) => d === td && month === tm - 1 && year === ty;
   const keyOf = (d) => `${year}-${pad(month + 1)}-${pad(d)}`;
   // slice(0, 10) so both "2026-10-15" and "2026-10-15T00:00:00Z" work
   const eventOf = (d) => events.find((e) => String(e.date).slice(0, 10) === keyOf(d));
 
-  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const upcoming = events
     .map((e) => ({ ...e, k: String(e.date).slice(0, 10) }))
     .filter((e) => e.k >= todayKey)
@@ -428,7 +453,7 @@ export function HomeCalendar() {
         </button>
       </div>
 
-      <button className="adm-cal-today" onClick={() => setViewDate(new Date())}>Jump to today</button>
+      <button className="adm-cal-today" onClick={() => setViewDate(new Date(ty, tm - 1, 1))}>Jump to today</button>
 
       <div className="adm-cal-grid">
         {DOW.map((d) => <div key={d} className="adm-cal-dow">{d}</div>)}
@@ -437,10 +462,20 @@ export function HomeCalendar() {
           const d = i + 1;
           const ev = eventOf(d);
           const cls = ["adm-cal-day", isToday(d) && "today", ev && "event"].filter(Boolean).join(" ");
+          // show the hover card above the day (or below it near the top of the screen)
+          const showTip = (e) => {
+            if (!ev) return;
+            const r = e.currentTarget.getBoundingClientRect();
+            const below = r.top < 150;
+            setTip({ ev, x: r.left + r.width / 2, y: below ? r.bottom + 8 : r.top - 8, below });
+          };
           return (
             <div
-              key={d} className={cls} title={ev ? ev.title : undefined}
-              aria-label={`${monthName} ${d}${ev ? ", " + ev.title : ""}`}
+              key={d} className={cls}
+              tabIndex={ev ? 0 : undefined}
+              onMouseEnter={showTip} onFocus={showTip}
+              onMouseLeave={() => setTip(null)} onBlur={() => setTip(null)}
+              aria-label={`${monthName} ${d}${ev ? ", " + ev.title + (ev.description ? ". " + ev.description : "") : ""}`}
             >
               {d}
               {ev && <i className="adm-cal-dot" />}
@@ -453,6 +488,25 @@ export function HomeCalendar() {
         <span><i className="dot orange" /> Today</span>
         <span><i className="dot amber" /> Holiday / Non-working</span>
       </div>
+      {tip && createPortal(
+        <div
+          className={tip.below ? "cal-tip below" : "cal-tip"}
+          style={{ left: Math.min(Math.max(tip.x, 140), window.innerWidth - 140), top: tip.y }}
+          role="tooltip"
+        >
+          <span className={tip.ev.type === "holiday" ? "cal-tip-type holiday" : "cal-tip-type nonwork"}>
+            {tip.ev.type === "holiday" ? "Holiday" : "Non-working day"}
+          </span>
+          <strong>{tip.ev.title}</strong>
+          {tip.ev.description && <p>{tip.ev.description}</p>}
+          <small>
+            {new Date(String(tip.ev.date).slice(0, 10) + "T00:00:00")
+              .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+          </small>
+          <style>{CAL_TIP_CSS}</style>
+        </div>,
+        document.body
+      )}
       {upcoming && (
         <div className="adm-cal-next">
           <Icon name="calendar" size={15} />
@@ -511,13 +565,15 @@ const BLANK_FORM = {
   email: "", password: "", date_of_birth: "", role: "intern",
   student_id: "", contact_number: "", address: "",
   placement: "", semester: "1st Semester", program: "BSIT - 4",
-  uid: "", work_mode: "onsite", tracking_type: "hours", dtr_mode: "two", photo: null,
+  uid: "", work_mode: "onsite", tracking_type: "hours", dtr_mode: "two", supervisor_id: "", photo: null,
   emergency_contact_name: "", emergency_contact_relation: "",
   emergency_contact_number: "", emergency_contact_address: "",
 };
 const ROLE_NAME = { intern: "Intern", supervisor: "Supervisor", admin: "Admin", ojt_coordinator: "OJT Coordinator" };
 
 function Accounts({ users, onRefresh }) {
+  // HTE supervisors the admin can assign to an intern
+  const supervisors = users.filter((u) => u.role === "supervisor").sort((a, b) => a.name.localeCompare(b.name));
   const [form, setForm] = useState(BLANK_FORM);
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(null);
@@ -577,7 +633,7 @@ function Accounts({ users, onRefresh }) {
     return () => URL.revokeObjectURL(url);
   }, [editPhoto]);
 
-  const openModal = () => { setMsg(null); setShowForm(true); };
+  const openModal = () => { setMsg(null); setViewUser(null); setEditUser(null); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const closeModal = () => {
     setShowForm(false);
     setForm(BLANK_FORM);
@@ -612,7 +668,7 @@ function Accounts({ users, onRefresh }) {
   };
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete user "${name}"? This cannot be undone.`)) return false;
     setDeleting(id);
     try {
       const res = await fetch(`${API}/admin/users/${id}`, { method: "DELETE" });
@@ -620,8 +676,10 @@ function Accounts({ users, onRefresh }) {
       if (!res.ok) throw new Error(data.message);
       setMsg({ type: "success", text: "User deleted." });
       onRefresh();
+      return true;
     } catch (err) {
       setMsg({ type: "error", text: err.message });
+      return false;
     } finally { setDeleting(null); }
   };
 
@@ -642,6 +700,7 @@ function Accounts({ users, onRefresh }) {
       work_mode: u.work_mode || "onsite",
       tracking_type: u.tracking_type || "hours",
       dtr_mode: dtrModeOf(u),
+      supervisor_id: u.supervisor_id ? String(u.supervisor_id) : "",
       uid: u.nfc_uid || "",
       date_of_birth: u.date_of_birth ? String(u.date_of_birth).slice(0, 10) : "",
       password: "",
@@ -654,8 +713,12 @@ function Accounts({ users, onRefresh }) {
     setEditMsg(null);
     setMsg(null);
     setEditUser(u);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  // Cancel / Save go back to the read-only profile (the user stays open)
   const closeEdit = () => { setEditUser(null); setEditPhoto(null); setEditMsg(null); };
+  const openView = (u) => { setMsg(null); closeEdit(); setViewUser(u); };
+  const backToList = () => { closeEdit(); setViewUser(null); setMsg(null); };
   const setEF = (k) => (e) => setEditForm((f) => ({ ...f, [k]: e.target.value }));
 
   const pickEditPhoto = (e) => {
@@ -741,9 +804,136 @@ function Accounts({ users, onRefresh }) {
 
   return (
     <>
-      <PageHeader title="Manage Accounts" sub="Add, view, edit or remove users from the system." />
+      <PageHeader title="Manage Accounts" sub="Click a user to see their profile, then Edit to change it." />
 
-      {!showForm && !editUser && !vu && <Msg msg={msg} />}
+      {!showForm && !editUser && <Msg msg={msg} />}
+
+      {showForm ? (
+        /* ───────── Add a user on the page (same layout as the profile / edit view) ───────── */
+        <>
+          <div className="acc-bar">
+            <button type="button" className="ix-b ghost sm" onClick={closeModal} disabled={adding}>
+              ‹ Back to all users
+            </button>
+          </div>
+          <div className="ix-card">
+            <Msg msg={msg} />
+            <form
+              onSubmit={handleAdd}
+              onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
+            >
+              <UserForm
+                mode="add"
+                f={form}
+                set={(k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }))}
+                isIntern={form.role === "intern"}
+                supervisors={supervisors}
+                header={<PhotoPicker file={form.photo} onChange={(file) => setForm((s) => ({ ...s, photo: file }))} />}
+                uidField={
+                  <>
+                    <div className="ix-row-gap">
+                      <input
+                        type="text"
+                        className={scanning ? "uf-input scanning" : "uf-input"}
+                        placeholder="Scan the card or type the UID"
+                        value={scanning ? "Waiting for card tap..." : form.uid}
+                        readOnly={scanning}
+                        onChange={(e) => setForm((s) => ({ ...s, uid: e.target.value }))}
+                      />
+                      <button
+                        type="button"
+                        className={scanning ? "ix-b ghost sm" : "ix-b primary sm"}
+                        onClick={(e) => { e.currentTarget.blur(); uidBuffer.current = ""; setScanning((s) => !s); }}
+                      >
+                        <Icon name="nfc" size={14} /> {scanning ? "Cancel" : "Scan"}
+                      </button>
+                    </div>
+                    {scanning && <small className="uf-hint">Keep this window focused, then tap the card on the reader.</small>}
+                    {form.uid && !scanning && (
+                      <small className="uf-hint">
+                        UID captured: <strong style={{ fontFamily: "monospace" }}>{form.uid}</strong>{" "}
+                        <button type="button" style={{ background: "none", border: 0, color: "#dc2626", cursor: "pointer", fontSize: 11 }}
+                          onClick={() => setForm((s) => ({ ...s, uid: "" }))}>clear</button>
+                      </small>
+                    )}
+                    {!form.uid && !scanning && <small className="uf-hint">Leave blank if there's no NFC card yet.</small>}
+                  </>
+                }
+                actions={
+                  <>
+                    <button type="button" className="ix-b ghost" onClick={closeModal}>Cancel</button>
+                    <button type="submit" className="ix-b primary" disabled={adding}>{adding ? "Adding..." : "Add User"}</button>
+                  </>
+                }
+              />
+            </form>
+          </div>
+        </>
+      ) : vu ? (
+        /* ───────── One user's profile on the page: read-only, Edit switches it to fields right here ───────── */
+        <>
+          <div className="acc-bar">
+            <button type="button" className="ix-b ghost sm" onClick={backToList} disabled={savingEdit}>
+              ‹ Back to all users
+            </button>
+            {!editUser && (
+              <div className="acc-bar-r">
+                <button type="button" className="ix-b primary sm" onClick={() => openEdit(vu)}>
+                  <Icon name="pencil" size={14} /> Edit
+                </button>
+                <button type="button" className="ix-b danger sm" disabled={deleting === vu.id}
+                  onClick={async () => { if (await handleDelete(vu.id, vu.name)) setViewUser(null); }}>
+                  <Icon name="trash" size={14} /> {deleting === vu.id ? "..." : "Delete"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {!editUser ? (
+            <div className="ix-card"><UserDetails u={vu} /></div>
+          ) : (
+            <div className="ix-card">
+              <Msg msg={editMsg} />
+              <form
+                onSubmit={saveEdit}
+                onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
+              >
+                <UserForm
+                  mode="edit"
+                  f={editForm}
+                  set={setEF}
+                  isIntern={editIsIntern}
+                  supervisors={supervisors}
+                  title={editUser.name}
+                  sub="Click the photo to change it."
+                  header={
+                    <label className="ix-photo-box" style={{ width: 84, height: 84, borderRadius: "50%" }}>
+                      <input type="file" accept="image/*" onChange={pickEditPhoto} />
+                      {editPreview
+                        ? <img src={editPreview} alt="New profile" />
+                        : <Avatar name={editUser.name} photo={editUser.photo} size={84} />}
+                      <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
+                    </label>
+                  }
+                  uidField={
+                    <>
+                      <input className="uf-input" type="text" placeholder="Type the UID" value={editForm.uid} onChange={setEF("uid")} />
+                      <small className="uf-hint">Clear this field to unlink the card.</small>
+                    </>
+                  }
+                  actions={
+                    <>
+                      <button type="button" className="ix-b ghost" onClick={closeEdit} disabled={savingEdit}>Cancel</button>
+                      <button type="submit" className="ix-b primary" disabled={savingEdit}>{savingEdit ? "Saving..." : "Save changes"}</button>
+                    </>
+                  }
+                />
+              </form>
+            </div>
+          )}
+        </>
+      ) : (
+      <>
 
       <div className="ix-toolbar">
         <div className="ix-search">
@@ -774,138 +964,25 @@ function Accounts({ users, onRefresh }) {
 
       <div className="ix-card flush">
         <Table
-          headers={["User", "Email", "Action"]}
+          headers={["User", "Role", "Email"]}
           rows={shownUsers.map((u) => [
-            <div className="ix-actions">
+            <button type="button" className="ix-actions acc-open" onClick={() => openView(u)} title="View profile">
               <Avatar name={u.name} photo={u.photo} size={36} />
-              <strong>{u.name}</strong>
-            </div>,
+              <span className="acc-who">
+                <strong>{u.name}</strong>
+                {u.student_id && <small>{u.student_id}</small>}
+              </span>
+            </button>,
+            ROLE_NAME[u.role] || u.role,
             u.email,
-            <div className="ix-actions">
-              <button className="ix-b ghost sm" onClick={() => { setMsg(null); setViewUser(u); }}>
-                <Icon name="eye" size={14} /> View
-              </button>
-              <button className="ix-b danger sm" onClick={() => handleDelete(u.id, u.name)} disabled={deleting === u.id}>
-                <Icon name="trash" size={14} /> {deleting === u.id ? "..." : "Delete"}
-              </button>
-            </div>,
           ])}
           empty={users.length ? "No users match your search." : "No users yet."}
         />
       </div>
-
-      {/* ───────── View user (read-only, Edit button beside the X) ───────── */}
-      {vu && !editUser && (
-        <Modal
-          wide
-          title="User profile"
-          sub={`${ROLE_NAME[vu.role] || vu.role} · ${vu.email}`}
-          onClose={() => setViewUser(null)}
-          actions={
-            <button type="button" className="ix-b ghost sm" onClick={() => { setViewUser(null); openEdit(vu); }}>
-              <Icon name="pencil" size={14} /> Edit
-            </button>
-          }
-        >
-          <UserDetails u={vu} />
-        </Modal>
+      </>
       )}
 
-      {/* ───────── Add user ───────── */}
-      {showForm && (
-        <Modal wide title="Add New User" sub="Fill in the details below." onClose={closeModal}>
-          <Msg msg={msg} />
-          <form
-            onSubmit={handleAdd}
-            onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
-          >
-            <UserForm
-              mode="add"
-              f={form}
-              set={(k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }))}
-              isIntern={form.role === "intern"}
-              header={<PhotoPicker file={form.photo} onChange={(file) => setForm((s) => ({ ...s, photo: file }))} />}
-              uidField={
-                <>
-                  <div className="ix-row-gap">
-                    <input
-                      type="text"
-                      className={scanning ? "uf-input scanning" : "uf-input"}
-                      placeholder="Scan the card or type the UID"
-                      value={scanning ? "Waiting for card tap..." : form.uid}
-                      readOnly={scanning}
-                      onChange={(e) => setForm((s) => ({ ...s, uid: e.target.value }))}
-                    />
-                    <button
-                      type="button"
-                      className={scanning ? "ix-b ghost sm" : "ix-b primary sm"}
-                      onClick={(e) => { e.currentTarget.blur(); uidBuffer.current = ""; setScanning((s) => !s); }}
-                    >
-                      <Icon name="nfc" size={14} /> {scanning ? "Cancel" : "Scan"}
-                    </button>
-                  </div>
-                  {scanning && <small className="uf-hint">Keep this window focused, then tap the card on the reader.</small>}
-                  {form.uid && !scanning && (
-                    <small className="uf-hint">
-                      UID captured: <strong style={{ fontFamily: "monospace" }}>{form.uid}</strong>{" "}
-                      <button type="button" style={{ background: "none", border: 0, color: "#dc2626", cursor: "pointer", fontSize: 11 }}
-                        onClick={() => setForm((s) => ({ ...s, uid: "" }))}>clear</button>
-                    </small>
-                  )}
-                  {!form.uid && !scanning && <small className="uf-hint">Leave blank if there's no NFC card yet.</small>}
-                </>
-              }
-              actions={
-                <>
-                  <button type="button" className="ix-b ghost" onClick={closeModal}>Cancel</button>
-                  <button type="submit" className="ix-b primary" disabled={adding}>{adding ? "Adding..." : "Add User"}</button>
-                </>
-              }
-            />
-          </form>
-        </Modal>
-      )}
 
-      {/* ───────── Edit user ───────── */}
-      {editUser && (
-        <Modal wide title="Edit User" sub={`${ROLE_NAME[editUser.role] || editUser.role} · ${editUser.email}`} onClose={closeEdit}>
-          <Msg msg={editMsg} />
-          <form
-            onSubmit={saveEdit}
-            onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
-          >
-            <UserForm
-              mode="edit"
-              f={editForm}
-              set={setEF}
-              isIntern={editIsIntern}
-              title={editUser.name}
-              sub="Click the photo to change it."
-              header={
-                <label className="ix-photo-box" style={{ width: 84, height: 84, borderRadius: "50%" }}>
-                  <input type="file" accept="image/*" onChange={pickEditPhoto} />
-                  {editPreview
-                    ? <img src={editPreview} alt="New profile" />
-                    : <Avatar name={editUser.name} photo={editUser.photo} size={84} />}
-                  <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
-                </label>
-              }
-              uidField={
-                <>
-                  <input className="uf-input" type="text" placeholder="Type the UID" value={editForm.uid} onChange={setEF("uid")} />
-                  <small className="uf-hint">Clear this field to unlink the card.</small>
-                </>
-              }
-              actions={
-                <>
-                  <button type="button" className="ix-b ghost" onClick={closeEdit} disabled={savingEdit}>Cancel</button>
-                  <button type="submit" className="ix-b primary" disabled={savingEdit}>{savingEdit ? "Saving..." : "Save changes"}</button>
-                </>
-              }
-            />
-          </form>
-        </Modal>
-      )}
     </>
   );
 }
@@ -1014,43 +1091,61 @@ function InternSearch({ interns, selected, onSelect }) {
 /* ───────────────────────── DTR ───────────────────────── */
 // Same CS Form 48 design as the intern's "My DTR", but with an intern picker.
 // The columns follow each intern's DTR type (2 taps or 4 taps).
-export function DTR({ interns, records }) {
+export function DTR({ interns, records, canCertify = false }) {
+  // Month and year start on the current month; intern and period start blank.
+  // Nothing is shown until an intern and a period are picked and "Display DTR" is clicked.
   const nowManila = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
   const [selectedId, setSelectedId] = useState("");
   const [year, setYear] = useState(nowManila.slice(0, 4));
   const [mon, setMon] = useState(nowManila.slice(5, 7));
-  const [period, setPeriod] = useState("full"); // "first" | "second" | "full"
+  const [period, setPeriod] = useState("");       // "" | "first" | "second" | "full"
+  const [shown, setShown] = useState(null);       // { id, year, mon, period } of the DTR on screen
+  const [err, setErr] = useState("");
 
-  const intern = interns.find((u) => u.id === parseInt(selectedId));
-  const month = `${year}-${mon}`;
-  const lastDay = new Date(Number(year), Number(mon), 0).getDate(); // days in that month
-  const PERIODS = [
-    { key: "first", label: "1–15", from: 1, to: 15 },
-    { key: "second", label: `16–${lastDay}`, from: 16, to: lastDay },
-    { key: "full", label: `1–${lastDay}`, from: 1, to: lastDay },
-  ];
-  const range = PERIODS.find((p) => p.key === period) || PERIODS[2];
   const MONTHS = Array.from({ length: 12 }, (_, i) => ({
     value: String(i + 1).padStart(2, "0"),
     label: new Date(2000, i, 1).toLocaleDateString("en-US", { month: "long" }),
   }));
   const years = [...new Set([nowManila.slice(0, 4), year, ...records.map((r) => String(r.date || "").slice(0, 4)).filter(Boolean)])]
     .sort((a, b) => b.localeCompare(a));
+  const periodsOf = (y, m) => {
+    const last = new Date(Number(y), Number(m), 0).getDate();   // days in that month
+    return [
+      { key: "first", label: "1–15", from: 1, to: 15 },
+      { key: "second", label: `16–${last}`, from: 16, to: last },
+      { key: "full", label: `Whole month (1–${last})`, from: 1, to: last },
+    ];
+  };
+  const picked = interns.find((u) => u.id === parseInt(selectedId));
 
-  const mode = dtrModeOf(intern);
-  const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } = intern
-    ? buildDtr({ records: records.filter((r) => r.user_id === intern.id), month, from: range.from, to: range.to, mode })
-    : { formRows: [], totalHrs: 0, daysPresent: 0, tardyMin: 0, undertimeMin: 0 };
-  const monthName = MONTHS.find((m) => m.value === mon)?.label || "";
-  const monthLabel = `${monthName} ${year}`;
-  const periodLabel = `${monthName} ${range.from} - ${range.to}, ${year}`;
-  const office = "Caraga State University - MAIN";
+  const display = () => {
+    if (!picked) { setErr("Choose an intern first."); return; }
+    if (!period) { setErr("Choose a period first."); return; }
+    setErr("");
+    setShown({ id: picked.id, year, mon, period });
+  };
 
-  const formHtml = intern
-    ? dtrFormHtml({ name: intern.name, office, periodLabel, officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin })
-    : "";
+  const holidays = useHolidays();
+
+  // everything below is for the DTR that was displayed (not the fields being changed)
+  const intern = shown ? interns.find((u) => u.id === shown.id) : null;
+  let view = null;
+  if (intern) {
+    const mode = dtrModeOf(intern);
+    const month = `${shown.year}-${shown.mon}`;
+    const range = periodsOf(shown.year, shown.mon).find((p) => p.key === shown.period);
+    const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } =
+      buildDtr({ records: records.filter((r) => r.user_id === intern.id), month, from: range.from, to: range.to, mode, holidays });
+    const monthName = MONTHS.find((m) => m.value === shown.mon)?.label || "";
+    const formHtml = dtrFormHtml({
+      name: intern.name, office: "Caraga State University - MAIN", periodLabel: `${monthName} ${range.from} - ${range.to}, ${shown.year}`,
+      officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin,
+    });
+    view = { mode, month, range, totalHrs, daysPresent, monthName, formHtml };
+  }
 
   const handlePrint = () => {
+    if (!view) return;
     const w = window.open("", "_blank");
     if (!w) return;
     w.document.write(`<html><head><title>DTR - ${esc(intern?.name)}</title><style>
@@ -1059,51 +1154,82 @@ export function DTR({ interns, records }) {
       .sheet { display: flex; gap: 10mm; align-items: flex-start; }
       .sheet .cs48 { flex: 1; }
       ${CS48_CSS}
-    </style></head><body><div class="sheet">${formHtml}${formHtml}</div></body></html>`);
+    </style></head><body><div class="sheet">${view.formHtml}${view.formHtml}</div></body></html>`);
     w.document.close(); w.print();
   };
 
   return (
     <>
       <style>{CS48_CSS}</style>
-      <PageHeader title="Generate DTR" sub="Daily Time Record for each intern. Search an intern and pick a month to view or print it." />
+      <style>{DTR_PICK_CSS}</style>
+      <PageHeader title="Generate DTR" sub="Choose an intern, the month, year and period, then click Display DTR." />
       <div className="ix-card">
-        <div className="req-head">
-          <div className="dtr-filters">
-            <InternSearch interns={interns} selected={intern} onSelect={setSelectedId} />
-            <select className="dtr-sel" value={mon} onChange={(e) => setMon(e.target.value)} aria-label="Month">
+        <div className="dtr-intern">
+          <InternSearch interns={interns} selected={picked} onSelect={(id) => { setSelectedId(id); setErr(""); }} />
+        </div>
+        <div className="dtr-pick">
+          <label className="fl-field">
+            <span className="fl-label">Month *</span>
+            <select value={mon} onChange={(e) => setMon(e.target.value)}>
               {MONTHS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
-            <select className="dtr-sel" value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year">
+          </label>
+          <label className="fl-field">
+            <span className="fl-label">Year *</span>
+            <select value={year} onChange={(e) => setYear(e.target.value)}>
               {years.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
-            <select className="dtr-sel" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period">
-              {PERIODS.map((p) => <option key={p.key} value={p.key}>Period: {p.label}</option>)}
+          </label>
+          <label className={period ? "fl-field" : "fl-field empty"}>
+            <span className="fl-label">Period *</span>
+            <select value={period} onChange={(e) => { setPeriod(e.target.value); setErr(""); }}>
+              <option value="" disabled hidden></option>
+              {periodsOf(year, mon).map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
-          </div>
-          <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!intern || !daysPresent}>
-            <Icon name="print" size={16} /> Print DTR
+          </label>
+          <button type="button" className="fl-btn" onClick={display}>
+            <Icon name="send" size={18} /> Display DTR
           </button>
         </div>
+        {err && <div className="fl-err">{err}</div>}
 
-        {intern ? (
+        {!view ? (
+          <div className="dtr-wait">
+            <span className="dtr-wait-ic"><Icon name="file" size={26} /></span>
+            <strong>No DTR displayed yet</strong>
+            <p>Search an intern, choose a period, then click <b>Display DTR</b>.</p>
+          </div>
+        ) : (
           <>
-            <div className="req-dtr-meta">
-              <span><strong>{intern.name}</strong></span>
-              <span><strong>{monthLabel}</strong> · {range.label}</span>
-              <span>{DTR_MODES[mode]}</span>
-              <span>{daysPresent} day{daysPresent === 1 ? "" : "s"} present</span>
-              <span>Total: <strong>{totalHrs}h</strong></span>
+            <div className="dtr-shown-head">
+              <div className="req-dtr-meta">
+                <span><strong>{intern.name}</strong></span>
+                <span><strong>{view.monthName} {shown.year}</strong> · {view.range.label}</span>
+                <span>{DTR_MODES[view.mode]}</span>
+                <span>{view.daysPresent} day{view.daysPresent === 1 ? "" : "s"} present</span>
+                <span>Total: <strong>{view.totalHrs}h</strong></span>
+              </div>
+              <button type="button" className="ix-b primary" onClick={handlePrint} disabled={!view.daysPresent}>
+                <Icon name="print" size={16} /> Print DTR
+              </button>
             </div>
+            <CertifyBar
+              key={`${intern.id}-${view.month}-${shown.period}`}
+              intern={intern}
+              from={`${view.month}-${String(view.range.from).padStart(2, "0")}`}
+              to={`${view.month}-${String(view.range.to).padStart(2, "0")}`}
+              canCertify={canCertify}
+              hasDays={view.daysPresent > 0}
+              currentHours={view.totalHrs}
+            />
             <div className="cs48-pair">
-              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: formHtml }} />
-              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: formHtml }} />
+              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
+              <div className="cs48-card" dangerouslySetInnerHTML={{ __html: view.formHtml }} />
             </div>
           </>
-        ) : (
-          <Empty icon="file" title="Nothing to preview yet" sub="Search an intern, then choose a month and period above to preview the DTR." />
         )}
       </div>
+      <style>{`.dtr-intern { margin-bottom: 12px; } .dtr-intern > * { max-width: 520px; }`}</style>
     </>
   );
 }
@@ -1316,8 +1442,10 @@ function Calendar() {
 
       <Msg msg={msg} />
 
+      {/* the form on the left, the list of events on the right — one row */}
+      <div className="side-split">
       <div className="ix-card adm-cal-form">
-        <h3>{editingId ? "Edit Calendar Event" : "Add Calendar Event"}</h3>
+        <h3 className="side-title">{editingId ? "Edit Calendar Event" : "Add Calendar Event"}</h3>
 
         <form onSubmit={handleSave} className="ix-form">
           <div className="ix-row-gap">
@@ -1362,10 +1490,13 @@ function Calendar() {
       </div>
 
       <div className="ix-card flush adm-cal-list">
-        <PageHeader
-          title="Calendar Events"
-          sub="Holidays and non-working days registered in the system."
-        />
+        <div className="side-head">
+          <div>
+            <h3>Calendar Events</h3>
+            <p>Holidays and non-working days registered in the system.</p>
+          </div>
+          <span className="ix-count">{events.length}</span>
+        </div>
 
         {loading ? (
           <Spinner />
@@ -1395,6 +1526,7 @@ function Calendar() {
           />
         )}
       </div>
+      </div>
     </>
   );
 }
@@ -1403,7 +1535,7 @@ function Calendar() {
 // Uses the .ix-profile styles from internCss, which this file already loads.
 export function AdminProfile({ user }) {
   const [acct, setAcct] = useState(null);
-  const [draft, setDraft] = useState({});
+  const [form, setForm] = useState({});
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState(null);
@@ -1415,9 +1547,9 @@ export function AdminProfile({ user }) {
       const res = await fetch(`${API}/me?user_id=${user.id}`);
       const d = await res.json();
       if (res.ok) setAcct(d?.user || d);
-      else setMsg({ type: "error", text: d.message || "Could not load your profile." });
+      else { setAcct({}); setMsg({ type: "error", text: d.message || "Could not load your profile." }); }
     } catch {
-      setMsg({ type: "error", text: "Couldn't reach the server." });
+      setAcct({}); setMsg({ type: "error", text: "Couldn't reach the server." });
     }
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
@@ -1431,19 +1563,27 @@ export function AdminProfile({ user }) {
   }, [photoFile]);
 
   const me = { ...user, ...(acct || {}) };
-  const parts = (me.name || "").trim().split(/\s+/);
-  const base = () => ({
-    first_name: me.first_name || parts[0] || "",
-    middle_name: me.middle_name || "",
-    last_name: me.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
-    contact_number: me.contact_number || "",
-    address: me.address || "",
-  });
-  const setField = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
-  const roleLabel = ROLE_NAME[me.role] || "Admin";
 
-  const startEdit = () => { setDraft(base()); setPhotoFile(null); setMsg(null); setEditing(true); };
+  // only the admin may edit profile details; coordinators and supervisors just view theirs
+  const canEdit = user?.role === "admin";
+  const startEdit = () => {
+    if (!canEdit) return;
+    const parts = (me.name || "").trim().split(/\s+/);
+    setForm({
+      first_name: me.first_name || parts[0] || "",
+      middle_name: me.middle_name || "",
+      last_name: me.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
+      email: me.email || "",
+      student_id: me.student_id || "",
+      contact_number: me.contact_number || "",
+      address: me.address || "",
+      date_of_birth: me.date_of_birth ? String(me.date_of_birth).slice(0, 10) : "",
+      password: "",
+    });
+    setPhotoFile(null); setMsg(null); setEditing(true);
+  };
   const cancelEdit = () => { setEditing(false); setPhotoFile(null); setMsg(null); };
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const pickPhoto = (e) => {
     const f = e.target.files?.[0];
@@ -1457,12 +1597,9 @@ export function AdminProfile({ user }) {
     setPhotoFile(f);
   };
 
-  const save = async () => {
-    const clean = Object.fromEntries(Object.entries(draft).map(([k, v]) => [k, String(v).trim()]));
-    if (!clean.first_name || !clean.last_name) {
-      setMsg({ type: "error", text: "First name and last name are required." });
-      return;
-    }
+  const save = async (e) => {
+    e.preventDefault();
+    const clean = Object.fromEntries(Object.entries(form).map(([k, v]) => [k, String(v).trim()]));
     setSaving(true); setMsg(null);
     try {
       // 1) the details
@@ -1487,7 +1624,7 @@ export function AdminProfile({ user }) {
         photo = pd.photo;
       }
 
-      // keep the signed-in session (sidebar name / photo) in step
+      // keep the signed-in session (navbar name / photo) in step
       try {
         const cur = JSON.parse(sessionStorage.getItem("user") || "{}");
         sessionStorage.setItem("user", JSON.stringify({ ...cur, name: data?.name || cur.name, photo }));
@@ -1497,7 +1634,7 @@ export function AdminProfile({ user }) {
       setEditing(false); setPhotoFile(null);
       setMsg({ type: "success", text: "Profile updated." });
       await load();
-      if (changed) setTimeout(() => window.location.reload(), 700); // refresh the sidebar name / photo
+      if (changed) setTimeout(() => window.location.reload(), 700); // refresh the navbar name / photo
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
     } finally {
@@ -1505,79 +1642,57 @@ export function AdminProfile({ user }) {
     }
   };
 
-  const rows = editing
-    ? [
-        { key: "first_name", label: "First name" },
-        { key: "middle_name", label: "Middle name" },
-        { key: "last_name", label: "Last name" },
-        { key: "contact_number", label: "Contact number", type: "tel" },
-        { key: "address", label: "Address" },
-        { label: "Email", view: me.email },
-        { label: "Role", view: roleLabel },
-      ]
-    : [
-        { label: "Email", view: me.email },
-        { label: "Contact number", view: me.contact_number },
-        { label: "Role", view: roleLabel },
-        { label: "Address", view: me.address },
-      ];
-
   return (
     <>
-      <PageHeader title="My Profile" sub="Your account information and security." />
-      <div className="ix-profile">
-        <div className="ix-card ix-profile-card">
-          {!editing && (
-            <div className="imp-tools">
-              <button type="button" className="ix-b ghost sm" onClick={startEdit}>
-                <Icon name="pencil" size={14} /> Edit
-              </button>
+      <PageHeader
+        title="My Profile"
+        sub={canEdit ? "Your account information and security." : "Your account information. Ask the admin if something needs to be changed."}
+      />
+      <Msg msg={msg} />
+      {!acct ? <Spinner /> : (
+        <div className="prof-stack">
+          {editing ? (
+            <div className="ix-card prof-main">
+              <form onSubmit={save} onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}>
+                <UserForm
+                  mode="edit"
+                  f={form}
+                  set={set}
+                  isIntern={false}
+                  supervisors={[]}
+                  title={me.name}
+                  sub="Click the photo to change it."
+                  header={
+                    <label className="ix-photo-box" style={{ width: 84, height: 84, borderRadius: "50%" }}>
+                      <input type="file" accept="image/*" onChange={pickPhoto} />
+                      {preview ? <img src={preview} alt="New profile" /> : <Avatar name={me.name} photo={me.photo} size={84} />}
+                      <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
+                    </label>
+                  }
+                  actions={
+                    <>
+                      <button type="button" className="ix-b ghost" onClick={cancelEdit} disabled={saving}>Cancel</button>
+                      <button type="submit" className="ix-b primary" disabled={saving}>{saving ? "Saving..." : "Save changes"}</button>
+                    </>
+                  }
+                />
+              </form>
+            </div>
+          ) : (
+            <div className="ix-card prof-main">
+              {canEdit && (
+                <div className="prof-tools">
+                  <button type="button" className="ix-b ghost sm" onClick={startEdit}>
+                    <Icon name="pencil" size={14} /> Edit
+                  </button>
+                </div>
+              )}
+              <UserDetails u={me} />
             </div>
           )}
-
-          <div className="ix-profile-avatar">
-            {editing ? (
-              <label className="ix-photo-box" style={{ width: 96, height: 96, borderRadius: "50%" }} title="Change photo">
-                <input type="file" accept="image/*" onChange={pickPhoto} />
-                {preview ? <img src={preview} alt="New profile" /> : <Avatar name={me.name} photo={me.photo} size={96} />}
-                <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
-              </label>
-            ) : (
-              <Avatar name={me.name} photo={me.photo} size={96} />
-            )}
-          </div>
-          <h2 className="ix-profile-name">{me.name}</h2>
-          {editing && <small className="uf-hint">Click the photo to change it.</small>}
-
-          <dl>
-            {rows.map((f) => (
-              <div key={f.label}>
-                <dt>{f.label}</dt>
-                <dd title={f.view ? String(f.view) : undefined}>
-                  {editing && f.key ? (
-                    <input
-                      className="imp-edit" type={f.type || "text"} value={draft[f.key] ?? ""}
-                      onChange={setField(f.key)} aria-label={f.label}
-                    />
-                  ) : (f.view || "—")}
-                </dd>
-              </div>
-            ))}
-          </dl>
-
-          {editing && (
-            <div className="imp-edit-bar">
-              <button type="button" className="ix-b ghost" disabled={saving} onClick={cancelEdit}>Cancel</button>
-              <button type="button" className="ix-b primary" disabled={saving} onClick={save}>{saving ? "Saving..." : "Save changes"}</button>
-            </div>
-          )}
-          {msg && <div style={{ marginTop: 14, textAlign: "left" }}><Msg msg={msg} /></div>}
+          <div className="prof-sec"><AccountSecurity user={user} /></div>
         </div>
-
-        <div className="ix-profile-sec">
-          <AccountSecurity user={user} />
-        </div>
-      </div>
+      )}
     </>
   );
 }
@@ -1585,7 +1700,7 @@ const cap = (s = "") => s.charAt(0).toUpperCase() + s.slice(1);
 
 /* ───────────────────────── admin styles ───────────────────────── */
 export const adminCss = `
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
+/* font: Poppins, loaded by DashKit (uiUnify) */
 
 /* ═════════ SHARED LOOK (all admin pages) ═════════ */
 .ix-main { background:
@@ -1655,9 +1770,11 @@ export const adminCss = `
 .ix-modal-wrap .ix-modal header h2 { font-family: 'Bricolage Grotesque', 'Segoe UI', sans-serif; }
 
 /* calendar management page */
-.adm-cal-form { margin-bottom: 20px; max-width: 640px; }
+.adm-cal-form { margin: 0; }
 .adm-cal-form h3 { margin: 0 0 14px; font-family: var(--display); font-size: 18px; font-weight: 800; letter-spacing: -0.3px; }
-.adm-cal-actions .ix-b { flex: 0 0 auto; min-width: 140px; }
+.adm-cal-actions .ix-b { flex: 1 1 auto; }
+.ix-content .adm-cal-list td:nth-child(4) { white-space: normal; min-width: 120px; max-width: 220px; overflow-wrap: anywhere; }
+.ix-content .adm-cal-list td:last-child .ix-actions { flex-wrap: nowrap; }
 .ix-content .adm-cal-list > .ix-ph { padding: 20px 22px 0; margin-bottom: 14px; }
 .ix-content .adm-cal-list > .ix-ph h1 { font-size: 19px; }
 
@@ -1768,7 +1885,8 @@ export const adminCss = `
 }
 .adm-cal-day:hover { background: #fff3ec; }
 .adm-cal-day.today { background: linear-gradient(135deg, #f2733a, #e04a1a); color: #fff; font-weight: 800; box-shadow: 0 10px 20px rgba(232,88,42,0.35); }
-.adm-cal-day.event { background: #fff4d6; color: #b45309; font-weight: 800; cursor: help; }
+.adm-cal-day.event { background: #fff4d6; color: #b45309; font-weight: 800; cursor: default; }
+.adm-cal-day.event:focus-visible { outline: 2px solid #e8582a; outline-offset: -2px; }
 .adm-cal-day.today.event { background: linear-gradient(135deg, #f2733a, #e04a1a); color: #fff; }
 .adm-cal-dot { position: absolute; bottom: 6px; width: 6px; height: 6px; border-radius: 50%; background: #f59e0b; }
 .adm-cal-day.today .adm-cal-dot { background: #fff; }
