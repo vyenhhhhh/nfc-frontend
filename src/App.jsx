@@ -1,11 +1,32 @@
 //App.jsx
 import { useState, useEffect, useRef } from "react";
-import schoolLogo from "./assets/logo.png";
+import schoolLogo from "./assets/logo.png";      // CCIS logo
+import csuLogo from "./assets/csu-logo.png";      // CSU seal
+import campus from "./assets/campus.jpg";        // same photo as the login page
 import { API, STORAGE } from "./config.js";
 
 const RESET_MS = 6000; // how long the result stays on screen
-// Secret that proves this screen is the real kiosk (same value as KIOSK_KEY in the Laravel .env)
-const KIOSK_KEY = import.meta.env.VITE_KIOSK_KEY || "";
+const MIN_READING_MS = 650; // the shortest time "Reading your card..." shows (smooth, no flash)
+// Secret that proves this screen is a real kiosk.
+// Each kiosk gets its own key from the admin (Accounts → Kiosks): opening the setup link
+// (…/?kiosk_key=XXXX) once saves it on this device. Without one, VITE_KIOSK_KEY from the .env is used
+// (the same value as KIOSK_KEY in the Laravel .env = the main CCIS kiosk).
+const KIOSK_STORE = "mytrack.kioskKey";
+const kioskKey = () => {
+  try {
+    const url = new URL(window.location.href);
+    const fromLink = url.searchParams.get("kiosk_key");
+    if (fromLink) {
+      localStorage.setItem(KIOSK_STORE, fromLink.trim());
+      url.searchParams.delete("kiosk_key");                          // don't leave the key in the address bar
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+    return localStorage.getItem(KIOSK_STORE) || import.meta.env.VITE_KIOSK_KEY || "";
+  } catch {
+    return import.meta.env.VITE_KIOSK_KEY || "";
+  }
+};
+const KIOSK_KEY = kioskKey();
 // The NFC reader "types" a whole UID in a few milliseconds. A person typing is much slower,
 // so a gap longer than this between keys means someone is typing by hand → ignore it.
 const MAX_KEY_GAP_MS = 60;
@@ -25,6 +46,31 @@ export default function App() {
   const lastKey = useRef(0);
   const busy = useRef(false);
   const resetTimer = useRef(null);
+
+  // this kiosk's name and who can tap here (set by the admin in Accounts → Kiosks)
+  const [kiosk, setKiosk] = useState(null);   // { name, who } | { error }
+  useEffect(() => {
+    const load = () => fetch(`${API}/kiosk/info`, { headers: { Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY } })
+      .then(async (r) => { const d = await r.json().catch(() => ({})); setKiosk(r.ok ? d : { error: KIOSK_KEY ? "This device is not a registered kiosk" : "Kiosk not set up yet" }); })
+      .catch(() => {});
+    load();
+    const iv = setInterval(load, 5 * 60 * 1000);   // picks up a new name from the admin
+    return () => clearInterval(iv);
+  }, []);
+
+  // full screen (like F11). The button loses focus right after the click, so the reader's "Enter"
+  // can't press it by accident.
+  const [isFull, setIsFull] = useState(false);
+  useEffect(() => {
+    const on = () => setIsFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", on);
+    return () => document.removeEventListener("fullscreenchange", on);
+  }, []);
+  const toggleFull = (e) => {
+    e.currentTarget.blur();
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+    else document.exitFullscreen?.();
+  };
 
   // clock
   useEffect(() => {
@@ -67,6 +113,9 @@ export default function App() {
     setWarning(null);
     setStatus(null);
     setPhotoBad(false);
+    // keep "Reading your card..." up for a moment so the screen doesn't flash when the server is fast
+    const t0 = performance.now();
+    const hold = () => new Promise((r) => setTimeout(r, Math.max(0, MIN_READING_MS - (performance.now() - t0))));
     try {
       const res = await fetch(`${API}/tap`, {
         method: "POST",
@@ -74,6 +123,7 @@ export default function App() {
         body: JSON.stringify({ uid }),
       });
       const data = await res.json().catch(() => ({}));
+      await hold();
       // nothing was recorded, just tell the intern why:
       //   DUPLICATE_TAP = tapped again within 5 minutes
       //   TAP_BLOCKED   = outside check-in hours, a weekend, or a holiday
@@ -82,6 +132,7 @@ export default function App() {
       setStatus(data);
       setLog((prev) => [data, ...prev].slice(0, 50));
     } catch (err) {
+      await hold();
       setError(err instanceof TypeError ? "Can't reach the server. Please tell the OJT coordinator." : err.message);
     } finally {
       setLoading(false);
@@ -96,153 +147,163 @@ export default function App() {
   const src = photoUrl(status?.photo);
 
   const dateLabel = time.toLocaleDateString("en-PH", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Manila" });
-  const clock = time.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Manila" });
+
+  const ampm = time.toLocaleTimeString("en-US", { hour: "numeric", timeZone: "Asia/Manila" }).slice(-2);
+  const hour12 = time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" }).replace(/\s?[AP]M$/, "");
+  const mode = loading ? "reading" : status ? (isIn ? "in" : "out") : warning ? "warn" : error ? "err" : "idle";
+  const first = (n) => String(n || "?").trim().charAt(0).toUpperCase();
 
   return (
-    <div className="kx-page">
+    <div className="kq-page">
       <style>{css}</style>
+      <img className="kq-bg" src={campus} alt="" />
+      <div className="kq-shade" /><div className="kq-grain" />
 
-      <div className="kx-layout">
-        {/* ───────── LEFT: scanner ───────── */}
-        <section className="kx-main">
-          <header className="kx-head">
-            <img src={schoolLogo} alt="CSU logo" className="kx-logo" />
-            <div className="kx-brand">
-              <strong>Caraga State University</strong>
-              <span>College of Computing and Information Sciences</span>
+      <div className="kq-wrap">
+        {/* ───────── top bar: school · this kiosk · online ───────── */}
+        <header className="kq-top kq-glass">
+          <div className="kq-logos"><img src={csuLogo} alt="CSU" /><img src={schoolLogo} alt="CCIS" /></div>
+          <div className="kq-brand"><b>Caraga State University</b><small>College of Computing and Information Sciences · MYTRACK</small></div>
+          {kiosk?.error ? (
+            <div className="kq-where bad"><span>{kiosk.error}. Ask the admin for this kiosk's setup link.</span></div>
+          ) : kiosk ? (
+            <div className="kq-where">
+              <i><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z" /><circle cx="12" cy="9" r="2.5" /></svg></i>
+              <div><b>{kiosk.name}</b><small>{kiosk.who} can tap here</small></div>
             </div>
-            <div className="kx-live"><i /> Online</div>
-          </header>
+          ) : null}
+          <div className="kq-live">Online</div>
+          <button type="button" className="kq-full" onClick={toggleFull} title={isFull ? "Exit full screen (Esc)" : "Full screen (F11)"} aria-label={isFull ? "Exit full screen" : "Full screen"}>
+            {isFull ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+            )}
+          </button>
+        </header>
 
-          <div className="kx-clock">
-            <div className="kx-time">{clock}</div>
-            <div className="kx-date">{dateLabel}</div>
-          </div>
+        {/* ───────── left: clock, then the reader or the result ───────── */}
+        <section className="kq-left">
+          <div className="kq-clock">{hour12}<span>{ampm}</span></div>
+          <div className="kq-date">{dateLabel}</div>
 
-          <div className="kx-stage">
-            {/* idle / reading */}
-            {!status && !error && !warning && (
-              <div className={loading ? "kx-scan reading" : "kx-scan"}>
-                <div className="kx-ring">
-                  <span className="kx-wave w1" /><span className="kx-wave w2" /><span className="kx-wave w3" />
-                  <div className="kx-core">
-                    {loading ? (
-                      <div className="kx-spin" />
-                    ) : (
-                      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />
-                      </svg>
+          <div className="kq-stage">
+            {(mode === "idle" || mode === "reading") && (
+              <div className="kq-idle">
+                <div className={mode === "reading" ? "kq-scene reading" : "kq-scene"}>
+                  <span className="kq-ring r3" /><span className="kq-ring r2" /><span className="kq-ring r1" />
+                  <div className="kq-pad">
+                    {mode === "reading" ? <div className="kq-spin" /> : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" /></svg>
                     )}
+                    <span className="kq-led" />
                   </div>
                 </div>
-                <h1>{loading ? "Reading your card..." : "Tap your NFC card"}</h1>
-                <p>{loading ? "Please wait a moment." : "Hold your card on the reader to log your attendance."}</p>
+                <div className="kq-cta">
+                  {mode === "reading" ? (
+                    <><h1>Reading<br />your card...</h1><h2>Please keep it on the reader.</h2></>
+                  ) : (
+                    <>
+                      <h1>Tap your<br />NFC card.</h1>
+                      <h2>Check in when you arrive, check out when you leave.</h2>
+                      <p>Hold your ID card flat on the reader until you see your name.</p>
+                      <div className="kq-steps">
+                        <div className="kq-glass"><b><em>1</em>Arrive</b>Tap to check in</div>
+                        <div className="kq-glass"><b><em>2</em>Leave</b>Tap to check out</div>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* success */}
-            {status && !loading && (
-              <div className={isIn ? "kx-result in" : "kx-result out"} key={status.token}>
-                <div className="kx-photo">
-                  {src && !photoBad
-                    ? <img src={src} alt="" onError={() => setPhotoBad(true)} />
-                    : <span>{(status.name || "?").charAt(0).toUpperCase()}</span>}
-                  <i className="kx-tick">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
-                  </i>
+            {(mode === "in" || mode === "out") && (
+              <div className={`kq-result kq-glass ${mode}`} key={status.token}>
+                <div className="kq-photo">
+                  {src && !photoBad ? <img src={src} alt="" onError={() => setPhotoBad(true)} /> : <span>{first(status.name)}</span>}
+                  <i><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg></i>
                 </div>
-                <span className="kx-chip">{isIn ? "Checked in" : "Checked out"}</span>
-                <h2>{isIn ? "Welcome," : "Goodbye,"} <b>{status.name || "Intern"}</b></h2>
-                <div className="kx-when">
-                  <strong>{status.time}</strong>
-                  <span>{status.date}</span>
+                <div className="kq-res-text">
+                  <div className="kq-k">{isIn ? "Checked in" : "Checked out"}</div>
+                  <h1>{status.name || "Intern"}</h1>
+                  <p>{isIn ? "Welcome! Have a good day at work." : "Thank you, see you next time!"}</p>
+                  <div className="kq-meta">
+                    <span>{isIn ? "Time in" : "Time out"} <b>{status.time}</b></span>
+                    {status.date && <span>{status.date}</span>}
+                    {status.uid && <span>Card ····{String(status.uid).slice(-4)}</span>}
+                  </div>
+                  {status.note && <div className="kq-note">{status.note}</div>}
                 </div>
-                {status.note && <div className="kx-note">{status.note}</div>}
-                <small className="kx-uid">Card ····{String(status.uid || "").slice(-4)}</small>
-                <div className="kx-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
+                <div className="kq-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
               </div>
             )}
 
-            {/* duplicate tap warning */}
-            {warning && !loading && (
-              <div className="kx-result warn" key={"w" + warning.message}>
-                <div className="kx-photo warn">
-                  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+            {mode === "warn" && (
+              <div className="kq-result kq-glass warn" key={"w" + warning.message}>
+                <div className="kq-photo icon">
+                  <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
                 </div>
-                <span className="kx-chip">{warning.code === "TAP_BLOCKED" ? "Check-in closed" : "Already tapped"}</span>
-                {warning.name && <h2><b>{warning.name}</b></h2>}
-                <p className="kx-warn-text">{warning.message}</p>
-                <div className="kx-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
+                <div className="kq-res-text">
+                  <div className="kq-k">{warning.code === "TAP_BLOCKED" ? "Not recorded" : "Already tapped"}</div>
+                  {warning.name && <h1>{warning.name}</h1>}
+                  <p>{warning.message}</p>
+                </div>
+                <div className="kq-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
               </div>
             )}
 
-            {/* error */}
-            {error && !loading && (
-              <div className="kx-result err" key={error}>
-                <div className="kx-photo bad">
-                  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 2 20h20L12 3z" /><path d="M12 10v5M12 18h.01" /></svg>
+            {mode === "err" && (
+              <div className="kq-result kq-glass err" key={error}>
+                <div className="kq-photo icon">
+                  <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 2 20h20L12 3z" /><path d="M12 10v5M12 18h.01" /></svg>
                 </div>
-                <span className="kx-chip">Card not accepted</span>
-                <h2>{error}</h2>
-                <div className="kx-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
+                <div className="kq-res-text">
+                  <div className="kq-k">Card not accepted</div>
+                  <h1 className="small">{error}</h1>
+                  <p>If this keeps happening, tell your OJT coordinator or supervisor.</p>
+                </div>
+                <div className="kq-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
               </div>
             )}
           </div>
 
-          <footer className="kx-foot">
+          <footer className="kq-foot">
             <span>MYTRACK · CSU CCIS OJT</span>
             {/* only while developing (npm run dev); it never appears in the built site */}
             {import.meta.env.DEV && (
-              <button type="button" className="kx-test" onClick={() => handleTap(import.meta.env.VITE_TEST_UID || "1248158722")} disabled={loading}>
+              <button type="button" className="kq-test" onClick={(e) => { e.currentTarget.blur(); handleTap(import.meta.env.VITE_TEST_UID || "1248158722"); }} disabled={loading}>
                 Simulate tap (test)
               </button>
             )}
+            <span>Tapping for someone else is not allowed</span>
           </footer>
         </section>
 
-        {/* ───────── RIGHT: log ───────── */}
-        <aside className="kx-side">
-          <div className="kx-side-head">
-            <div>
-              <h3>Attendance log</h3>
-              <p>This kiosk, this session</p>
-            </div>
-            <span className="kx-count-pill">{log.length}</span>
+        {/* ───────── right: taps on this kiosk ───────── */}
+        <aside className="kq-side kq-glass">
+          <div className="kq-side-h">
+            <h3>Recent taps<small>On this kiosk since it was opened</small></h3>
+            {log.length > 0 && <button type="button" className="kq-clear" onClick={(e) => { e.currentTarget.blur(); setLog([]); }}>Clear</button>}
           </div>
-
-          <div className="kx-stats">
-            <div className="in"><strong>{ins}</strong><span>Checked in</span></div>
-            <div className="out"><strong>{outs}</strong><span>Checked out</span></div>
+          <div className="kq-nums">
+            <div className="in"><b>{ins}</b><small>Checked in</small></div>
+            <div className="out"><b>{outs}</b><small>Checked out</small></div>
           </div>
-
-          <div className="kx-list">
+          <div className="kq-list">
             {log.length === 0 ? (
-              <div className="kx-empty">
-                <div className="kx-empty-ic">
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></svg>
-                </div>
-                <strong>No taps yet</strong>
-                <span>Taps will appear here as interns arrive.</span>
+              <div className="kq-empty">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" /></svg>
+                <b>No taps yet</b><small>Taps show up here as interns arrive.</small>
               </div>
-            ) : (
-              log.map((e, i) => (
-                <div key={e.token + i} className="kx-row">
-                  <span className={e.action === "CHECK_IN" ? "kx-tag in" : "kx-tag out"}>
-                    {e.action === "CHECK_IN" ? "IN" : "OUT"}
-                  </span>
-                  <div className="kx-row-text">
-                    <strong>{e.name || e.uid}</strong>
-                    <small>{e.date}</small>
-                  </div>
-                  <time>{e.time}</time>
-                </div>
-              ))
-            )}
+            ) : log.map((e, i) => (
+              <div key={e.token + i} className="kq-row">
+                <span className="kq-av">{first(e.name)}</span>
+                <div className="kq-row-t"><b>{e.name || e.uid}</b><small>{e.date}</small></div>
+                <span className={e.action === "CHECK_IN" ? "kq-tag in" : "kq-tag out"}>{e.action === "CHECK_IN" ? "IN" : "OUT"}</span>
+                <time>{e.time}</time>
+              </div>
+            ))}
           </div>
-
-          {log.length > 0 && (
-            <button type="button" className="kx-clear" onClick={() => setLog([])}>Clear log</button>
-          )}
         </aside>
       </div>
     </div>
@@ -250,158 +311,172 @@ export default function App() {
 }
 
 const css = `
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap');
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+.kq-page { --o: #f2733a; --o2: #e8582a; --peach: #ffb48f;
+  position: fixed; inset: 0; overflow: hidden; background: #2a120a; color: #fff;
+  font-family: 'Poppins', 'Segoe UI', system-ui, sans-serif; }
+.kq-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 35%; }
+.kq-shade { position: absolute; inset: 0; pointer-events: none; background:
+  radial-gradient(circle at 62% 55%, rgba(242,115,58,.55), rgba(242,115,58,0) 38%),
+  linear-gradient(105deg, rgba(26,11,5,.92) 0%, rgba(26,11,5,.70) 45%, rgba(150,52,20,.48) 100%),
+  linear-gradient(0deg, rgba(26,11,5,.8) 0%, rgba(26,11,5,0) 45%); }
+.kq-grain { position: absolute; inset: 0; pointer-events: none; opacity: .14; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.6'/></svg>"); }
+.kq-glass { background: rgba(255,255,255,.12); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(255,255,255,.24); border-radius: 18px; box-shadow: 0 18px 40px rgba(0,0,0,.25); }
+.kq-wrap { position: relative; z-index: 2; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: auto minmax(0, 1fr);
+  gap: 24px 28px; padding: 24px 36px 26px; }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body, #root { height: 100%; }
-body { background: #ffede5; }
+/* top bar */
+.kq-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 18px; min-width: 0; }
+.kq-logos { display: flex; gap: 8px; flex: none; }
+.kq-logos img { width: 42px; height: 42px; object-fit: contain; background: #fff; border-radius: 12px; padding: 3px; }
+.kq-brand { min-width: 0; }
+.kq-brand b { display: block; font-size: 17px; font-weight: 800; letter-spacing: -.2px; white-space: nowrap; }
+.kq-brand small { font-size: 12px; color: rgba(255,255,255,.75); white-space: nowrap; }
+.kq-where { margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 7px 14px 7px 8px; border-radius: 14px;
+  background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.18); min-width: 0; }
+.kq-where i { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; background: linear-gradient(135deg, #f2864f, #e8582a); }
+.kq-where b { display: block; font-size: 13.5px; }
+.kq-where small { font-size: 11.5px; color: var(--peach); }
+.kq-where.bad { padding: 8px 14px; background: rgba(185,28,28,.35); border-color: rgba(252,165,165,.5); font-size: 12.5px; font-weight: 600; max-width: 420px; }
+.kq-live { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; padding: 7px 13px; border-radius: 99px;
+  background: rgba(34,197,94,.18); border: 1px solid rgba(134,239,172,.45); color: #bbf7d0; }
+.kq-brand + .kq-live { margin-left: auto; }
+.kq-full { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; cursor: pointer; color: #fff;
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.28); transition: background .15s; }
+.kq-full:hover { background: rgba(255,255,255,.24); }
+.kq-full:focus-visible { outline: 2px solid var(--peach); outline-offset: 2px; }   /* no kiosk name yet */
+.kq-live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 10px #4ade80; animation: kq-blink 1.6s ease-in-out infinite; }
 
-.kx-page {
-  --o: #e8582a; --o2: #f2733a; --ink: #1b1410; --mut: #8a7468;
-  --disp: 'Bricolage Grotesque', 'Figtree', sans-serif;
-  height: 100vh; min-height: 620px; padding: 20px; display: flex; align-items: center; justify-content: center;
-  font-family: 'Figtree', 'Segoe UI', sans-serif; color: var(--ink);
-  background:
-    radial-gradient(620px 420px at 92% -6%, rgba(242,115,58,.28), transparent 70%),
-    radial-gradient(560px 420px at -6% 106%, rgba(255,181,140,.5), transparent 70%),
-    #ffede5;
+/* left */
+.kq-left { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.kq-clock { font-size: clamp(64px, 7vw, 104px); font-weight: 800; letter-spacing: -3px; line-height: 1; text-shadow: 0 4px 30px rgba(0,0,0,.35); font-variant-numeric: tabular-nums; }
+.kq-clock span { font-size: .42em; letter-spacing: -1px; margin-left: 10px; color: var(--peach); }
+.kq-date { font-size: 18px; font-weight: 600; color: var(--peach); margin-top: 8px; }
+.kq-stage { flex: 1; display: flex; align-items: center; min-height: 0; padding: 10px 0; }
+.kq-idle { display: flex; align-items: center; gap: clamp(28px, 5vw, 64px); }
+.kq-scene { position: relative; width: 300px; height: 300px; flex: none; }
+/* no backdrop blur on the pad: the rings animate behind it and a blur would be redrawn every frame (that was the lag) */
+.kq-pad { position: absolute; left: 55px; top: 55px; width: 190px; height: 190px; border-radius: 52px; display: grid; place-items: center;
+  background: linear-gradient(150deg, rgba(255,214,196,.34), rgba(255,255,255,.10)); border: 1px solid rgba(255,255,255,.45);
+  box-shadow: 0 30px 60px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.5);
+  transition: transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s, border-color .35s; will-change: transform; }
+.kq-scene.reading .kq-pad { transform: scale(.95); border-color: var(--peach); box-shadow: 0 18px 40px rgba(0,0,0,.35), 0 0 0 6px rgba(255,180,143,.18), inset 0 1px 0 rgba(255,255,255,.5); }
+.kq-pad svg { transition: opacity .2s; }
+.kq-pad svg { width: 70px; height: 70px; }
+.kq-led { position: absolute; right: 20px; bottom: 20px; width: 11px; height: 11px; border-radius: 50%; background: var(--peach); box-shadow: 0 0 14px var(--peach); animation: kq-blink 2.4s ease-in-out infinite; }
+.kq-ring { position: absolute; border: 2px solid rgba(255,255,255,.55); will-change: transform, opacity; backface-visibility: hidden; }
+.kq-ring.r1 { left: 43px; top: 43px; width: 214px; height: 214px; border-radius: 62px; animation: kq-pulse 2.6s ease-out infinite; }
+.kq-ring.r2 { left: 28px; top: 28px; width: 244px; height: 244px; border-radius: 74px; animation: kq-pulse 2.6s ease-out .35s infinite; }
+.kq-ring.r3 { left: 12px; top: 12px; width: 276px; height: 276px; border-radius: 86px; animation: kq-pulse 2.6s ease-out .7s infinite; }
+.kq-scene.reading .kq-ring { border-color: var(--peach); transition: border-color .3s; }
+.kq-spin { width: 56px; height: 56px; border-radius: 50%; border: 5px solid rgba(255,255,255,.3); border-top-color: #fff; animation: kq-spin .8s linear infinite, kq-fade .2s ease-out; will-change: transform; }
+.kq-cta h1 { margin: 0; font-size: clamp(36px, 3.6vw, 52px); font-weight: 800; letter-spacing: -1px; line-height: 1.05; text-shadow: 0 2px 24px rgba(0,0,0,.35); }
+.kq-cta h2 { margin: 12px 0 0; font-size: 17px; font-weight: 600; color: var(--peach); }
+.kq-cta p { margin: 8px 0 0; font-size: 14px; color: rgba(255,255,255,.82); max-width: 380px; line-height: 1.6; }
+.kq-steps { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+.kq-steps > div { padding: 10px 14px; font-size: 12.5px; line-height: 1.35; border-radius: 14px; }
+.kq-steps b { display: block; font-size: 13.5px; }
+.kq-steps em { font-style: normal; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: var(--o2);
+  font-size: 11px; font-weight: 800; margin-right: 6px; }
+
+/* result card (after a tap) */
+/* the result card has no live blur (it would be redrawn while it slides in); a darker glass instead */
+.kq-result { position: relative; display: flex; align-items: center; gap: 30px; padding: 30px 34px 34px; max-width: 780px; width: 100%; overflow: hidden;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important; background: rgba(48,20,10,.62) !important;
+  animation: kq-pop .45s cubic-bezier(.16,1,.3,1) both; will-change: transform, opacity; }
+.kq-result .kq-photo { animation: kq-pop .5s cubic-bezier(.16,1,.3,1) .05s both; }
+.kq-result .kq-photo i { animation: kq-badge .45s cubic-bezier(.34,1.56,.64,1) .25s both; }
+.kq-result .kq-res-text > * { animation: kq-rise .4s cubic-bezier(.16,1,.3,1) both; }
+.kq-result .kq-res-text > :nth-child(2) { animation-delay: .06s; }
+.kq-result .kq-res-text > :nth-child(3) { animation-delay: .12s; }
+.kq-result .kq-res-text > :nth-child(n+4) { animation-delay: .18s; }
+.kq-photo { position: relative; width: 156px; height: 156px; flex: none; border-radius: 28px; display: grid; place-items: center;
+  font-size: 64px; font-weight: 800; background: linear-gradient(135deg, #f2864f, #c2410c); border: 3px solid rgba(255,255,255,.7); }
+.kq-photo img { width: 100%; height: 100%; object-fit: cover; border-radius: 25px; }
+.kq-photo i { position: absolute; right: -12px; bottom: -12px; width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center;
+  background: #22c55e; border: 4px solid #3a1a0e; }
+.kq-result.out .kq-photo i { background: var(--o2); }
+.kq-photo.icon { background: linear-gradient(135deg, #f59e0b, #b45309); }
+.kq-result.err .kq-photo.icon { background: linear-gradient(135deg, #ef4444, #991b1b); }
+.kq-res-text { min-width: 0; }
+.kq-k { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #86efac; }
+.kq-result.out .kq-k { color: var(--peach); }
+.kq-result.warn .kq-k { color: #fcd34d; }
+.kq-result.err .kq-k { color: #fca5a5; }
+.kq-res-text h1 { margin: 4px 0 0; font-size: clamp(30px, 3vw, 42px); font-weight: 800; letter-spacing: -.8px; line-height: 1.1; overflow-wrap: anywhere; }
+.kq-res-text h1.small { font-size: 26px; letter-spacing: -.3px; }
+.kq-res-text p { margin: 8px 0 0; font-size: 15px; line-height: 1.55; color: rgba(255,255,255,.88); }
+.kq-meta { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.kq-meta span { white-space: nowrap; font-size: 12.5px; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); }
+.kq-meta b { color: var(--peach); }
+.kq-note { margin-top: 12px; font-size: 13px; padding: 8px 12px; border-radius: 10px; background: rgba(0,0,0,.2); border-left: 3px solid var(--peach); }
+.kq-count { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.12); }
+.kq-count i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #f2864f, #ffb48f); animation: kq-shrink linear forwards; transform-origin: left; will-change: transform; }
+.kq-result.in .kq-count i { background: linear-gradient(90deg, #22c55e, #86efac); }
+
+.kq-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 11px; letter-spacing: .08em; font-weight: 600; color: rgba(255,255,255,.6); text-transform: uppercase; }
+.kq-test { font: inherit; text-transform: none; letter-spacing: 0; font-size: 12px; padding: 6px 12px; border-radius: 10px; cursor: pointer;
+  background: rgba(255,255,255,.14); color: #fff; border: 1px dashed rgba(255,255,255,.5); }
+
+/* right: recent taps */
+.kq-side { display: flex; flex-direction: column; gap: 14px; padding: 18px; min-height: 0; }
+.kq-side-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.kq-side h3 { margin: 0; font-size: 16px; font-weight: 700; }
+.kq-side h3 small { display: block; font-size: 11.5px; font-weight: 500; color: rgba(255,255,255,.7); }
+.kq-clear { font: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 8px; cursor: pointer; color: #fff;
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.22); }
+.kq-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.kq-nums div { padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.18); }
+.kq-nums b { display: block; font-size: 30px; font-weight: 800; line-height: 1; }
+.kq-nums small { font-size: 12px; color: rgba(255,255,255,.78); }
+.kq-nums .in b { color: #86efac; } .kq-nums .out b { color: var(--peach); }
+.kq-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.3) transparent; }
+.kq-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 12px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
+  animation: kq-rise .35s cubic-bezier(.16,1,.3,1) both; }
+.kq-av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; flex: none; background: linear-gradient(135deg, #f2864f, #e8582a); }
+.kq-row-t { min-width: 0; flex: 1; }
+.kq-row-t b { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kq-row-t small { font-size: 11px; color: rgba(255,255,255,.7); }
+.kq-tag { font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 99px; flex: none; }
+.kq-tag.in { background: rgba(34,197,94,.22); color: #bbf7d0; } .kq-tag.out { background: rgba(255,180,143,.22); color: #ffd5c0; }
+.kq-row time { font-size: 12px; font-weight: 700; flex: none; white-space: nowrap; }
+.kq-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px;
+  border: 1px dashed rgba(255,255,255,.25); border-radius: 14px; color: rgba(255,255,255,.8); padding: 20px; }
+.kq-empty svg { color: var(--peach); margin-bottom: 6px; }
+.kq-empty b { font-size: 14px; } .kq-empty small { font-size: 12px; color: rgba(255,255,255,.65); }
+
+@keyframes kq-blink { 50% { opacity: .35; } }
+@keyframes kq-pulse { 0% { opacity: 0; transform: scale(.92); } 25% { opacity: .65; } 100% { opacity: 0; transform: scale(1.1); } }
+@keyframes kq-spin { to { transform: rotate(360deg); } }
+@keyframes kq-in { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+@keyframes kq-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes kq-pop { from { opacity: 0; transform: translateY(14px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes kq-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes kq-badge { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: scale(1); } }
+@keyframes kq-fade { from { opacity: 0; } }
+
+/* smaller screens: the recent taps go under; phones (Android kiosk) show only the essentials */
+@media (max-width: 1100px) {
+  .kq-wrap { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); padding: 18px 20px; overflow-y: auto; }
+  .kq-side { min-height: 260px; }
+  .kq-brand small { display: none; }
 }
-.kx-layout { width: 100%; max-width: 1180px; height: 100%; max-height: 760px; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; }
-
-/* thin orange scrollbar, same as the dashboards */
-.kx-page * { scrollbar-width: thin; scrollbar-color: #e8582a #fdeee7; }
-.kx-page *::-webkit-scrollbar { width: 6px; height: 6px; }
-.kx-page *::-webkit-scrollbar-track { background: #fdeee7; border-radius: 99px; }
-.kx-page *::-webkit-scrollbar-thumb { background: #e8582a; border-radius: 99px; }
-.kx-page *::-webkit-scrollbar-thumb:hover { background: #d94a1c; }
-
-/* ───── main card ───── */
-.kx-main {
-  position: relative; overflow: hidden; display: flex; flex-direction: column; padding: 22px 28px 18px;
-  background: #fff; border-radius: 24px; box-shadow: 0 18px 44px rgba(150,52,20,.14), 0 1px 2px rgba(27,20,16,.04);
+@media (max-width: 700px) {
+  .kq-top { flex-wrap: wrap; }
+  .kq-where { margin-left: 0; order: 3; width: 100%; }
+  .kq-idle { flex-direction: column; text-align: center; gap: 10px; }
+  .kq-scene { transform: scale(.8); margin: -30px 0; }
+  .kq-steps { justify-content: center; }
+  .kq-result { flex-direction: column; text-align: center; padding: 24px 20px 28px; }
+  .kq-meta { justify-content: center; }
+  .kq-foot span:last-child { display: none; }
+  .kq-foot { margin-top: 14px; }
 }
-.kx-main::before {
-  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px;
-  background: linear-gradient(90deg, #f2733a, #ffb48f, #f59e0b, #f2733a);
-}
-.kx-head { display: flex; align-items: center; gap: 14px; }
-.kx-logo { width: 58px; height: 58px; object-fit: contain; flex-shrink: 0; }
-.kx-brand { display: flex; flex-direction: column; min-width: 0; padding-left: 14px; border-left: 1px solid #f1e2d9; }
-.kx-brand strong { font-family: var(--disp); font-size: 22px; font-weight: 800; letter-spacing: -.4px; line-height: 1.1; }
-.kx-brand span { font-size: 12.5px; color: var(--mut); margin-top: 3px; }
-.kx-live { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; padding: 5px 13px; border-radius: 99px; background: #ecfdf3; color: #15803d; font-size: 12px; font-weight: 700; }
-.kx-live i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: kx-blink 1.6s ease-in-out infinite; }
-
-.kx-clock { text-align: center; margin-top: 14px; }
-.kx-time { font-family: var(--disp); font-size: 54px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; font-variant-numeric: tabular-nums; color: var(--o); }
-.kx-date { font-size: 14px; font-weight: 600; color: var(--mut); margin-top: 6px; }
-
-.kx-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
-
-/* idle scanner */
-.kx-scan { text-align: center; display: flex; flex-direction: column; align-items: center; }
-.kx-scan h1 { font-family: var(--disp); font-size: 30px; font-weight: 800; letter-spacing: -.6px; margin-top: 26px; }
-.kx-scan p { font-size: 14.5px; color: var(--mut); margin-top: 6px; }
-.kx-ring { position: relative; width: 170px; height: 170px; display: flex; align-items: center; justify-content: center; }
-.kx-core {
-  position: relative; z-index: 2; width: 112px; height: 112px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  color: #fff; background: linear-gradient(135deg, #f2733a, #e04a1a); box-shadow: 0 16px 32px rgba(232,88,42,.38);
-}
-.kx-wave { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(232,88,42,.45); animation: kx-wave 2.8s ease-out infinite; }
-.kx-wave.w2 { animation-delay: .9s; }
-.kx-wave.w3 { animation-delay: 1.8s; }
-.kx-scan.reading .kx-wave { animation-duration: 1.2s; }
-.kx-spin { width: 40px; height: 40px; border-radius: 50%; border: 4px solid rgba(255,255,255,.35); border-top-color: #fff; animation: kx-spin .8s linear infinite; }
-
-/* result */
-.kx-result { position: relative; width: 100%; max-width: 440px; padding: 26px 24px 30px; text-align: center; border-radius: 22px; animation: kx-pop .35s cubic-bezier(.2,.8,.2,1); overflow: hidden; }
-.kx-result.in  { background: linear-gradient(160deg, #f0fdf4 0%, #dcfce7 100%); border: 1.5px solid #86efac; }
-.kx-result.out { background: linear-gradient(160deg, #fff7f1 0%, #ffe6d8 100%); border: 1.5px solid #f9b898; }
-.kx-result.err { background: linear-gradient(160deg, #fff5f5 0%, #fde2e2 100%); border: 1.5px solid #fca5a5; }
-.kx-result.warn { background: linear-gradient(160deg, #fffbeb 0%, #fef3c7 100%); border: 1.5px solid #fcd34d; }
-.kx-photo {
-  position: relative; width: 104px; height: 104px; margin: 0 auto 14px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; font-family: var(--disp); font-size: 44px; font-weight: 800; color: #fff;
-  background: linear-gradient(135deg, #f2864f, #e8582a); box-shadow: 0 12px 26px rgba(232,88,42,.3); border: 4px solid #fff;
-}
-.kx-photo img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
-.kx-photo.bad { background: #dc2626; box-shadow: 0 12px 26px rgba(220,38,38,.3); }
-.kx-photo.warn { background: #f59e0b; box-shadow: 0 12px 26px rgba(245,158,11,.3); }
-.kx-tick { position: absolute; right: -2px; bottom: -2px; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; border: 3px solid #fff; background: #16a34a; }
-.kx-result.out .kx-tick { background: #e8582a; }
-.kx-chip { display: inline-block; padding: 5px 16px; border-radius: 99px; font-size: 12.5px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: #fff; background: #16a34a; }
-.kx-result.out .kx-chip { background: #e8582a; }
-.kx-result.err .kx-chip { background: #dc2626; }
-.kx-result.warn .kx-chip { background: #d97706; }
-.kx-warn-text { margin-top: 10px; font-size: 15px; font-weight: 600; line-height: 1.45; color: #92400e; }
-.kx-note { display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,.75); font-size: 13px; font-weight: 600; color: #6b4a1f; }
-.kx-result h2 { font-family: var(--disp); font-size: 22px; font-weight: 600; margin-top: 12px; line-height: 1.25; overflow-wrap: anywhere; }
-.kx-result h2 b { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.6px; }
-.kx-result.err h2 { font-size: 17px; font-weight: 700; color: #b42318; }
-.kx-when { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
-.kx-when strong { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.kx-when span { font-size: 13px; color: #6b5a50; }
-.kx-uid { display: block; margin-top: 8px; font-size: 11.5px; color: #8a7468; font-family: ui-monospace, monospace; }
-.kx-count { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: rgba(0,0,0,.06); }
-.kx-count i { display: block; height: 100%; width: 100%; transform-origin: left; background: rgba(0,0,0,.22); animation-name: kx-shrink; animation-timing-function: linear; animation-fill-mode: forwards; }
-
-.kx-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 1px dashed #f1ddd1; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; color: var(--mut); }
-.kx-test { padding: 7px 14px; border-radius: 10px; border: 1.5px solid #f1e2d9; background: #fffaf7; color: #6b5a50; font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0; cursor: pointer; transition: all .15s; }
-.kx-test:hover:not(:disabled) { border-color: var(--o); color: var(--o); background: #fdeee7; }
-.kx-test:disabled { opacity: .55; cursor: default; }
-
-/* ───── log panel ───── */
-.kx-side { display: flex; flex-direction: column; min-height: 0; padding: 20px; background: #fff; border-radius: 24px; box-shadow: 0 18px 44px rgba(150,52,20,.14), 0 1px 2px rgba(27,20,16,.04); }
-.kx-side-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.kx-side-head h3 { font-family: var(--disp); font-size: 20px; font-weight: 800; letter-spacing: -.3px; }
-.kx-side-head p { font-size: 12px; color: var(--mut); margin-top: 2px; }
-.kx-count-pill { min-width: 34px; text-align: center; padding: 4px 12px; border-radius: 99px; background: #fdeee7; color: #c2410c; font-size: 13px; font-weight: 800; }
-.kx-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0 14px; }
-.kx-stats div { display: flex; flex-direction: column; padding: 10px 14px; border-radius: 14px; }
-.kx-stats .in { background: #e6f7ee; } .kx-stats .out { background: #fdeee7; }
-.kx-stats strong { font-family: var(--disp); font-size: 26px; font-weight: 800; line-height: 1.1; }
-.kx-stats .in strong { color: #15803d; } .kx-stats .out strong { color: #d94a1c; }
-.kx-stats span { font-size: 12px; font-weight: 600; color: #6b5a50; }
-
-.kx-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
-.kx-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: #fffaf6; border: 1px solid #f8eee8; animation: kx-slide .3s ease-out; flex-shrink: 0; }
-.kx-tag { flex-shrink: 0; min-width: 42px; text-align: center; padding: 4px 9px; border-radius: 99px; font-size: 11px; font-weight: 800; letter-spacing: .4px; }
-.kx-tag.in { background: #dcfce7; color: #15803d; } .kx-tag.out { background: #fde5d8; color: #d94a1c; }
-.kx-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.kx-row-text strong { font-size: 13.5px; font-weight: 700; color: #3a2e28; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kx-row-text small { font-size: 11px; color: #9a8c84; }
-.kx-row time { flex-shrink: 0; font-size: 12px; font-weight: 600; color: #6b5a50; font-variant-numeric: tabular-nums; }
-.kx-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px; padding: 20px; border: 1.5px dashed #f2cdb9; border-radius: 16px; background: rgba(255,255,255,.7); }
-.kx-empty-ic { width: 54px; height: 54px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #fdeee7; color: var(--o); margin-bottom: 6px; }
-.kx-empty strong { font-size: 14.5px; color: #3a2e28; }
-.kx-empty span { font-size: 12.5px; color: #9a8c84; }
-.kx-clear { margin-top: 12px; padding: 9px; border-radius: 12px; border: 1.5px solid #f1e2d9; background: #fffaf7; color: #6b5a50; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; }
-.kx-clear:hover { border-color: var(--o); color: var(--o); background: #fdeee7; }
-
-/* ───── motion ───── */
-@keyframes kx-spin { to { transform: rotate(360deg); } }
-@keyframes kx-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-@keyframes kx-wave { 0% { transform: scale(.7); opacity: .9; } 100% { transform: scale(1.5); opacity: 0; } }
-@keyframes kx-pop { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
-@keyframes kx-slide { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
-@keyframes kx-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) {
-  .kx-wave, .kx-live i, .kx-result, .kx-row, .kx-spin { animation: none !important; }
-  .kx-count i { animation-duration: 0s !important; }
-}
-
-/* ───── smaller screens ───── */
-@media (max-width: 960px) {
-  .kx-page { height: auto; min-height: 100vh; align-items: flex-start; }
-  .kx-layout { grid-template-columns: 1fr; max-height: none; height: auto; }
-  .kx-main { min-height: 560px; }
-  .kx-side { max-height: 420px; }
-}
-@media (max-width: 560px) {
-  .kx-page { padding: 12px; }
-  .kx-main { padding: 18px 16px 14px; }
-  .kx-brand strong { font-size: 17px; }
-  .kx-live { display: none; }
-  .kx-time { font-size: 42px; }
+  .kq-ring, .kq-led, .kq-live::before, .kq-result, .kq-result *, .kq-row { animation: none !important; }
+  .kq-count i { animation: kq-shrink linear forwards !important; }
 }
 `;

@@ -191,7 +191,7 @@ export default function LoginForm({ variant = "student" }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [panel, setPanel] = useState(null); // null | "about" | "faqs" | "forgot"
-  const [faqOpen, setFaqOpen] = useState(0);
+  const [faqOpen, setFaqOpen] = useState(-1);   // every question starts closed
   const [isFull, setIsFull] = useState(false);
   const [remember, setRemember] = useState(false);
   const [now, setNow] = useState(() => new Date());
@@ -267,6 +267,7 @@ export default function LoginForm({ variant = "student" }) {
   };
   const openPanel = (name) => {
     setMenuOpen(false);
+    setFaqOpen(-1);
     setPanel(name);
   };
   const toggleFullscreen = () => {
@@ -682,7 +683,7 @@ const css = `
     --o: #e8582a; --o2: #f2733a; --o-soft: #fdeee7; --o-glow: rgba(232,88,42,0.35);
     --ink: #1b1410; --mut: #6f625b; --line: #eadfd8; --field: #f6f2ef;
     --display: 'Poppins', 'Segoe UI', sans-serif;
-    height: 100vh; min-height: 680px; display: flex; flex-direction: column; background: #fff; position: relative;
+    height: calc(100vh / var(--fit, 1)); min-height: 640px; display: flex; flex-direction: column; background: #fff; position: relative;
     font-family: 'Poppins', 'Segoe UI', sans-serif;
   }
 
@@ -763,6 +764,23 @@ const css = `
     padding: 14px 18px; border-top: 1px solid #eceef1; font-size: 10.5px; font-weight: 600;
     letter-spacing: .06em; color: #6b7280;
   }
+
+  /* ── same dark-orange sidebar as the dashboards ── */
+  .lf-strip { width: 76px; }
+  .lf-strip.open { width: 252px; }
+  .lf-side { width: 76px; padding: 14px 0 0; background: #9a3412; color: #ffe9de; box-shadow: none; }
+  .lf-side.open { width: 252px; box-shadow: 6px 0 20px rgba(0,0,0,.18); }
+  .lf-side-item { width: 100%; height: 40px; margin: 0; padding: 0 0 0 calc((76px - 18px) / 2); gap: 13px; border-radius: 0; color: #ffe9de; }
+  .lf-side.open .lf-side-item { padding-left: 24px; }
+  .lf-side-item:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .lf-side-item.active, .lf-side-item.active:hover { background: #7c2d12; color: #fff; box-shadow: inset 4px 0 0 #ffb48f; }
+  .lf-side-item.active::before { display: none; }
+  .lf-side-item.active .lf-side-icon { color: #ffd2bc; }
+  .lf-side-item:focus-visible { outline: 2px solid #ffd2bc; outline-offset: -2px; }
+  .lf-side-icon svg { stroke-width: 1.7; }
+  .lf-side-label { font-size: 13.5px; font-weight: 500; }
+  .lf-side-item.active .lf-side-label { font-weight: 600; }
+  .lf-side-foot { border-top: 1px solid rgba(255,255,255,.1); color: #f6c3a8; padding: 14px 22px; }
 
   .lf-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #f7f3f0; }
   .lf-split { flex: 1; display: flex; min-height: 0; }
@@ -964,8 +982,8 @@ const css = `
   .lf-switch { margin-top: 16px; text-align: center; font-size: 12.5px; line-height: 1.5; color: #a89b93; }
 
   /* ───── About / FAQ modal ───── */
-  .lf-modal-wrap { position: fixed; inset: 0; z-index: 100; background: rgba(27,20,16,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; animation: lf-fadein .2s; }
-  .lf-modal { position: relative; background: #fff; border-radius: 24px; max-width: 520px; width: 100%; max-height: 85vh; overflow: auto; padding: 32px 32px 28px; box-shadow: 0 30px 80px rgba(0,0,0,0.3); animation: lf-pop .25s ease-out; border-top: 5px solid var(--o); }
+  .lf-modal-wrap { position: fixed; inset: 0; z-index: 100; background: rgba(15,12,10,0.65); backdrop-filter: none; -webkit-backdrop-filter: none; display: flex; align-items: center; justify-content: center; padding: 20px; animation: lf-fadein .2s; }
+  .lf-modal { position: relative; background: #fff; border-radius: 6px; max-width: 520px; width: 100%; max-height: 85vh; overflow: auto; padding: 32px 32px 28px; box-shadow: 0 30px 80px rgba(0,0,0,0.3); animation: lf-pop .25s ease-out; border-top: 5px solid var(--o); }
   .lf-modal h3 { font-family: var(--display); font-size: 22px; font-weight: 800; letter-spacing: -0.3px; }
   .lf-modal-lead { color: var(--o); font-weight: 600; font-size: 14px; margin: 4px 0 14px; }
   .lf-modal p { font-size: 14px; line-height: 1.65; color: #5a4e47; margin-bottom: 10px; }
@@ -974,9 +992,10 @@ const css = `
   .lf-modal-x { position: absolute; top: 14px; right: 16px; width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--field); font-size: 20px; line-height: 1; cursor: pointer; color: #5a4e47; }
   .lf-modal-x:hover { background: var(--o-soft); color: var(--o); }
 
-  .lf-faq { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-  .lf-faq-item { border: 1px solid #efe6e0; border-radius: 14px; overflow: hidden; transition: border-color .2s, background .2s; }
-  .lf-faq-item.open { border-color: #f5b79f; background: #fffaf7; }
+  .lf-faq { display: flex; flex-direction: column; gap: 0; margin-top: 4px; }
+  .lf-faq-item { border: 0; border-bottom: 1px solid #f1ebe7; border-radius: 0; overflow: hidden; transition: background .2s; }
+  .lf-faq-item:last-child { border-bottom: 0; }
+  .lf-faq-item.open { background: #fffaf7; }
   .lf-faq-item button { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; background: none; border: none; cursor: pointer; text-align: left; font-size: 14px; font-weight: 600; color: var(--ink); }
   .lf-faq-plus { color: var(--o); font-size: 18px; transition: transform .2s; }
   .lf-faq-item.open .lf-faq-plus { transform: rotate(45deg); }

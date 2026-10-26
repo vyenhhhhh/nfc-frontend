@@ -3,18 +3,21 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
-  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker,
+  navWithTabs,
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker, Inbox,
   InternMonitor, AccountSecurity, UserDetails, UserForm, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
-  DTR_MODES, dtrModeOf, liveRefresh,
+  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard,
 } from "../components/DashKit.jsx";
+import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, CertifyBar, DTR_PICK_CSS } from "./InternDashboard.jsx";
-import { PrintCards } from "../components/NfcCards.jsx";
+import { CardRequests } from "../components/NfcCards.jsx";
+import { currentFit } from "../fit.js";
 import { API, STORAGE } from "../config.js";
 
 const NAV = [
-  { path: "/admin",          label: "Home",  icon: "home" },
+  { path: "/admin",          label: "Dashboard",  icon: "dashboard" },
   { path: "/admin/interns",  label: "Interns",    icon: "users" },
   { path: "/admin/accounts", label: "Accounts",   icon: "settings" },
   { path: "/admin/reports",  label: "Reports",    icon: "chart" },
@@ -37,7 +40,9 @@ const GROUPS = {
     title: "Accounts",
     tabs: [
       { key: "users", label: "Manage Accounts", icon: "settings", sub: "Add, view, edit or remove users from the system." },
-      { key: "cards", label: "Print ID Cards",  icon: "card",     sub: "Print the cards of interns whose NFC card request was approved." },
+      { key: "cards", label: "Card Requests",   icon: "card",     sub: "Approved ID cards: download the details for your printing app, then mark them as printed." },
+      { key: "kiosks", label: "Kiosks",         icon: "tap",      sub: "Each kiosk has its own key. An HTE kiosk only accepts the interns placed at that HTE." },
+      { key: "activity", label: "Activity Log", icon: "list",     sub: "Who did what, and when: sign-ins, approvals, edits and deletions." },
     ],
   },
   "/admin/reports": {
@@ -64,7 +69,7 @@ export function GroupPage({ group, tab, onPick, children }) {
   return (
     <>
       <style>{grpCss}</style>
-      <PageHeader title={group.title} sub={tab.sub} live={group.live} />
+      <PageHeader title={group.title} heading={tab.label} sub={tab.sub} live={group.live} tabs={(
       <div className="grp-tabs" role="tablist" aria-label={group.title}>
         {group.tabs.map((t) => (
           <button
@@ -78,6 +83,7 @@ export function GroupPage({ group, tab, onPick, children }) {
           </button>
         ))}
       </div>
+      )} />
       <div className="grp-body" role="tabpanel">{children}</div>
     </>
   );
@@ -113,6 +119,49 @@ export const grpCss = `
 @media (max-width: 700px) { .ix-page .acc-add { margin-left: 0; width: 100%; justify-content: center; } }
 
 /* the tab's own title is replaced by the group title above the tabs */
+/* Attendance Records */
+.ix-page .rec-date { height: 30px; padding: 0 10px; font-size: 12px; width: auto; }
+.ix-page .rec-taps { list-style: none; margin: 0; padding: 0; border: 1px solid #eceef1; border-radius: 12px; overflow: hidden; background: var(--ix-surface, #fff); }
+.ix-page .rec-head-who { display: flex; align-items: center; gap: 10px; }
+.ix-page .rec-taps li { display: grid; grid-template-columns: 34px minmax(0, 1fr) 72px 88px 84px; align-items: center; gap: 12px; padding: 9px 14px; }
+.ix-page .rec-taps li + li { border-top: 1px solid #f4f1ee; }
+.ix-page .rec-tap-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ix-page .rec-act { justify-self: start; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 6px; white-space: nowrap; }
+.ix-page .rec-act.in { background: #dcfce7; color: #15803d; }
+.ix-page .rec-act.out { background: #fff1ea; color: #c2410c; }
+.ix-page .rec-tap-time { text-align: right; font-size: 13px; white-space: nowrap; }
+@media (max-width: 640px) { .ix-page .rec-taps li { grid-template-columns: 30px minmax(0, 1fr) auto auto; } .ix-page .rec-taps li > .ix-badge { display: none; } }
+.ix-page .rec-count { margin-left: auto; font-size: 11.5px; color: #8a7a71; }
+.ix-page .rec-day { width: 34px; height: 34px; border-radius: 9px; background: #fff1ea; color: #c2410c; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+.ix-page .rec-day b { font-size: 13px; } .ix-page .rec-day small { font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.ix-page .rec-head { display: flex; align-items: baseline; gap: 10px; } .ix-page .rec-head b { font-size: 16px; } .ix-page .rec-head small { font-size: 12px; color: #8a7a71; }
+.ix-page .rec-scale, .ix-page .rec-rows li { display: grid; grid-template-columns: minmax(150px, 1.2fr) 150px minmax(160px, 2fr) 52px; gap: 12px; align-items: center; }
+.ix-page .rec-scale { font-size: 10px; color: #a99d96; font-weight: 600; margin-bottom: -6px; }
+.ix-page .rec-ticks { display: flex; justify-content: space-between; padding: 0 14px 0 0; }
+.ix-page .rec-ticks i { font-style: normal; }
+.ix-page .rec-scale { padding: 0 14px; }
+.ix-page .rec-rows { list-style: none; margin: 0; padding: 0; background: var(--ix-surface, #fff); border: 1px solid #eceef1; border-radius: 12px; overflow: hidden; }
+.ix-page .rec-rows li { padding: 8px 14px; border-bottom: 1px solid #f4f1ee; font-size: 12.5px; }
+.ix-page .rec-rows li:last-child { border-bottom: 0; }
+.ix-page .rec-rows li:hover { background: #fffaf7; }
+.ix-page .rec-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ix-page .rec-who strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.ix-page .rec-times { font-size: 12px; color: #334155; white-space: nowrap; }
+.ix-page .rec-in { font-style: normal; color: #15803d; font-weight: 600; }
+.ix-page .rec-line { position: relative; height: 10px; border-radius: 99px; background: repeating-linear-gradient(90deg, #f3ede9 0 calc(25% - 1px), #e9e2dd calc(25% - 1px) 25%); }
+.ix-page .rec-line i { position: absolute; top: 0; bottom: 0; border-radius: 99px; background: linear-gradient(90deg, #f2864f, #e8582a); }
+.ix-page .rec-line i.open { background: linear-gradient(90deg, #4ade80, #16a34a); }
+.ix-page .rec-h { text-align: right; font-size: 12.5px; }
+@media (max-width: 900px) {
+  .ix-page .rec-scale { display: none; }
+  .ix-page .rec-rows li { grid-template-columns: 1fr auto; }
+  .ix-page .rec-line { grid-column: 1 / -1; }
+  .ix-page .rec-count { margin-left: 0; width: 100%; }
+}
+
+.ix-page .rp-sum { grid-template-columns: repeat(4, 1fr); }
+.ix-page .rp-sum > :nth-child(1) { border-left: 0; }
+@media (max-width: 700px) { .ix-page .rp-sum { grid-template-columns: repeat(2, 1fr); } }
 .grp-body > .ix-ph { display: none; }
 /* ...but keep a button it had there (e.g. "Add New User"), on the right */
 .grp-body > .ix-ph:has(.ix-ph-right .ix-b) { display: flex; justify-content: flex-end; margin: 0 0 14px; }
@@ -164,7 +213,7 @@ export default function AdminDashboard() {
   const pickTab = (key) => navigate(`${path}?tab=${key}`, { replace: true });
 
   return (
-    <Shell navItems={NAV} user={user}>
+    <Shell navItems={navWithTabs(NAV, GROUPS)} user={user}>
       <style>{adminCss}</style>
       <style>{internCss}</style>
       <style>{formalLayout}</style>
@@ -186,6 +235,8 @@ export default function AdminDashboard() {
           {/* Accounts */}
           {tab.key === "users" && <Accounts users={users} onRefresh={fetchAll} />}
           {tab.key === "cards" && <PrintIdCards interns={interns} />}
+          {tab.key === "kiosks" && <Kiosks />}
+          {tab.key === "activity" && <ActivityLog />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} />}
           {tab.key === "summary" && <Reports interns={interns} records={records} />}
@@ -225,119 +276,64 @@ function Home({ user, records, interns, coordinators, loading }) {
   // one entry per person, in case someone has more than one open check-in
   const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
   const checkedIn = inNow.length;
-  const pct = interns.length ? (checkedIn / interns.length) * 100 : 0;
+  const seenToday = new Set(todayRecs.map((r) => r.user_id ?? r.name)).size;
   const first = user.name?.split(" ")[0] || "there";
   const dateLabel = new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" });
 
-  const stats = [
-    { icon: "users", tone: "orange", label: "Total interns", value: interns.length, hint: "registered" },
-    { icon: "user", tone: "blue", label: "OJT coordinators", value: coordinators.length, hint: "on the program" },
-    { icon: "tap", tone: "green", label: "Checked in today", value: checkedIn, hint: `of ${interns.length} interns` },
-    { icon: "list", tone: "purple", label: "Today's records", value: todayRecs.length, hint: "taps and logs" },
+  // ID cards waiting for the admin (same stages as Accounts → Card Requests)
+  const [cards, setCards] = useState(null);
+  useEffect(() => {
+    const load = () =>
+      fetch(`${API}/supervisor/nfc-requests`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json())
+        .then((list) => { if (Array.isArray(list)) setCards(list); })
+        .catch(() => {});
+    load();
+    return liveRefresh(load);
+  }, []);
+  const approved = (cards || []).filter((r) => r.status === "approved");
+  const stages = [
+    { key: "print", icon: "print", tone: "", title: "To print", sub: "Approved, download and print", n: approved.filter((r) => !r.printed_at).length },
+    { key: "link", icon: "nfc", tone: "blue", title: "To link", sub: "Printed, tap the card to link its UID", n: approved.filter((r) => r.printed_at && !r.uid).length },
+    { key: "claim", icon: "card", tone: "green", title: "Ready to claim", sub: "Linked, waiting for the intern", n: approved.filter((r) => r.printed_at && r.uid).length },
   ];
-
-  const quick = [
-    { icon: "users", label: "Monitor", to: "/admin/interns" },
-    { icon: "list", label: "Records", to: "/admin/interns?tab=records" },
-    { icon: "file", label: "DTR", to: "/admin/reports?tab=dtr" },
-  ];
+  const cardWork = stages.reduce((s, x) => s + x.n, 0);
 
   return (
-    <div className="adm-home">
-      {/* ───── LEFT ───── */}
-      <div className="adm-col">
-        {/* hero */}
-        <div className="hv-hero">
-          <span className="hv-blob a" aria-hidden="true" />
-          <span className="hv-blob b" aria-hidden="true" />
-
-          <div className="hv-hero-main">
-            <span className={`hv-pill ${checkedIn > 0 ? "live" : "idle"}`}>
-              <i aria-hidden="true" /> {checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody checked in yet"}
-            </span>
-            <h1>{greeting()}, {first}</h1>
-            <p>Here's what's happening across the OJT program today. {dateLabel}.</p>
-          </div>
-
-          <div className="hv-hero-side">
-            <div className="hv-quick">
-              {quick.map((q) => (
-                <button key={q.to} type="button" onClick={() => go(q.to)}>
-                  <Icon name={q.icon} size={14} /> {q.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* stats */}
-        <div className="hv-stats">
-          {stats.map((s) => (
-            <div key={s.label} className={`hv-stat ${s.tone}`}>
-              <span className="hv-stat-ic"><Icon name={s.icon} size={18} /></span>
-              <div className="hv-stat-body">
-                <small>{s.label}</small>
-                <strong>{s.value}</strong>
-                <em>{s.hint}</em>
-              </div>
-            </div>
+    <DashLayout
+      title={`${greeting()}, ${first}`}
+      sub={dateLabel}
+      status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody checked in yet", tone: checkedIn > 0 ? "live" : "" }}
+      actions={[
+        { icon: "list", label: "Records", run: () => go("/admin/interns?tab=records") },
+        { icon: "file", label: "DTR", run: () => go("/admin/reports?tab=dtr") },
+        { icon: "users", label: "Monitor", run: () => go("/admin/interns"), primary: true },
+      ]}
+      strip={[
+        { icon: "users", tone: "t-orange", label: "Total interns", value: interns.length, sub: "registered" },
+        { icon: "briefcase", tone: "t-purple", label: "OJT coordinators", value: coordinators.length, sub: "on the program" },
+        { icon: "tap", tone: "t-green", label: "On duty now", value: checkedIn, sub: `of ${interns.length} interns` },
+        { icon: "list", tone: "t-blue", label: "Today's records", value: todayRecs.length, sub: "taps and logs" },
+        { icon: "card", tone: "t-amber", label: "ID cards", value: cardWork, sub: "to print, link or release", onClick: () => go("/admin/accounts?tab=cards") },
+      ]}
+      left={(
+        <>
+        <Panel title="ID cards" count={cardWork} link="Card requests" onLink={() => go("/admin/accounts?tab=cards")}>
+          {stages.map((s) => (
+            <DashRow key={s.key} icon={s.icon} tone={s.tone} title={s.title} sub={s.sub}
+              tag={s.n > 0 ? String(s.n) : "None"} tagTone={s.n > 0 ? "orange" : ""} onClick={() => go("/admin/accounts?tab=cards")} />
           ))}
-        </div>
-
-        {/* live attendance */}
-        <div className="adm-live hv-recent">
-          <Section icon="clock" title="Today's Live Attendance" count={todayRecs.length} live>
-            {loading ? (
-              <Spinner />
-            ) : (
-              <Table
-                headers={["Intern", "Type", "Action", "Time"]}
-                rows={todayRecs.map((r) => [
-                  <div className="ix-actions">
-                    <Avatar name={r.name} photo={r.photo} size={32} />
-                    <strong>{r.name}</strong>
-                  </div>,
-                  <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
-                  <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-                  <span className="adm-time">{fmtTime(r.checked_in_at)}</span>,
-                ])}
-                empty="No activity today yet."
-              />
-            )}
-          </Section>
-        </div>
-      </div>
-
-      {/* ───── RIGHT: calendar + on duty ───── */}
-      <div className="adm-col">
-        <HomeCalendar />
-
-        <div className="ix-card adm-duty">
-          <div className="adm-duty-head">
-            <span className="adm-duty-icon"><Icon name="tap" size={18} /></span>
-            <h2>On duty now</h2>
-            <span className="ix-count">{checkedIn}</span>
-          </div>
-          {inNow.length === 0 ? (
-            <div className="adm-duty-empty">
-              <strong>Nobody is checked in.</strong>
-              <p>Interns who tap in will show up here.</p>
-            </div>
-          ) : (
-            <ul className="adm-duty-list">
-              {inNow.slice(0, 6).map((r) => (
-                <li key={r.user_id ?? r.name}>
-                  <Avatar name={r.name} photo={r.photo} size={34} status="on" />
-                  <span className="adm-duty-name">{r.name}</span>
-                  <span className="adm-duty-time">since {fmtTime(r.checked_in_at)}</span>
-                </li>
-              ))}
-              {inNow.length > 6 && <li className="adm-duty-more">+{inNow.length - 6} more</li>}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
+        </Panel>
+        {/* interns who need a follow-up */}
+        <NeedsAttention interns={interns} records={records} monitorPath="/admin/interns" />
+        </>
+      )}
+      right={<><HomeCalendar /><AnnouncementBoard limit={3} /></>}
+    >
+      <Panel title="Today's attendance" count={seenToday} link="Monitor" onLink={() => go("/admin/interns")} grow>
+        {loading ? <Spinner /> : <TodayPeople records={todayRecs} limit={10} />}
+      </Panel>
+    </DashLayout>
   );
 }
 
@@ -353,7 +349,7 @@ export const adminMatch = `
   border: var(--card-border) !important;
   border-radius: var(--card-radius) !important;
   box-shadow: var(--card-shadow) !important;
-  background: #fff;
+  background: var(--ix-surface, #fff);
 }
 .ix-content .ix-ic.selected {
   border: 0 !important;
@@ -387,11 +383,11 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // hover card on the calendar (rendered on <body> so the card's edges never cut it off)
 const CAL_TIP_CSS = `
   .cal-tip { position: fixed; z-index: 9999; transform: translate(-50%, -100%); width: max-content; max-width: 260px;
-    padding: 10px 12px 9px; background: #fff; border: 1px solid #f1e2d9; border-radius: 10px;
+    padding: 10px 12px 9px; background: var(--ix-surface, #fff); border: 1px solid #f1e2d9; border-radius: 10px;
     box-shadow: 0 12px 28px rgba(15,23,42,.16); font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1f2937;
     display: flex; flex-direction: column; gap: 3px; pointer-events: none; animation: cal-tip-in .12s ease-out; }
   .cal-tip.below { transform: translate(-50%, 0); }
-  .cal-tip::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: #fff;
+  .cal-tip::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: var(--ix-surface, #fff);
     border-right: 1px solid #f1e2d9; border-bottom: 1px solid #f1e2d9; transform: translateX(-50%) rotate(45deg); }
   .cal-tip.below::after { bottom: auto; top: -6px; transform: translateX(-50%) rotate(225deg); }
   .cal-tip-type { align-self: flex-start; padding: 2px 8px; border-radius: 99px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
@@ -465,9 +461,11 @@ export function HomeCalendar() {
           // show the hover card above the day (or below it near the top of the screen)
           const showTip = (e) => {
             if (!ev) return;
+            // the page may be zoomed by fit.js: screen positions are divided by it to get page positions
+            const z = currentFit();
             const r = e.currentTarget.getBoundingClientRect();
             const below = r.top < 150;
-            setTip({ ev, x: r.left + r.width / 2, y: below ? r.bottom + 8 : r.top - 8, below });
+            setTip({ ev, x: (r.left + r.width / 2) / z, y: (below ? r.bottom + 8 : r.top - 8) / z, below });
           };
           return (
             <div
@@ -491,7 +489,7 @@ export function HomeCalendar() {
       {tip && createPortal(
         <div
           className={tip.below ? "cal-tip below" : "cal-tip"}
-          style={{ left: Math.min(Math.max(tip.x, 140), window.innerWidth - 140), top: tip.y }}
+          style={{ left: Math.min(Math.max(tip.x, 140), window.innerWidth / currentFit() - 140), top: tip.y }}
           role="tooltip"
         >
           <span className={tip.ev.type === "holiday" ? "cal-tip-type holiday" : "cal-tip-type nonwork"}>
@@ -507,10 +505,15 @@ export function HomeCalendar() {
         </div>,
         document.body
       )}
-      {upcoming && (
+      {upcoming ? (
         <div className="adm-cal-next">
           <Icon name="calendar" size={15} />
           <span>Next break: <strong>{upcoming.title}</strong> on {upcomingLabel}</span>
+        </div>
+      ) : (
+        <div className="adm-cal-next none">
+          <Icon name="calendar" size={15} />
+          <span>No upcoming break yet.</span>
         </div>
       )}
     </div>
@@ -518,43 +521,89 @@ export function HomeCalendar() {
 }
 
 /* ───────────────────────── Records ───────────────────────── */
+/* Attendance Records: the days on the left, that day's taps on the right
+   (each row shows when the intern was in on a 7 AM – 7 PM line). */
 export function Records({ records, loading }) {
-  const { state } = useLocation();                       // "View all records" from Monitor Interns pre-fills the search
+  // One list of every tap: search an intern, filter by date or type.
+  // "View all records" on Monitor Interns opens this list already searched for that intern.
+  const location = useLocation();
+  const [search, setSearch] = useState("");
+  const [type, setType] = useState("all");               // all | onsite | online
   const [dateFilter, setDateFilter] = useState("");
-  const [search, setSearch] = useState(state?.search || "");
+  const [limit, setLimit] = useState(60);
+  useEffect(() => {
+    setSearch(location.state?.search || ""); setType("all"); setDateFilter(""); setLimit(60);
+    /* eslint-disable-next-line */
+  }, [location.key, location.state?.search]);
+
+  const sq = search.trim().toLowerCase();
   const filtered = records
     .filter((r) => !dateFilter || r.date === dateFilter)
-    .filter((r) => r.name?.toLowerCase().includes(search.toLowerCase()));
+    .filter((r) => type === "all" || (type === "online" ? r.uid === "ONLINE" : r.uid !== "ONLINE"))
+    .filter((r) => !sq || String(r.name || "").toLowerCase().includes(sq))
+    .sort((a, b) => String(b.checked_in_at || b.date).localeCompare(String(a.checked_in_at || a.date)));
+  const counts = {
+    all: records.length,
+    onsite: records.filter((r) => r.uid !== "ONLINE").length,
+    online: records.filter((r) => r.uid === "ONLINE").length,
+  };
+  const day = (d) => new Date(String(d).slice(0, 10) + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const hm = (v) => (v ? new Date(v).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }) : "—");
+  const hrs = (r) => {
+    if (!r.checked_in_at || !r.checked_out_at) return "—";
+    const h = (new Date(r.checked_out_at) - new Date(r.checked_in_at)) / 3600000;
+    return h > 0 ? `${Math.round(h * 100) / 100}h` : "—";
+  };
 
   return (
     <>
-      <PageHeader title="All Attendance Records" sub="Complete system-wide attendance log." live />
-      <div className="ix-toolbar">
-        <div className="ix-search">
-          <Icon name="search" size={16} />
-          <input type="text" placeholder="Search intern..." value={search} onChange={(e) => setSearch(e.target.value)} />
+      <PageHeader title="Attendance Records" sub="Complete attendance log: every time in and time out." live />
+      <div className="mon-bar">
+        <div className="ix-search mon-search">
+          <Icon name="search" size={15} />
+          <input type="text" placeholder="Search intern..." value={search} onChange={(e) => { setSearch(e.target.value); setLimit(60); }} />
         </div>
-        <input type="date" className="ix-input" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
-        {dateFilter && <button className="ix-b ghost" onClick={() => setDateFilter("")}>Clear date</button>}
-        <span className="ix-chip">{filtered.length} records</span>
+        {[["all", "All"], ["onsite", "Onsite"], ["online", "Online"]].map(([k, l]) => (
+          <button key={k} type="button" className={type === k ? "mon-chip on" : "mon-chip"} onClick={() => { setType(k); setLimit(60); }}>{l} · {counts[k]}</button>
+        ))}
+        <span className="mon-sep" />
+        <input type="date" className="ix-input rec-date" value={dateFilter} aria-label="Filter by date" onChange={(e) => { setDateFilter(e.target.value); setLimit(60); }} />
+        {(dateFilter || search) && <button type="button" className="ix-b ghost sm" onClick={() => { setDateFilter(""); setSearch(""); }}>Clear</button>}
+        <span className="rec-count">{filtered.length} record{filtered.length === 1 ? "" : "s"}</span>
       </div>
-      <div className="ix-card flush">
+      <div className="ix-card flush rec-card">
         {loading ? <Spinner /> : (
           <Table
-            headers={["Intern", "Date", "Type", "Action", "Time In", "Time Out", "Token"]}
-            rows={filtered.map((r) => [
-              <strong>{r.name}</strong>,
-              r.date,
+            headers={["Intern", "Date", "Type", "Action", "Time in", "Time out", "Hours"]}
+            rows={filtered.slice(0, limit).map((r) => [
+              <span className="rec-who"><Avatar name={r.name} photo={r.photo} size={28} /><strong>{r.name}</strong></span>,
+              day(r.date),
               <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
-              <Badge label={r.action === "CHECK_IN" ? "IN" : "OUT"} type={r.action === "CHECK_IN" ? "in" : "out"} />,
-              fmtTime(r.checked_in_at),
-              fmtTime(r.checked_out_at),
-              <span className="ix-mono">{r.token?.substring(0, 20)}…</span>,
+              r.checked_out_at
+                ? <Badge label="Check out" type="out" />
+                : <Badge label="Check in" type="in" />,
+              hm(r.checked_in_at),
+              r.checked_out_at ? hm(r.checked_out_at) : <span className="rec-open">No time out yet</span>,
+              hrs(r),
             ])}
             empty="No records match your filters."
           />
         )}
+        {!loading && filtered.length > limit && (
+          <div className="rec-more">
+            <span>Showing {limit} of {filtered.length}</span>
+            <button type="button" className="ix-b ghost sm" onClick={() => setLimit((n) => n + 100)}>Show more</button>
+          </div>
+        )}
       </div>
+      <style>{`
+        .ix-page .rec-date { height: 34px; width: 160px; }
+        .ix-page .rec-count { margin-left: auto; font-size: 12.5px; color: #6b7280; font-weight: 600; }
+        .ix-page .rec-who { display: inline-flex; align-items: center; gap: 10px; }
+        .ix-page .rec-open { font-size: 12px; color: #c2410c; font-weight: 600; }
+        .ix-page .rec-more { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; font-size: 12.5px; color: #6b7280; border-top: 1px solid #e3e6ea; }
+        .ix-page .rec-card .ix-table-wrap { max-height: none; }
+      `}</style>
     </>
   );
 }
@@ -665,6 +714,26 @@ function Accounts({ users, onRefresh }) {
     } catch (err) {
       setMsg({ type: "error", text: err.message });
     } finally { setAdding(false); }
+  };
+
+  // import interns from the coordinator's Excel list
+  const [importing, setImporting] = useState(false);
+  // graduated / inactive: can't sign in or tap, records stay
+  const [toggling, setToggling] = useState(null);
+  const setActive = async (u, active) => {
+    if (!active && !window.confirm(`Deactivate ${u.name}?\n\nThey won't be able to sign in or tap their card. All their records are kept, and you can reactivate the account anytime.`)) return;
+    setToggling(u.id); setMsg(null);
+    try {
+      const res = await fetch(`${API}/admin/users/${u.id}/active`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ active }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "Couldn't change the account.");
+      setMsg({ type: "success", text: data.message });
+      onRefresh();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setToggling(null); }
   };
 
   const handleDelete = async (id, name) => {
@@ -796,14 +865,21 @@ function Accounts({ users, onRefresh }) {
     { key: "admin", label: "Admins" },
     { key: "supervisor", label: "Supervisors" },
     { key: "ojt_coordinator", label: "Coordinators" },
+    { key: "inactive", label: "Deactivated" },
   ];
   const sq = search.trim().toLowerCase();
+  const wide = typeof window !== "undefined" && !window.matchMedia("(max-width: 900px)").matches;
   const shownUsers = users
-    .filter((u) => roleFilter === "all" || u.role === roleFilter)
+    .filter((u) => roleFilter === "all" || (roleFilter === "inactive" ? !!u.deactivated_at : u.role === roleFilter))
     .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(sq));
+  // the user shown on the right: the one clicked, or (wide screens) the only one left after a search.
+  // Nothing opens by itself.
+  const cur = vu || (wide && sq && shownUsers.length === 1 ? shownUsers[0] : null) || null;
 
   return (
     <>
+      <style>{ACC_OFF_CSS}</style>
+      {importing && <ImportInterns onClose={() => setImporting(false)} onDone={onRefresh} />}
       <PageHeader title="Manage Accounts" sub="Click a user to see their profile, then Edit to change it." />
 
       {!showForm && !editUser && <Msg msg={msg} />}
@@ -829,36 +905,6 @@ function Accounts({ users, onRefresh }) {
                 isIntern={form.role === "intern"}
                 supervisors={supervisors}
                 header={<PhotoPicker file={form.photo} onChange={(file) => setForm((s) => ({ ...s, photo: file }))} />}
-                uidField={
-                  <>
-                    <div className="ix-row-gap">
-                      <input
-                        type="text"
-                        className={scanning ? "uf-input scanning" : "uf-input"}
-                        placeholder="Scan the card or type the UID"
-                        value={scanning ? "Waiting for card tap..." : form.uid}
-                        readOnly={scanning}
-                        onChange={(e) => setForm((s) => ({ ...s, uid: e.target.value }))}
-                      />
-                      <button
-                        type="button"
-                        className={scanning ? "ix-b ghost sm" : "ix-b primary sm"}
-                        onClick={(e) => { e.currentTarget.blur(); uidBuffer.current = ""; setScanning((s) => !s); }}
-                      >
-                        <Icon name="nfc" size={14} /> {scanning ? "Cancel" : "Scan"}
-                      </button>
-                    </div>
-                    {scanning && <small className="uf-hint">Keep this window focused, then tap the card on the reader.</small>}
-                    {form.uid && !scanning && (
-                      <small className="uf-hint">
-                        UID captured: <strong style={{ fontFamily: "monospace" }}>{form.uid}</strong>{" "}
-                        <button type="button" style={{ background: "none", border: 0, color: "#dc2626", cursor: "pointer", fontSize: 11 }}
-                          onClick={() => setForm((s) => ({ ...s, uid: "" }))}>clear</button>
-                      </small>
-                    )}
-                    {!form.uid && !scanning && <small className="uf-hint">Leave blank if there's no NFC card yet.</small>}
-                  </>
-                }
                 actions={
                   <>
                     <button type="button" className="ix-b ghost" onClick={closeModal}>Cancel</button>
@@ -869,153 +915,164 @@ function Accounts({ users, onRefresh }) {
             </form>
           </div>
         </>
-      ) : vu ? (
-        /* ───────── One user's profile on the page: read-only, Edit switches it to fields right here ───────── */
-        <>
-          <div className="acc-bar">
-            <button type="button" className="ix-b ghost sm" onClick={backToList} disabled={savingEdit}>
-              ‹ Back to all users
-            </button>
-            {!editUser && (
-              <div className="acc-bar-r">
-                <button type="button" className="ix-b primary sm" onClick={() => openEdit(vu)}>
-                  <Icon name="pencil" size={14} /> Edit
-                </button>
-                <button type="button" className="ix-b danger sm" disabled={deleting === vu.id}
-                  onClick={async () => { if (await handleDelete(vu.id, vu.name)) setViewUser(null); }}>
-                  <Icon name="trash" size={14} /> {deleting === vu.id ? "..." : "Delete"}
-                </button>
-              </div>
-            )}
+      ) : (
+        /* ───────── list on the left, the selected user on the right (phones: one at a time) ───────── */
+        <div className={vu ? "mon show-detail" : "mon"}>
+          <div className="mon-bar">
+            <div className="ix-search mon-search">
+              <Icon name="search" size={15} />
+              <input type="text" placeholder="Search name, email or ID..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            {ROLE_TABS.map((t) => (
+              <button key={t.key} type="button" className={roleFilter === t.key ? "mon-chip on" : "mon-chip"} onClick={() => setRoleFilter(t.key)}>
+                {t.label} · {t.key === "all" ? users.length : t.key === "inactive" ? users.filter((u) => u.deactivated_at).length : users.filter((u) => u.role === t.key).length}
+              </button>
+            ))}
+            <button className="ix-b ghost sm acc-add" onClick={() => setImporting(true)}><Icon name="upload" size={14} /> Import interns (Excel)</button>
+            <button className="ix-b primary sm" onClick={openModal}><Icon name="plus" size={14} /> Add New User</button>
           </div>
 
-          {!editUser ? (
-            <div className="ix-card"><UserDetails u={vu} /></div>
-          ) : (
-            <div className="ix-card">
-              <Msg msg={editMsg} />
-              <form
-                onSubmit={saveEdit}
-                onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
-              >
-                <UserForm
-                  mode="edit"
-                  f={editForm}
-                  set={setEF}
-                  isIntern={editIsIntern}
-                  supervisors={supervisors}
-                  title={editUser.name}
-                  sub="Click the photo to change it."
-                  header={
-                    <label className="ix-photo-box" style={{ width: 84, height: 84, borderRadius: "50%" }}>
-                      <input type="file" accept="image/*" onChange={pickEditPhoto} />
-                      {editPreview
-                        ? <img src={editPreview} alt="New profile" />
-                        : <Avatar name={editUser.name} photo={editUser.photo} size={84} />}
-                      <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
-                    </label>
-                  }
-                  uidField={
-                    <>
-                      <input className="uf-input" type="text" placeholder="Type the UID" value={editForm.uid} onChange={setEF("uid")} />
-                      <small className="uf-hint">Clear this field to unlink the card.</small>
-                    </>
-                  }
-                  actions={
-                    <>
-                      <button type="button" className="ix-b ghost" onClick={closeEdit} disabled={savingEdit}>Cancel</button>
-                      <button type="submit" className="ix-b primary" disabled={savingEdit}>{savingEdit ? "Saving..." : "Save changes"}</button>
-                    </>
-                  }
-                />
-              </form>
+          <div className="mon-split">
+            <div className="mon-list" role="list">
+              {shownUsers.length === 0 ? (
+                <Empty icon="users" title={users.length ? "No users match your search." : "No users yet."} />
+              ) : shownUsers.map((u) => (
+                <button key={u.id} type="button" role="listitem"
+                  className={cur?.id === u.id ? "mon-item on" : "mon-item"}
+                  onClick={() => { if (editUser && editUser.id !== u.id) closeEdit(); openView(u); }}>
+                  <Avatar name={u.name} photo={u.photo} size={34} />
+                  <span className="mon-who">
+                    <b>{u.name}</b>
+                    <small>{u.email}</small>
+                  </span>
+                  <span className="mon-right">
+                    {u.deactivated_at
+                      ? <span className="acc-role-tag off">Deactivated</span>
+                      : <span className={`acc-role-tag ${u.role}`}>{ROLE_NAME[u.role] || u.role}</span>}
+                    <small>{u.student_id || ""}</small>
+                  </span>
+                </button>
+              ))}
             </div>
-          )}
-        </>
-      ) : (
-      <>
 
-      <div className="ix-toolbar">
-        <div className="ix-search">
-          <Icon name="search" size={16} />
-          <input
-            type="text"
-            placeholder="Search name, email or ID..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+            <div className="mon-detail">
+              <button type="button" className="mon-back" onClick={backToList} disabled={savingEdit}>
+                <Icon name="menu" size={14} /> All users
+              </button>
+              {!cur ? (
+                <div className="mon-empty"><Empty icon="search" title="Search or select a user" sub="Their details show here." /></div>
+              ) : (
+                <div className="acc-detail">
+                  {!editUser && (
+                    <div className="acc-detail-bar">
+                      <button type="button" className="ix-b primary sm" onClick={() => openEdit(cur)}>
+                        <Icon name="pencil" size={14} /> Edit
+                      </button>
+                      {cur.deactivated_at ? (
+                        <button type="button" className="ix-b ghost sm" disabled={toggling === cur.id} onClick={() => setActive(cur, true)}>
+                          <Icon name="check" size={14} /> {toggling === cur.id ? "..." : "Reactivate"}
+                        </button>
+                      ) : (
+                        <button type="button" className="ix-b ghost sm" disabled={toggling === cur.id} onClick={() => setActive(cur, false)}
+                          title="Graduated or no longer active: can't sign in or tap; records are kept">
+                          <Icon name="lock" size={14} /> {toggling === cur.id ? "..." : "Deactivate"}
+                        </button>
+                      )}
+                      <button type="button" className="ix-b danger sm" disabled={deleting === cur.id}
+                        onClick={async () => { if (await handleDelete(cur.id, cur.name)) setViewUser(null); }}>
+                        <Icon name="trash" size={14} /> {deleting === cur.id ? "..." : "Delete"}
+                      </button>
+                    </div>
+                  )}
+
+                  {!editUser && cur.deactivated_at && (
+                    <div className="acc-off-note"><Icon name="lock" size={15} />
+                      <span>Deactivated on {new Date(String(cur.deactivated_at).replace(" ", "T")).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}. This account can't sign in or tap. Its records are kept.</span>
+                    </div>
+                  )}
+                  {!editUser ? (
+                    <UserDetails u={cur} />
+                  ) : (
+                    <>
+                      <Msg msg={editMsg} />
+                      <form
+                        onSubmit={saveEdit}
+                        onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}
+                      >
+                        <UserForm
+                          mode="edit"
+                          f={editForm}
+                          set={setEF}
+                          isIntern={editIsIntern}
+                          role={editUser.role}
+                          supervisors={supervisors}
+                          title={editUser.name}
+                          sub="Click the photo to change it."
+                          header={
+                            <label className="ix-photo-box" style={{ width: 72, height: 72, borderRadius: "50%" }}>
+                              <input type="file" accept="image/*" onChange={pickEditPhoto} />
+                              {editPreview
+                                ? <img src={editPreview} alt="New profile" />
+                                : <Avatar name={editUser.name} photo={editUser.photo} size={72} />}
+                              <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
+                            </label>
+                          }
+                          uidField={editIsIntern ? (
+                            <>
+                              <div className="ix-row-gap">
+                                <input className="uf-input" type="text" readOnly
+                                  value={editForm.uid || (editUser.nfc_uid ? "Will be unlinked when you save" : "No card linked")} />
+                                {editForm.uid && (
+                                  <button type="button" className="ix-b danger sm" onClick={() => setEF("uid")({ target: { value: "" } })}>Unlink</button>
+                                )}
+                                {!editForm.uid && editUser.nfc_uid && (
+                                  <button type="button" className="ix-b ghost sm" onClick={() => setEF("uid")({ target: { value: editUser.nfc_uid } })}>Undo</button>
+                                )}
+                              </div>
+                              <small className="uf-hint">New cards are linked in Card Requests after the request is approved and printed. Unlink a lost or damaged card here.</small>
+                            </>
+                          ) : null}
+                          actions={
+                            <>
+                              <button type="button" className="ix-b ghost" onClick={closeEdit} disabled={savingEdit}>Cancel</button>
+                              <button type="submit" className="ix-b primary" disabled={savingEdit}>{savingEdit ? "Saving..." : "Save changes"}</button>
+                            </>
+                          }
+                        />
+                      </form>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-        {/* who to show: All / Interns / Admins / Supervisors / Coordinators */}
-        <select
-          className="ix-select acc-role"
-          value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value)}
-          aria-label="Show users by role"
-        >
-          {ROLE_TABS.map((t) => (
-            <option key={t.key} value={t.key}>
-              {t.label} ({t.key === "all" ? users.length : users.filter((u) => u.role === t.key).length})
-            </option>
-          ))}
-        </select>
-        <span className="ix-chip">{shownUsers.length} of {users.length}</span>
-        <button className="ix-b primary acc-add" onClick={openModal}><Icon name="plus" size={16} /> Add New User</button>
-      </div>
-
-      <div className="ix-card flush">
-        <Table
-          headers={["User", "Role", "Email"]}
-          rows={shownUsers.map((u) => [
-            <button type="button" className="ix-actions acc-open" onClick={() => openView(u)} title="View profile">
-              <Avatar name={u.name} photo={u.photo} size={36} />
-              <span className="acc-who">
-                <strong>{u.name}</strong>
-                {u.student_id && <small>{u.student_id}</small>}
-              </span>
-            </button>,
-            ROLE_NAME[u.role] || u.role,
-            u.email,
-          ])}
-          empty={users.length ? "No users match your search." : "No users yet."}
-        />
-      </div>
-      </>
       )}
-
-
     </>
   );
 }
 
-/* ───────────────────────── Print ID Cards ─────────────────────────
-   Only interns whose NFC card request the coordinator approved (or whose card is already linked). */
+/* ───────────────────────── Card Requests ─────────────────────────
+   ID cards are printed in the card printer's own app. Here the admin gets the approved list, downloads
+   the details and photos, and marks the cards as printed. */
 function PrintIdCards({ interns }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = () =>
     fetch(`${API}/supervisor/nfc-requests`, { headers: { Accept: "application/json" } })
       .then((r) => r.json())
-      .then((d) => { if (Array.isArray(d)) setRequests(d); else setError(d?.message || "Couldn't load card requests."); })
+      .then((d) => { if (Array.isArray(d)) { setRequests(d); setError(null); } else setError(d?.message || "Couldn't load card requests."); })
       .catch(() => setError("Couldn't reach the server."))
       .finally(() => setLoading(false));
-  }, []);
 
-  // newest request of each intern (the list comes newest first within each status)
-  const latest = {};
-  [...requests].sort((a, b) => b.id - a.id).forEach((r) => { if (!latest[r.user_id]) latest[r.user_id] = r; });
-
-  const ready = interns.filter((u) => u.nfc_uid || ["approved", "issued"].includes(latest[u.id]?.status));
-  const statusOf = (u) => (u.nfc_uid
-    ? <><i /> Card linked</>
-    : "Approved · link the card after printing");
+  useEffect(() => { load(); }, []);
 
   return (
     <>
-      <PageHeader title="Print ID Cards" sub="Print the cards of interns whose NFC card request was approved." />
       {error && <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>}
-      {loading ? <Spinner /> : <PrintCards interns={ready} statusOf={statusOf} />}
+      {loading ? <Spinner /> : <CardRequests requests={requests} interns={interns} onChanged={load} />}
     </>
   );
 }
@@ -1162,43 +1219,29 @@ export function DTR({ interns, records, canCertify = false }) {
     <>
       <style>{CS48_CSS}</style>
       <style>{DTR_PICK_CSS}</style>
-      <PageHeader title="Generate DTR" sub="Choose an intern, the month, year and period, then click Display DTR." />
-      <div className="ix-card">
-        <div className="dtr-intern">
-          <InternSearch interns={interns} selected={picked} onSelect={(id) => { setSelectedId(id); setErr(""); }} />
-        </div>
-        <div className="dtr-pick">
-          <label className="fl-field">
-            <span className="fl-label">Month *</span>
-            <select value={mon} onChange={(e) => setMon(e.target.value)}>
-              {MONTHS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
-          </label>
-          <label className="fl-field">
-            <span className="fl-label">Year *</span>
-            <select value={year} onChange={(e) => setYear(e.target.value)}>
-              {years.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </label>
-          <label className={period ? "fl-field" : "fl-field empty"}>
-            <span className="fl-label">Period *</span>
-            <select value={period} onChange={(e) => { setPeriod(e.target.value); setErr(""); }}>
-              <option value="" disabled hidden></option>
-              {periodsOf(year, mon).map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-            </select>
-          </label>
-          <button type="button" className="fl-btn" onClick={display}>
-            <Icon name="send" size={18} /> Display DTR
+      <PageHeader title="Generate DTR" sub="Search an intern, pick the month, year and period, then click Display DTR." />
+      <div className="ix-card dtr-card">
+        {/* one row: intern · month · year · period · Display DTR */}
+        <div className="dtr-filters">
+          <InternSearch interns={interns} selected={picked} onSelect={(id) => { setSelectedId(String(id)); setErr(""); }} />
+          <select className="dtr-sel" value={mon} onChange={(e) => setMon(e.target.value)} aria-label="Month">
+            {MONTHS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+          <select className="dtr-sel" value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year">
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <select className="dtr-sel" value={period} onChange={(e) => { setPeriod(e.target.value); setErr(""); }} aria-label="Period">
+            <option value="" disabled>Period</option>
+            {periodsOf(year, mon).map((p) => <option key={p.key} value={p.key}>Period: {p.label}</option>)}
+          </select>
+          <button type="button" className="ix-b primary" onClick={display}>
+            <Icon name="send" size={16} /> Display DTR
           </button>
         </div>
         {err && <div className="fl-err">{err}</div>}
 
         {!view ? (
-          <div className="dtr-wait">
-            <span className="dtr-wait-ic"><Icon name="file" size={26} /></span>
-            <strong>No DTR displayed yet</strong>
-            <p>Search an intern, choose a period, then click <b>Display DTR</b>.</p>
-          </div>
+          <Empty icon="file" title="Nothing to preview yet" sub="Search an intern, then choose a month, year and period above and click Display DTR." />
         ) : (
           <>
             <div className="dtr-shown-head">
@@ -1229,7 +1272,13 @@ export function DTR({ interns, records, canCertify = false }) {
           </>
         )}
       </div>
-      <style>{`.dtr-intern { margin-bottom: 12px; } .dtr-intern > * { max-width: 520px; }`}</style>
+      <style>{`
+        .ix-page .ix-content .dtr-card { padding: 16px 18px !important; display: flex; flex-direction: column; gap: 14px; }
+        .ix-page .dtr-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .ix-page .dtr-filters > :first-child { flex: 1 1 280px; min-width: 240px; }
+        .ix-page .dtr-filters .dtr-sel { height: 38px; min-width: 140px; }
+        .ix-page .dtr-shown-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      `}</style>
     </>
   );
 }
@@ -1309,14 +1358,13 @@ export function Reports({ interns, records }) {
         <button className="ix-b primary" onClick={handlePrint}><Icon name="print" size={16} /> Print Report</button>
       </div>
 
-      <div className="ix-stats">
-        <StatCard label="Interns" value={data.length} icon="users" tone="orange" />
-        <StatCard label="Total Hours" value={Math.round(data.reduce((s, d) => s + d.total, 0) * 10) / 10 + "h"} icon="clock" tone="blue" />
-        <StatCard label="Total Days" value={data.reduce((s, d) => s + d.days, 0)} icon="calendar" tone="green" />
-        <StatCard label="Online Logs" value={data.reduce((s, d) => s + d.online, 0)} icon="globe" tone="purple" />
+      <div className="at-sum rp-sum">
+        <div className="at-sum-num"><small>Interns</small><b>{data.length}</b><em>{monthLabel}</em></div>
+        <div className="at-sum-num"><small>Total hours</small><b>{Math.round(data.reduce((x, d) => x + d.total, 0) * 10) / 10}h</b><em>all interns</em></div>
+        <div className="at-sum-num"><small>Total days</small><b>{data.reduce((x, d) => x + d.days, 0)}</b><em>days present</em></div>
+        <div className="at-sum-num"><small>Online logs</small><b>{data.reduce((x, d) => x + d.online, 0)}</b><em>remote workdays</em></div>
       </div>
-
-      <Section icon="chart" title={`Summary · ${monthLabel}`} count={data.length}>
+      <div className="ix-card flush" style={{ marginTop: 14 }}>
         <Table
           headers={["#", "Intern", "Email", "Days", "Onsite", "Online", "Total Hours", "Progress"]}
           rows={data.map((d, i) => [
@@ -1328,21 +1376,17 @@ export function Reports({ interns, records }) {
           ])}
           empty="No records for this month."
         />
-      </Section>
+      </div>
     </>
   );
 }
 
 /* ───────────────────────── Calendar Management ───────────────────────── */
-function Calendar() {
+// also used by the OJT coordinator (she sets the holidays and non-working days)
+/* Calendar: events on the left (plus "New event"), the selected one's form on the right */
+export function Calendar() {
   const [events, setEvents] = useState([]);
-  const [date, setDate] = useState("");
-  const [type, setType] = useState("holiday");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
 
   const fetchEvents = async () => {
@@ -1357,177 +1401,114 @@ function Calendar() {
       setLoading(false);
     }
   };
+  useEffect(() => { fetchEvents(); }, []);
 
-  useEffect(() => {
-    fetchEvents();
-  }, []);
-
-  const handleEdit = (event) => {
-    setEditingId(event.id);
-    setDate(String(event.date).slice(0, 10));
-    setType(event.type);
-    setTitle(event.title);
-    setDescription(event.description || "");
-    setMsg(null);
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setDate("");
-    setType("holiday");
-    setTitle("");
-    setDescription("");
-    setMsg(null);
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-
-    if (!date || !title) {
-      setMsg({ type: "error", text: "Please enter a date and title." });
-      return;
-    }
-
-    setSaving(true);
-    setMsg(null);
-
-    try {
-      const url = editingId ? `${API}/calendar/${editingId}` : `${API}/calendar`;
-      const method = editingId ? "PUT" : "POST";
-
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ date, type, title, description }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to save calendar event.");
-
-      setMsg({ type: "success", text: data.message });
-      setEditingId(null);
-      setDate("");
-      setTitle("");
-      setDescription("");
-      setType("holiday");
-      fetchEvents();
-    } catch (err) {
-      setMsg({ type: "error", text: err.message });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm("Delete this calendar event?")) return;
-
-    try {
-      const res = await fetch(`${API}/calendar/${id}`, {
-        method: "DELETE",
-        headers: { Accept: "application/json" },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to delete event.");
-
-      setMsg({ type: "success", text: data.message });
-      fetchEvents();
-    } catch (err) {
-      setMsg({ type: "error", text: err.message });
-    }
-  };
+  const today = new Date().toLocaleDateString("en-CA");
+  const sorted = [...events].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const upcoming = sorted.filter((e) => String(e.date).slice(0, 10) >= today);
+  const past = sorted.filter((e) => String(e.date).slice(0, 10) < today).reverse();
+  const md = (d) => { const x = new Date(String(d).slice(0, 10) + "T00:00:00"); return isNaN(x) ? d : x.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", year: "numeric" }); };
 
   return (
     <>
       <PageHeader title="Calendar Management" sub="Manage holidays and non-working days." />
-
       <Msg msg={msg} />
-
-      {/* the form on the left, the list of events on the right — one row */}
-      <div className="side-split">
-      <div className="ix-card adm-cal-form">
-        <h3 className="side-title">{editingId ? "Edit Calendar Event" : "Add Calendar Event"}</h3>
-
-        <form onSubmit={handleSave} className="ix-form">
-          <div className="ix-row-gap">
-            <div className="ix-field">
-              <label htmlFor="cal-date">Date</label>
-              <input id="cal-date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <div className="ix-field">
-              <label htmlFor="cal-type">Type</label>
-              <select id="cal-type" value={type} onChange={(e) => setType(e.target.value)}>
-                <option value="holiday">Holiday</option>
-                <option value="non_working">Non-working Day</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="ix-field">
-            <label htmlFor="cal-title">Title</label>
-            <input
-              id="cal-title" type="text" required placeholder="e.g. Independence Day"
-              value={title} onChange={(e) => setTitle(e.target.value)}
-            />
-          </div>
-
-          <div className="ix-field">
-            <label htmlFor="cal-desc">Description</label>
-            <input
-              id="cal-desc" type="text" placeholder="Optional description"
-              value={description} onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-
-          <div className="ix-form-actions adm-cal-actions">
-            <button type="submit" className="ix-b primary" disabled={saving}>
-              {saving ? (editingId ? "Updating..." : "Adding...") : editingId ? "Update Event" : "Add Event"}
-            </button>
-            {editingId && (
-              <button type="button" className="ix-b ghost" onClick={cancelEdit}>Cancel</button>
-            )}
-          </div>
-        </form>
-      </div>
-
-      <div className="ix-card flush adm-cal-list">
-        <div className="side-head">
-          <div>
-            <h3>Calendar Events</h3>
-            <p>Holidays and non-working days registered in the system.</p>
-          </div>
-          <span className="ix-count">{events.length}</span>
-        </div>
-
-        {loading ? (
-          <Spinner />
-        ) : events.length === 0 ? (
-          <Empty
-            icon="calendar"
-            title="No calendar events"
-            sub="No holidays or non-working days have been added yet."
-          />
-        ) : (
-          <Table
-            headers={["Date", "Type", "Title", "Description", "Action"]}
-            rows={events.map((event) => [
-              String(event.date).slice(0, 10),
-              <Badge
-                label={event.type === "holiday" ? "Holiday" : "Non-working"}
-                type={event.type === "holiday" ? "approved" : "pending"}
-              />,
-              <strong>{event.title}</strong>,
-              event.description || "—",
-              <div className="ix-actions">
-                <button className="ix-b ghost sm" onClick={() => handleEdit(event)}>Edit</button>
-                <button className="ix-b danger sm" onClick={() => handleDelete(event.id)}>Delete</button>
-              </div>,
-            ])}
-            empty="No calendar events."
-          />
-        )}
-      </div>
-      </div>
+      {loading ? <Spinner /> : (
+        <Inbox
+          items={[{ id: "__new" }, ...upcoming, ...past]}
+          row={(e) => e.id === "__new"
+            ? { icon: "plus", name: "New event", sub: "Add a holiday or non-working day", tag: null, meta: "" }
+            : { icon: "calendar", tone: String(e.date).slice(0, 10) < today ? "past" : e.type === "holiday" ? "" : "waiting",
+                name: e.title, sub: md(e.date),
+                tag: <Badge label={e.type === "holiday" ? "Holiday" : "Non-working"} type={e.type === "holiday" ? "approved" : "pending"} />,
+                meta: String(e.date).slice(0, 10) < today ? "past" : "" }}
+          detail={(e) => <CalEditor key={e.id} ev={e.id === "__new" ? null : e} onDone={(m) => { setMsg(m); fetchEvents(); }} />}
+        />
+      )}
     </>
+  );
+}
+
+const CAL_FORM_CSS = `
+/* Calendar event form: everything fits without scrolling */
+.ix-page .ix-content .ann-compose.cal-compose { gap: 10px !important; }
+.ix-page .ix-content .cal-compose .ibx-head { margin-bottom: 2px; }
+.ix-page .ix-content .cal-compose textarea { height: 84px !important; min-height: 0 !important; flex: none !important; resize: vertical; }
+.ix-page .ix-content .cal-compose > .ix-field { flex: none !important; }
+.ix-page .ix-content .cal-compose .ix-row-gap > .ix-field { flex: 1 1 0 !important; min-width: 0; }
+.ix-page .ix-content .cal-compose .ibx-act { position: static !important; margin: 4px 0 0 !important; padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important; }
+.ix-page .mon-detail:has(.cal-compose) { overflow: hidden; }
+`;
+
+function CalEditor({ ev, onDone }) {
+  const [date, setDate] = useState(ev ? String(ev.date).slice(0, 10) : "");
+  const [type, setType] = useState(ev ? ev.type : "holiday");
+  const [title, setTitle] = useState(ev ? ev.title : "");
+  const [description, setDescription] = useState(ev ? ev.description || "" : "");
+  const [saving, setSaving] = useState(false);
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!date || !title) { onDone({ type: "error", text: "Please enter a date and title." }); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(ev ? `${API}/calendar/${ev.id}` : `${API}/calendar`, {
+        method: ev ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ date, type, title, description }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to save calendar event.");
+      if (!ev) { setDate(""); setTitle(""); setDescription(""); setType("holiday"); }
+      onDone({ type: "success", text: data.message });
+    } catch (err) {
+      onDone({ type: "error", text: err.message });
+    } finally { setSaving(false); }
+  };
+  const del = async () => {
+    if (!window.confirm("Delete this calendar event?")) return;
+    try {
+      const res = await fetch(`${API}/calendar/${ev.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to delete event.");
+      onDone({ type: "success", text: data.message });
+    } catch (err) { onDone({ type: "error", text: err.message }); }
+  };
+
+  return (
+    <form onSubmit={save} className="ann-compose cal-compose">
+      <style>{CAL_FORM_CSS}</style>
+      <div className="ibx-head"><span className="ibx-ic big"><Icon name={ev ? "calendar" : "plus"} size={20} /></span>
+        <div><b>{ev ? "Edit event" : "New event"}</b><small>{ev ? "Change the details and click Update." : "Interns can't tap in on these days."}</small></div></div>
+      <div className="ix-row-gap">
+        <div className="ix-field">
+          <label htmlFor="cal-date">Date</label>
+          <input id="cal-date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div className="ix-field">
+          <label htmlFor="cal-type">Type</label>
+          <select id="cal-type" value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="holiday">Holiday</option>
+            <option value="non_working">Non-working Day</option>
+          </select>
+        </div>
+      </div>
+      <div className="ix-field">
+        <label htmlFor="cal-title">Title</label>
+        <input id="cal-title" type="text" required placeholder="e.g. Independence Day" value={title} onChange={(e) => setTitle(e.target.value)} />
+      </div>
+      <div className="ix-field">
+        <label htmlFor="cal-desc">Description <span className="ix-muted">(optional)</span></label>
+        <textarea id="cal-desc" rows={3} placeholder="e.g. interns are not allowed to tap in" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </div>
+      <div className="ibx-act">
+        {ev && <button type="button" className="ix-b danger" onClick={del}><Icon name="trash" size={14} /> Delete</button>}
+        <span style={{ flex: 1 }} />
+        <button type="submit" className="ix-b primary" disabled={saving}>
+          {saving ? (ev ? "Updating..." : "Adding...") : ev ? "Update event" : "Add event"}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -1755,15 +1736,15 @@ export const adminCss = `
 .ix-content .ix-badge { border-radius: 99px; font-weight: 700; }
 
 /* toolbar, inputs, pills, buttons */
-.ix-content .ix-search, .ix-content .ix-input, .ix-content .ix-select { border-radius: 14px; border-color: #f1e2d9; background: #fff; }
+.ix-content .ix-search, .ix-content .ix-input, .ix-content .ix-select { border-radius: 14px; border-color: #f1e2d9; background: var(--ix-surface, #fff); }
 .ix-content .ix-search:focus-within, .ix-content .ix-input:focus, .ix-content .ix-select:focus { border-color: var(--o); }
-.ix-content .ix-chip { border-radius: 99px; background: #fff; border: 1px solid #f1e2d9; }
+.ix-content .ix-chip { border-radius: 99px; background: var(--ix-surface, #fff); border: 1px solid #f1e2d9; }
 .ix-content .ix-chip.green { background: #ecfdf3; border-color: #c9f0d9; }
 .ix-content .ix-b { border-radius: 12px; }
 .ix-content .ix-b.ghost { border-color: #f1e2d9; background: #fffaf7; }
 .ix-content .ix-b.ghost:hover:not(:disabled) { border-color: var(--o); background: #fdeee7; }
 .ix-content .ix-field input, .ix-content .ix-field select, .ix-content .ix-field textarea { border-radius: 14px; border-color: #f1e2d9; background: #fffaf7; }
-.ix-content .ix-field input:focus, .ix-content .ix-field select:focus, .ix-content .ix-field textarea:focus { background: #fff; border-color: var(--o); }
+.ix-content .ix-field input:focus, .ix-content .ix-field select:focus, .ix-content .ix-field textarea:focus { background: var(--ix-surface, #fff); border-color: var(--o); }
 .ix-content .ix-note { border-radius: 14px; }
 .ix-modal-wrap .ix-field input, .ix-modal-wrap .ix-field select { border-radius: 14px; border-color: #f1e2d9; background: #fffaf7; }
 .ix-modal-wrap .ix-modal { border-radius: 26px; }
@@ -1828,7 +1809,7 @@ export const adminCss = `
 .adm-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .adm-mini {
   position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 6px; min-width: 0;
-  padding: 16px 18px; background: #fff; border-radius: 22px; border: 1px solid rgba(255,255,255,0.85);
+  padding: 16px 18px; background: var(--ix-surface, #fff); border-radius: 22px; border: 1px solid rgba(255,255,255,0.85);
   box-shadow: 0 14px 34px rgba(150,52,20,0.09), 0 1px 2px rgba(27,20,16,0.04);
   transition: transform .2s, box-shadow .2s;
 }
@@ -1861,7 +1842,7 @@ export const adminCss = `
 .adm-live .ix-actions { gap: 10px; }
 
 /* ── calendar ── */
-.ix-content .ix-card.adm-cal { padding: 20px 22px 18px; background: #fff; }
+.ix-content .ix-card.adm-cal { padding: 20px 22px 18px; background: var(--ix-surface, #fff); }
 .adm-cal-head { display: flex; align-items: center; justify-content: space-between; }
 .adm-cal-head strong { font-family: var(--display); font-size: 22px; font-weight: 800; letter-spacing: -.4px; }
 .adm-cal-nav {
@@ -1889,7 +1870,7 @@ export const adminCss = `
 .adm-cal-day.event:focus-visible { outline: 2px solid #e8582a; outline-offset: -2px; }
 .adm-cal-day.today.event { background: linear-gradient(135deg, #f2733a, #e04a1a); color: #fff; }
 .adm-cal-dot { position: absolute; bottom: 6px; width: 6px; height: 6px; border-radius: 50%; background: #f59e0b; }
-.adm-cal-day.today .adm-cal-dot { background: #fff; }
+.adm-cal-day.today .adm-cal-dot { background: var(--ix-surface, #fff); }
 .adm-cal-legend {
   margin-top: 14px; padding-top: 14px; border-top: 1px dashed #f1ddd1;
   display: flex; align-items: center; gap: 20px; flex-wrap: wrap; font-size: 13.5px; color: #7a6c64;
@@ -1936,7 +1917,7 @@ export const adminCss = `
 .dtr-search > svg { position: absolute; left: 12px; color: #a1857a; pointer-events: none; }
 .dtr-search input {
   width: 100%; padding: 10px 34px 10px 36px; border-radius: 14px; border: 1px solid #f1e2d9;
-  background: #fff; font: inherit; font-size: 13.5px; color: #3a2e28; outline: none;
+  background: var(--ix-surface, #fff); font: inherit; font-size: 13.5px; color: #3a2e28; outline: none;
 }
 .dtr-search input:focus { border-color: #e8582a; }
 .dtr-search-clear {
@@ -1946,7 +1927,7 @@ export const adminCss = `
 .dtr-search-clear:hover { background: #fdeee7; color: #e8582a; }
 .dtr-search-list {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; margin: 0; padding: 6px;
-  list-style: none; max-height: 320px; overflow-y: auto; background: #fff;
+  list-style: none; max-height: 320px; overflow-y: auto; background: var(--ix-surface, #fff);
   border: 1px solid #f1e2d9; border-radius: 16px; box-shadow: 0 16px 36px rgba(150,52,20,0.16);
 }
 .dtr-search-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; cursor: pointer; }
@@ -1969,4 +1950,517 @@ export const adminCss = `
   .adm-live-dot { animation: none; }
   .adm-mini, .adm-mini-bar i { transition: none; }
 }
+`;
+
+/* ───────────────────────── Kiosks (Accounts → Kiosks) ─────────────────────────
+   Each kiosk has its own key. The key is shown once, as a setup link to open on the kiosk device.
+   "CCIS" kiosks accept every intern; an HTE kiosk only accepts the interns placed at that HTE. */
+function Kiosks() {
+  const [data, setData] = useState(null);       // { kiosks, placements }
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [form, setForm] = useState({ name: "", placement: "" });
+  const [shown, setShown] = useState(null);     // { name, key } just made: shown once
+  const [copied, setCopied] = useState(false);
+
+  const load = () => fetch(`${API}/admin/kiosks`, { headers: { Accept: "application/json" } })
+    .then((r) => r.json()).then((d) => setData(d && Array.isArray(d.kiosks) ? d : { kiosks: [], placements: [] }))
+    .catch(() => setData({ kiosks: [], placements: [] }));
+  useEffect(() => { load(); }, []);
+
+  const call = async (url, method, body, tag) => {
+    setBusy(tag); setMsg(null);
+    try {
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json", Accept: "application/json" }, body: body ? JSON.stringify(body) : undefined });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Something went wrong.");
+      load();
+      return d;
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+      return null;
+    } finally { setBusy(null); }
+  };
+  const add = async (e) => {
+    e.preventDefault();
+    const d = await call(`${API}/admin/kiosks`, "POST", { name: form.name.trim(), placement: form.placement || null }, "add");
+    if (d?.key) { setShown({ name: form.name.trim(), key: d.key }); setCopied(false); setForm({ name: "", placement: "" }); }
+  };
+  const newKey = async (k) => {
+    if (!window.confirm(`Make a new key for "${k.name}"? The old key stops working right away, so you'll need to set up the kiosk again.`)) return;
+    const d = await call(`${API}/admin/kiosks/${k.id}`, "PATCH", { new_key: true }, "key" + k.id);
+    if (d?.key) { setShown({ name: k.name, key: d.key }); setCopied(false); }
+  };
+  const toggle = (k) => call(`${API}/admin/kiosks/${k.id}`, "PATCH", { active: !k.active }, "on" + k.id);
+  const remove = (k) => window.confirm(`Remove "${k.name}"? Its key stops working.`) && call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id);
+  const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}` : "";
+  const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select it by hand */ } };
+  const seen = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Never");
+
+  return (
+    <div className="ks-wrap">
+      <style>{KIOSK_CSS}</style>
+      <Msg msg={msg} />
+      {shown && (
+        <div className="ix-card ks-key">
+          <div className="ks-key-h"><Icon name="key" size={18} /><b>Set up "{shown.name}"</b><button type="button" className="ix-b ghost sm" onClick={() => setShown(null)}>Done</button></div>
+          <p>Open this link <b>once</b> on the kiosk device. It saves the key there. This key is shown only now: if you lose it, make a new key.</p>
+          <div className="ks-link"><code>{link}</code><button type="button" className="ix-b primary sm" onClick={copy}>{copied ? "Copied" : "Copy link"}</button></div>
+        </div>
+      )}
+      <div className="ks-grid">
+        <form className="ix-card ks-form" onSubmit={add}>
+          <h3>Add a kiosk</h3>
+          <div className="ix-field">
+            <label htmlFor="ks-name">Kiosk name</label>
+            <input id="ks-name" className="ix-input" required maxLength={120} placeholder="e.g. CCIS lobby, City Hall IT office"
+              value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+          </div>
+          <div className="ix-field">
+            <label htmlFor="ks-place">Who can tap here?</label>
+            <select id="ks-place" className="ix-select" value={form.placement} onChange={(e) => setForm((f) => ({ ...f, placement: e.target.value }))}>
+              <option value="">Every intern (CCIS kiosk)</option>
+              {(data?.placements || []).map((p) => <option key={p} value={p}>Only interns placed at {p}</option>)}
+            </select>
+            <small className="ks-hint">The HTE list comes from the interns' OJT placement.</small>
+          </div>
+          <button type="submit" className="ix-b primary" disabled={busy === "add" || !form.name.trim()}>{busy === "add" ? "Adding..." : "Add kiosk"}</button>
+        </form>
+        <div className="ix-card ks-list">
+          <h3>Kiosks <span className="ks-n">{data?.kiosks?.length ?? 0}</span></h3>
+          {!data ? <Spinner /> : (
+            <Table
+              headers={["Kiosk", "Who can tap", "Last used", "Status", ""]}
+              empty="No kiosks yet. The main kiosk key in the server's .env still works as a CCIS kiosk."
+              rows={data.kiosks.map((k) => [
+                <b>{k.name}</b>,
+                k.placement ? <span>Interns at <b>{k.placement}</b></span> : "Every intern (CCIS)",
+                seen(k.last_seen_at),
+                <Badge label={k.active ? "On" : "Off"} type={k.active ? "approved" : "rejected"} />,
+                <span className="ks-acts">
+                  <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => toggle(k)}>{k.active ? "Turn off" : "Turn on"}</button>
+                  <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => newKey(k)}>New key</button>
+                  <button type="button" className="ix-b danger sm" disabled={!!busy} onClick={() => remove(k)}>Remove</button>
+                </span>,
+              ])}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+const KIOSK_CSS = `
+  .ix-page .ks-wrap { display: flex; flex-direction: column; gap: 14px; }
+  .ix-page .ks-grid { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 900px) { .ix-page .ks-grid { grid-template-columns: 1fr; } }
+  .ix-page .ix-content .ks-form, .ix-page .ix-content .ks-list { padding: 16px 18px !important; }
+  .ix-page .ks-form { display: flex; flex-direction: column; gap: 12px; }
+  .ix-page .ks-form h3, .ix-page .ks-list h3 { margin: 0 0 4px; font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .ix-page .ks-n { font-size: 11px; padding: 1px 8px; border-radius: 99px; background: #f3ede9; color: #6b5b52; }
+  .ix-page .ks-hint { display: block; margin-top: 4px; font-size: 11.5px; color: #94a3b8; }
+  .ix-page .ks-acts { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .ix-page .ix-content .ks-key { padding: 14px 18px !important; border: 1px solid #fbcfb5 !important; background: #fff7f2 !important; }
+  .ix-page .ks-key-h { display: flex; align-items: center; gap: 8px; color: #c2410c; }
+  .ix-page .ks-key-h b { flex: 1; color: #111827; font-size: 14px; }
+  .ix-page .ks-key p { margin: 6px 0 10px; font-size: 12.5px; color: #4b5563; }
+  .ix-page .ks-link { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ix-page .ks-link code { flex: 1; min-width: 240px; padding: 8px 10px; border-radius: 8px; background: #fff; border: 1px dashed #f0b896;
+    font: 600 12px ui-monospace, monospace; color: #9a3412; word-break: break-all; }
+`;
+
+/* ───────────────────────── Activity log (Accounts → Activity Log) ───────────────────────── */
+function ActivityLog() {
+  const [q, setQ] = useState("");
+  const [role, setRole] = useState("");
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let off = false;
+    const t = setTimeout(() => {
+      fetch(`${API}/admin/activity?q=${encodeURIComponent(q)}&role=${role}&page=${page}`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json()).then((d) => { if (!off) setData(d && Array.isArray(d.rows) ? d : { rows: [], total: 0, per_page: 50 }); })
+        .catch(() => { if (!off) setData({ rows: [], total: 0, per_page: 50 }); });
+    }, 250);
+    return () => { off = true; clearTimeout(t); };
+  }, [q, role, page]);
+  const pages = data ? Math.max(1, Math.ceil(data.total / (data.per_page || 50))) : 1;
+  const when = (v) => new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  const tone = (a) => (/refused|locked|failed|deleted|removed/i.test(a) ? "rejected" : /approved|signed in|added|agreed/i.test(a) ? "approved" : "pending");
+  const ROLES = [["", "Everyone"], ["admin", "Admins"], ["ojt_coordinator", "Coordinators"], ["supervisor", "Supervisors"], ["intern", "Interns"]];
+  return (
+    <div className="al-wrap">
+      <style>{ACT_CSS}</style>
+      <div className="mon-bar">
+        <div className="ix-search mon-search">
+          <Icon name="search" size={15} />
+          <input type="text" placeholder="Search a name, an action or a detail..." value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+        </div>
+        {ROLES.map(([k, l]) => (
+          <button key={k} type="button" className={role === k ? "mon-chip on" : "mon-chip"} onClick={() => { setRole(k); setPage(1); }}>{l}</button>
+        ))}
+      </div>
+      <div className="ix-card al-card">
+        {!data ? <Spinner /> : (
+          <Table
+            headers={["When", "Who", "Did what", "Details"]}
+            empty="Nothing logged yet."
+            rows={data.rows.map((r) => [
+              <span className="al-when">{when(r.created_at)}</span>,
+              <span className="al-who"><b>{r.user_name || "Not signed in"}</b><small>{[({ admin: "Admin", ojt_coordinator: "Coordinator", supervisor: "Supervisor", intern: "Intern" })[r.role], r.ip].filter(Boolean).join(" · ")}</small></span>,
+              <Badge label={r.action} type={tone(r.action)} />,
+              <span className="al-det" title={r.details || ""}>{r.details || "—"}</span>,
+            ])}
+          />
+        )}
+        {data && data.total > 0 && (
+          <div className="al-pager">
+            <span>{data.total} entr{data.total === 1 ? "y" : "ies"} · page {page} of {pages}</span>
+            <button type="button" className="ix-b ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Newer</button>
+            <button type="button" className="ix-b ghost sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Older</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+const ACT_CSS = `
+  .ix-page .al-wrap { display: flex; flex-direction: column; gap: 12px; }
+  .ix-page .ix-content .al-card { padding: 6px 0 0 !important; }
+  .ix-page .al-when { white-space: nowrap; font-size: 12px; color: #4b5563; }
+  .ix-page .al-who { display: flex; flex-direction: column; }
+  .ix-page .al-who small { font-size: 11px; color: #94a3b8; }
+  .ix-page .al-det { display: inline-block; max-width: 420px; font-size: 12px; color: #4b5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+  .ix-page .al-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; }
+  .ix-page .al-pager span { margin-right: auto; }
+`;
+const ACC_OFF_CSS = `
+  .ix-page .acc-role-tag.off { background: #e5e7eb; color: #4b5563; }
+  .ix-page .acc-off-note { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 12px; padding: 9px 12px; border-radius: 10px;
+    background: #f1f2f4; border: 1px solid #dcdfe4; color: #374151; font-size: 12.5px; line-height: 1.45; }
+`;
+
+
+/* ───────────────────────── Import interns from Excel (Accounts → Import interns) ─────────────────────────
+   1. download the template (or use the coordinator's own sheet: the column names are matched loosely)
+   2. choose the file → every row is checked on the server, nothing is saved yet
+   3. "Create accounts" → good rows become intern accounts; each intern gets a temporary password by email */
+const SHEETJS_URL = "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs";   // reads and writes .xlsx in the browser
+const IMPORT_COLUMNS = [
+  ["student_id", "Student ID", "221-00123"],
+  ["last_name", "Last name", "Dela Cruz"],
+  ["first_name", "First name", "Juan"],
+  ["middle_name", "Middle name", "Santos"],
+  ["email", "Email", "juan.delacruz@carsu.edu.ph"],
+  ["program", "Program (BSIT, BSIS or BSCS)", "BSIT"],
+  ["semester", "Semester (1st or 2nd)", "1st"],
+  ["birthday", "Birthday (YYYY-MM-DD)", "2003-05-14"],
+  ["contact_number", "Contact number", "09171234567"],
+  ["placement", "Placement / HTE (can be blank)", ""],
+  ["emergency_contact_name", "Emergency contact name", "Maria Dela Cruz"],
+  ["emergency_contact_relation", "Emergency contact relationship", "Mother"],
+  ["emergency_contact_number", "Emergency contact number", "09181234567"],
+];
+// a heading in the coordinator's file -> our field (spaces, case and symbols are ignored)
+const HEADER_ALIASES = {
+  student_id: ["studentid", "studentno", "studentnumber", "idnumber", "idno", "id"],
+  last_name: ["lastname", "surname", "familyname"],
+  first_name: ["firstname", "givenname"],
+  middle_name: ["middlename", "middleinitial", "mi"],
+  email: ["email", "emailaddress", "carsuemail", "schoolemail"],
+  program: ["program", "course", "programbsitbsisorbscs", "degree"],
+  semester: ["semester", "sem", "semester1stor2nd"],
+  birthday: ["birthday", "birthdate", "dateofbirth", "birthdayyyyymmdd", "dob"],
+  contact_number: ["contactnumber", "contact", "contactno", "mobile", "mobilenumber", "phone", "cellphone"],
+  placement: ["placement", "hte", "company", "placementhte", "placementhtecanbeblank", "hostestablishment"],
+  emergency_contact_name: ["emergencycontactname", "emergencycontact", "incaseofemergency", "guardian"],
+  emergency_contact_relation: ["emergencycontactrelationship", "relationship", "relation"],
+  emergency_contact_number: ["emergencycontactnumber", "emergencynumber", "guardiannumber"],
+};
+const keyOf = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const FIELD_OF = Object.fromEntries(Object.entries(HEADER_ALIASES).flatMap(([f, list]) => list.map((a) => [a, f])));
+
+// tiny CSV reader (quotes, commas and new lines inside quotes)
+function parseCsv(text) {
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c; continue; }
+    if (c === '"') q = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((x) => String(x).trim() !== ""));
+}
+
+// sheet rows (first row = headings) -> [{ student_id, last_name, ... }]
+function rowsFromTable(table) {
+  if (!table.length) return { rows: [], missing: ["every column"] };
+  const heads = table[0].map((h) => FIELD_OF[keyOf(h)] || (["name", "fullname", "studentname", "nameofstudent"].includes(keyOf(h)) ? "full_name" : null));
+  const rows = table.slice(1).map((r) => {
+    const o = {};
+    heads.forEach((f, i) => { if (f && o[f] === undefined) o[f] = String(r[i] ?? "").trim(); });
+    // one "Name" column: "Dela Cruz, Juan Santos" or "Juan Santos Dela Cruz"
+    if (o.full_name && !o.last_name && !o.first_name) {
+      const n = o.full_name.replace(/\s+/g, " ").trim();
+      if (n.includes(",")) { const [last, rest] = n.split(/,(.+)/); o.last_name = last.trim(); o.first_name = (rest || "").trim(); }
+      else { const parts = n.split(" "); o.last_name = parts.pop() || ""; o.first_name = parts.join(" "); }
+    }
+    delete o.full_name;
+    return o;
+  }).filter((o) => Object.values(o).some((v) => v));
+  const need = ["student_id", "email", "program", "semester", "birthday"];
+  const missing = need.filter((f) => !heads.includes(f)).map((f) => IMPORT_COLUMNS.find((c) => c[0] === f)[1]);
+  if (!heads.includes("last_name") && !heads.includes("full_name")) missing.unshift("Last name (or Name)");
+  return { rows, missing };
+}
+
+function ImportInterns({ onClose, onDone }) {
+  const [step, setStep] = useState("pick");          // pick | check | done
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState([]);               // what was read from the file
+  const [checked, setChecked] = useState(null);       // { rows: [{row, data, errors, exists}], ready }
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [onlyProblems, setOnlyProblems] = useState(false);
+
+  const loadXlsx = () => import(/* @vite-ignore */ SHEETJS_URL);
+
+  const downloadTemplate = async () => {
+    const head = IMPORT_COLUMNS.map((c) => c[1]);
+    const sample = IMPORT_COLUMNS.map((c) => c[2]);
+    try {
+      const XLSX = await loadXlsx();
+      // sheet 1 "Interns": headings only (fill this in) · sheet 2 "Example": one filled-in row to copy from.
+      // Only the first sheet is imported, so the example never becomes an account.
+      const cols = head.map((h) => ({ wch: Math.max(14, h.length + 2) }));
+      const ws = XLSX.utils.aoa_to_sheet([head]);
+      ws["!cols"] = cols;
+      const ex = XLSX.utils.aoa_to_sheet([head, sample, [], ["This is only an example. Type your interns in the \"Interns\" sheet; this sheet is not imported."]]);
+      ex["!cols"] = cols;
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Interns");
+      XLSX.utils.book_append_sheet(wb, ex, "Example");
+      XLSX.writeFile(wb, "MYTRACK-interns-template.xlsx");
+    } catch {
+      // no internet for the Excel helper: give a CSV (Excel opens it too)
+      const csv = [head].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+      a.download = "MYTRACK-interns-template.csv"; a.click();
+    }
+  };
+
+  const check = async (list) => {
+    setBusy("check"); setErr("");
+    try {
+      const res = await fetch(`${API}/admin/users/import/preview`, {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ rows: list }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Couldn't check the file.");
+      setChecked(d); setStep("check");
+    } catch (e) {
+      setErr(e instanceof TypeError ? "Couldn't reach the server." : e.message);
+    } finally { setBusy(""); }
+  };
+
+  const pickFile = async (e) => {
+    const f = e.target.files?.[0]; e.target.value = "";
+    if (!f) return;
+    setErr(""); setFileName(f.name); setBusy("read");
+    try {
+      let table;
+      if (/\.csv$/i.test(f.name)) {
+        table = parseCsv(await f.text());
+      } else if (/\.xlsx?$/i.test(f.name)) {
+        let XLSX;
+        try { XLSX = await loadXlsx(); } catch { throw new Error("Couldn't load the Excel reader (no internet?). In Excel, use File → Save As → CSV, then choose the .csv file."); }
+        const wb = XLSX.read(await f.arrayBuffer(), { cellDates: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        table = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: "yyyy-mm-dd", defval: "" });
+      } else {
+        throw new Error("Choose an Excel (.xlsx) or CSV file.");
+      }
+      // skip title lines above the headings: use the first row that has a "Student ID" or "Email" heading
+      const start = table.findIndex((r) => r.some((h) => ["student_id", "email"].includes(FIELD_OF[keyOf(h)])));
+      const { rows: list, missing } = rowsFromTable(start > 0 ? table.slice(start) : table);
+      if (missing.length) throw new Error(`These columns are missing: ${missing.join(", ")}. Download the template to see the columns.`);
+      if (!list.length) throw new Error("The file has no interns under the headings.");
+      if (list.length > 500) throw new Error("Up to 500 interns at a time. Split the file and import it in parts.");
+      setRows(list);
+      setBusy("");
+      await check(list);
+    } catch (e2) {
+      setErr(e2.message); setBusy("");
+    }
+  };
+
+  const create = async () => {
+    const good = checked.rows.filter((x) => !x.errors.length).length;
+    if (!window.confirm(`Create ${good} intern account${good === 1 ? "" : "s"}? Each intern gets a temporary password by email.`)) return;
+    setBusy("create"); setErr("");
+    try {
+      const res = await fetch(`${API}/admin/users/import`, {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ rows, login_url: `${window.location.origin}/login` }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Couldn't create the accounts.");
+      setResult(d); setStep("done"); onDone && onDone();
+    } catch (e) {
+      setErr(e instanceof TypeError ? "Couldn't reach the server. Some accounts may have been made: check the list before trying again." : e.message);
+    } finally { setBusy(""); }
+  };
+
+  const downloadPasswords = () => {
+    const list = result?.no_email || [];
+    const csv = [["Name", "Student ID", "Email", "Temporary password"], ...list.map((x) => [x.name, x.student_id, x.email, x.password])]
+      .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+    a.download = "MYTRACK-temporary-passwords.csv"; a.click();
+  };
+
+  const ready = checked ? checked.rows.filter((x) => !x.errors.length) : [];
+  const bad = checked ? checked.rows.filter((x) => x.errors.length) : [];
+  const shown = checked ? (onlyProblems ? bad : checked.rows) : [];
+
+  return (
+    <Modal title="Import interns from Excel" sub="Create many intern accounts at once from the coordinator's list." onClose={busy === "create" ? () => {} : onClose} wide>
+      <style>{IMPORT_CSS}</style>
+      <div className="im-body">
+        {err && <Msg msg={{ type: "error", text: err }} />}
+
+        {step === "pick" && (
+          <>
+            <ol className="im-steps">
+              <li><b>Get the list in the right columns.</b> Download the template, or use the coordinator's own sheet if it has these headings:
+                <span className="im-cols">{IMPORT_COLUMNS.map((c) => <em key={c[0]} className={["middle_name", "contact_number", "placement", "emergency_contact_name", "emergency_contact_relation", "emergency_contact_number"].includes(c[0]) ? "opt" : ""}>{c[1].replace(/ \(.*\)/, "")}</em>)}</span>
+                <small>Orange = required. A single "Name" column ("Dela Cruz, Juan") works too. Placement can be blank and filled in later.</small>
+              </li>
+              <li><b>Choose the file.</b> Every row is checked first. Nothing is saved until you press Create.</li>
+              <li><b>Create the accounts.</b> Each intern gets an email with a temporary password and sets their own on first sign-in.</li>
+            </ol>
+            <div className="im-actions">
+              <button type="button" className="ix-b ghost" onClick={downloadTemplate}><Icon name="download" size={15} /> Download template</button>
+              <label className={busy ? "ix-b primary disabled" : "ix-b primary"}>
+                <input type="file" accept=".xlsx,.xls,.csv" hidden onChange={pickFile} disabled={!!busy} />
+                <Icon name="upload" size={15} /> {busy === "read" ? "Reading..." : busy === "check" ? "Checking..." : "Choose Excel file"}
+              </label>
+            </div>
+          </>
+        )}
+
+        {step === "check" && checked && (
+          <>
+            <div className="im-sum">
+              <span className="im-file"><Icon name="file" size={15} /> {fileName}</span>
+              <span className="im-pill ok">{ready.length} ready</span>
+              {bad.length > 0 && <span className="im-pill bad">{bad.length} with problems (will be skipped)</span>}
+              {bad.length > 0 && (
+                <label className="im-only"><input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} /> Show only problems</label>
+              )}
+            </div>
+            <div className="im-table">
+              <table>
+                <thead><tr><th>Row</th><th>Name</th><th>Student ID</th><th>Email</th><th>Program</th><th>Placement</th><th>Status</th></tr></thead>
+                <tbody>
+                  {shown.map((x) => (
+                    <tr key={x.row} className={x.errors.length ? "bad" : ""}>
+                      <td>{x.row}</td>
+                      <td>{[x.data.last_name, x.data.first_name].filter(Boolean).join(", ") || "—"}</td>
+                      <td>{x.data.student_id || "—"}</td>
+                      <td>{x.data.email || "—"}</td>
+                      <td>{x.data.program ? x.data.program.slice(0, 4) : "—"}</td>
+                      <td>{x.data.placement || <i className="im-later">later</i>}</td>
+                      <td>{x.errors.length ? <span className="im-err">{x.errors.join(" · ")}</span> : <span className="im-ok">Ready</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="im-actions">
+              <button type="button" className="ix-b ghost" disabled={!!busy} onClick={() => { setStep("pick"); setChecked(null); setRows([]); setErr(""); }}>Choose another file</button>
+              <button type="button" className="ix-b primary" disabled={!ready.length || !!busy} onClick={create}>
+                {busy === "create" ? "Creating accounts and sending emails..." : `Create ${ready.length} account${ready.length === 1 ? "" : "s"}`}
+              </button>
+            </div>
+            {bad.length > 0 && <p className="im-note">Fix the rows with problems in the file and import it again later: rows already created are skipped automatically.</p>}
+          </>
+        )}
+
+        {step === "done" && result && (
+          <>
+            <div className="im-done">
+              <Icon name="check" size={20} />
+              <div><b>{result.message}</b><small>New interns are on Onsite, hours-based and 2-tap DTR. Change any of them in Manage Accounts.</small></div>
+            </div>
+            {result.no_email?.length > 0 && (
+              <div className="im-warn">
+                <b>{result.no_email.length} intern{result.no_email.length === 1 ? "" : "s"} didn't get an email.</b>
+                <span>The email server isn't set up, or sending failed. Give these temporary passwords in person; they'll set their own on first sign-in. This list is shown only now.</span>
+                <div className="im-table small">
+                  <table>
+                    <thead><tr><th>Name</th><th>Student ID</th><th>Email</th><th>Temporary password</th></tr></thead>
+                    <tbody>{result.no_email.map((x) => <tr key={x.email}><td>{x.name}</td><td>{x.student_id}</td><td>{x.email}</td><td><code>{x.password}</code></td></tr>)}</tbody>
+                  </table>
+                </div>
+                <button type="button" className="ix-b ghost sm" onClick={downloadPasswords}><Icon name="download" size={14} /> Download this list</button>
+              </div>
+            )}
+            {result.skipped?.length > 0 && (
+              <div className="im-skip">
+                <b>Skipped rows</b>
+                <ul>{result.skipped.map((x) => <li key={x.row}>Row {x.row}{x.name ? ` (${x.name})` : ""}: {x.errors.join(" · ")}</li>)}</ul>
+              </div>
+            )}
+            <div className="im-actions"><button type="button" className="ix-b primary" onClick={onClose}>Done</button></div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+const IMPORT_CSS = `
+  .im-body { display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #374151; }
+  .im-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .im-steps li { line-height: 1.5; }
+  .im-steps li b { color: #111827; }
+  .im-steps small { display: block; margin-top: 4px; font-size: 12px; color: #6b7280; }
+  .im-cols { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .im-cols em { font-style: normal; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: #fff1ea; color: #c2410c; }
+  .im-cols em.opt { background: #f1f2f4; color: #4b5563; }
+  .im-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+  .im-actions label.ix-b { cursor: pointer; }
+  .im-actions label.ix-b.disabled { opacity: .6; pointer-events: none; }
+  .im-sum { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .im-file { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: #111827; margin-right: auto; }
+  .im-pill { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 99px; }
+  .im-pill.ok { background: #dcf5e6; color: #146c3a; }
+  .im-pill.bad { background: #fde8e8; color: #b91c1c; }
+  .im-only { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+  .im-only input { accent-color: #e8582a; }
+  .im-table { max-height: 46vh; overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px; }
+  .im-table.small { max-height: 30vh; margin: 8px 0; background: #fff; }
+  .im-table table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .im-table th { position: sticky; top: 0; background: #f6f7f9; text-align: left; padding: 8px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
+  .im-table td { padding: 7px 10px; border-bottom: 1px solid #f1f2f4; vertical-align: top; }
+  .im-table tr.bad td { background: #fff7f7; }
+  .im-ok { color: #15803d; font-weight: 600; }
+  .im-err { color: #b91c1c; font-size: 12px; }
+  .im-later { color: #9ca3af; font-style: normal; }
+  .im-note { margin: 0; font-size: 12px; color: #6b7280; }
+  .im-done { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: #ecfdf3; border: 1px solid #bbf0cf; color: #15803d; }
+  .im-done b { display: block; color: #14532d; font-size: 14px; }
+  .im-done small { display: block; color: #3f6b50; font-size: 12px; margin-top: 2px; }
+  .im-warn { padding: 12px 14px; border-radius: 12px; background: #fff7ed; border: 1px solid #fde4cc; }
+  .im-warn > b { display: block; color: #9a3412; }
+  .im-warn > span { display: block; font-size: 12px; color: #7c5a45; margin-top: 2px; }
+  .im-warn code { font: 600 12.5px ui-monospace, monospace; color: #111827; }
+  .im-skip { padding: 10px 14px; border-radius: 12px; background: #f6f7f9; border: 1px solid #e5e7eb; }
+  .im-skip ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: #4b5563; }
 `;

@@ -24,7 +24,7 @@ export const mdCss = `
 .ix-card, .at-chart, .hv-hero, .hv-stat, .os-card, .at-log {
   border: 0;
   border-radius: 12px;
-  background: #fff;
+  background: var(--ix-surface, #fff);
   box-shadow: var(--md-shadow);
 }
 
@@ -40,7 +40,7 @@ export const mdCss = `
 .hv-pill.warn { background: #fff4d6; color: #9a5b00; }
 .hv-track { background: #fde5d8; }
 .hv-track-fill { background: var(--md-orange); }
-.hv-track i { background: #fff; }
+.hv-track i { background: var(--ix-surface, #fff); }
 .hv-track-cap, .at-marks { color: var(--md-muted); }
 .hv-track-cap b { color: var(--md-text); }
 .hv-hero .ix-ring-center strong { color: var(--md-text) !important; }
@@ -103,7 +103,7 @@ export const mdCss = `
 .ix-content .ix-pill, .ix-content .at-log-head .ix-pill { border-radius: 8px; }
 .ix-content .ix-pill.active, .ix-content .at-log-head .ix-pill.active { background: var(--md-orange); box-shadow: none; }
 .dtr-sel, .at-month { border-radius: 8px; }
-.req-tabs { border-radius: 12px; background: #fff; box-shadow: var(--md-shadow); }
+.req-tabs { border-radius: 12px; background: var(--ix-surface, #fff); box-shadow: var(--md-shadow); }
 .req-tabs button { border-radius: 8px; color: var(--md-muted); }
 .req-tabs button.on { background: var(--md-orange); color: #fff; box-shadow: none; }
 .req-item { border-radius: 8px; border-color: var(--md-line); }
@@ -112,7 +112,7 @@ export const mdCss = `
 
 /* ═════════ HOME: calendar / announcements / recent attendance → clean cards ═════════ */
 .adm-col > :not(.hv-hero):not(.hv-stats):not(.ix-alert) {
-  border: 0 !important; border-radius: 12px; background: #fff;
+  border: 0 !important; border-radius: 12px; background: var(--ix-surface, #fff);
   box-shadow: var(--md-shadow); overflow: hidden;
 }
 /* the section inside "recent attendance" must not draw a second border/shadow */
