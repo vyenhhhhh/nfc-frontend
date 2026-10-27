@@ -4,6 +4,7 @@ import schoolLogo from "./assets/logo.png";      // CCIS logo
 import csuLogo from "./assets/csu-logo.png";      // CSU seal
 import campus from "./assets/campus.jpg";        // same photo as the login page
 import { API, STORAGE } from "./config.js";
+import { createPhoneReader, createHelperReader, phoneNfcSupported } from "./kioskReaders.js";
 
 const RESET_MS = 6000; // how long the result stays on screen
 const MIN_READING_MS = 650; // the shortest time "Reading your card..." shows (smooth, no flash)
@@ -31,6 +32,46 @@ const KIOSK_KEY = kioskKey();
 // so a gap longer than this between keys means someone is typing by hand → ignore it.
 const MAX_KEY_GAP_MS = 60;
 
+// Which card reader this kiosk uses. Saved on the device; a link can set it: …/?reader=phone
+//   auto    = ACR122U helper if it is running, the phone's NFC on an Android phone, else the old USB reader
+//   phone   = Android phone/tablet NFC (Chrome)      acr122u = ACR122U with the helper program
+//   usb     = only the old USB reader (types the UID, can't write the one-time code)
+const READER_STORE = "mytrack.reader";
+const readerMode = () => {
+  try {
+    const url = new URL(window.location.href);
+    const fromLink = url.searchParams.get("reader");
+    if (fromLink && ["auto", "phone", "acr122u", "usb"].includes(fromLink)) {
+      localStorage.setItem(READER_STORE, fromLink);
+      url.searchParams.delete("reader");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+    return localStorage.getItem(READER_STORE) || "auto";
+  } catch {
+    return "auto";
+  }
+};
+const READER_MODE = readerMode();
+
+// ── Offline taps ── when the internet (or the server) is down, the kiosk keeps the tap on this device
+// with the time it really happened, and sends it by itself when it is back online.
+const QUEUE_STORE = "mytrack.offlineTaps";
+const NAME_STORE = "mytrack.cardNames";      // last names seen per card, to greet interns while offline
+const readJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || "") ?? d; } catch { return d; } };
+const writeJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage full or blocked */ } };
+const loadQueue = () => { const q = readJson(QUEUE_STORE, []); return Array.isArray(q) ? q : []; };
+const cachedName = (uid) => readJson(NAME_STORE, {})[uid] || null;
+const rememberName = (uid, name, photo) => {
+  if (!uid || !name) return;
+  const m = readJson(NAME_STORE, {});
+  m[uid] = { name, photo: photo || null };
+  const keys = Object.keys(m);
+  if (keys.length > 600) keys.slice(0, keys.length - 600).forEach((k) => delete m[k]);
+  writeJson(NAME_STORE, m);
+};
+const manilaTime = (d) => d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, timeZone: "Asia/Manila" });
+const manilaDate = (d) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+
 const photoUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
 
 export default function App() {
@@ -41,6 +82,18 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(new Date());
   const [photoBad, setPhotoBad] = useState(false);
+
+  // card readers that can also write the one-time code (phone NFC / ACR122U)
+  const [reader, setReader] = useState({ state: "idle", text: READER_MODE === "usb" ? "USB reader" : "Starting the card reader..." });
+  const [readerFlash, setReaderFlash] = useState("");
+  const writers = useRef({});        // { webnfc: phoneReader, acr122u: helperReader }
+  const lastCard = useRef({ uid: "", at: 0 });
+  const tapRef = useRef(null);       // the newest handleTap (the readers are set up once)
+  const phoneRef = useRef(null);
+
+  const [online, setOnline] = useState(true);
+  const [queued, setQueued] = useState(() => loadQueue().length);
+  const syncing = useRef(false);
 
   const buffer = useRef("");
   const lastKey = useRef(0);
@@ -100,12 +153,135 @@ export default function App() {
 
   useEffect(() => () => clearTimeout(resetTimer.current), []);
 
+  // start the phone NFC / ACR122U reader
+  useEffect(() => {
+    if (READER_MODE === "usb") return undefined;
+    const onCard = ({ uid, card, writer }) => {
+      if (!uid) return;
+      const now = Date.now();
+      if (lastCard.current.uid === uid && now - lastCard.current.at < 2500) return;   // the same card, still on the reader
+      lastCard.current = { uid, at: now };
+      tapRef.current?.(uid, { card, writer });
+    };
+    const onStatus = (st) => {
+      setReader((r) => ({ ...r, ...st }));
+      if (st.flash) { setReaderFlash(st.flash); setTimeout(() => setReaderFlash(""), 4000); }
+    };
+    const usePhone = READER_MODE === "phone" || (READER_MODE === "auto" && phoneNfcSupported());
+    const useHelper = READER_MODE === "acr122u" || (READER_MODE === "auto" && !phoneNfcSupported());
+    const started = [];
+    if (usePhone) {
+      const r = createPhoneReader({ onCard, onStatus });
+      writers.current.webnfc = r; phoneRef.current = r; started.push(r);
+      r.start();
+    }
+    if (useHelper) {
+      const r = createHelperReader({ onCard, onStatus: (st) => {
+        // in "auto" on a PC, no helper simply means the old USB reader is used
+        if (READER_MODE === "auto" && st.state === "offline") { setReader({ state: "usb", text: "USB reader" }); return; }
+        onStatus(st);
+      } });
+      writers.current.acr122u = r; started.push(r);
+      r.start();
+    }
+    // keep the phone's screen on while it is the kiosk
+    let lock = null;
+    const wake = async () => { try { lock = await navigator.wakeLock?.request("screen"); } catch { /* not allowed */ } };
+    if (usePhone) { wake(); document.addEventListener("visibilitychange", wake); }
+    return () => {
+      started.forEach((r) => r.stop());
+      document.removeEventListener("visibilitychange", wake);
+      try { lock?.release(); } catch { /* ignore */ }
+    };
+  }, []);
+
+  // Chrome asks for NFC permission only after a button press
+  const startPhoneNfc = async (e) => { e.currentTarget.blur(); await phoneRef.current?.start(); };
+
+  // write the next one-time code on the card that is still on the reader, then tell the server
+  const writeNextCode = async (writer, cw, uid) => {
+    const w = writers.current[writer];
+    if (!w || !cw?.payload) return { ok: false };
+    const res = await w.write(cw.payload, 3500, uid);
+    if (!res.ok) return res;
+    for (let i = 0; i < 3; i++) {   // the card already has the new code: make sure the server hears it
+      try {
+        const r = await fetch(`${API}/tap/confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
+          body: JSON.stringify({ card: cw.payload }),
+        });
+        if (r.ok || r.status === 409) break;
+      } catch { /* retry */ }
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    return { ok: true };
+  };
+
   const scheduleReset = () => {
     clearTimeout(resetTimer.current);
     resetTimer.current = setTimeout(() => { setStatus(null); setError(null); setWarning(null); }, RESET_MS);
   };
 
-  const handleTap = async (uid) => {
+  // send the taps saved while offline, oldest first (their real time goes with them)
+  const syncQueue = async () => {
+    if (syncing.current) return;
+    let q = loadQueue();
+    if (!q.length) { setQueued(0); return; }
+    syncing.current = true;
+    try {
+      while (q.length) {
+        const t = q[0];
+        let res;
+        try {
+          res = await fetch(`${API}/tap`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
+            body: JSON.stringify({ uid: t.uid, offline_at: t.at }),
+          });
+        } catch { setOnline(false); break; }            // still offline: try again later
+        if (res.status >= 500 || res.status === 429) { setOnline(res.status === 429); break; }
+        setOnline(true);
+        const d = await res.json().catch(() => ({}));
+        q = loadQueue().filter((x) => x.id !== t.id);     // sent (recorded, or refused with a reason): done
+        writeJson(QUEUE_STORE, q);
+        setQueued(q.length);
+        if (res.ok) {
+          rememberName(t.uid, d.name, d.photo);
+          setLog((prev) => prev.map((e) => (e.offlineId === t.id ? { ...d, synced: true } : e)));
+        } else {
+          setLog((prev) => prev.map((e) => (e.offlineId === t.id ? { ...e, action: "REFUSED", reason: d.message } : e)));
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    } finally { syncing.current = false; }
+  };
+  const syncRef = useRef(syncQueue);
+  syncRef.current = syncQueue;
+  useEffect(() => {
+    const go = () => syncRef.current();
+    go();
+    const iv = setInterval(go, 20000);
+    window.addEventListener("online", go);
+    return () => { clearInterval(iv); window.removeEventListener("online", go); };
+  }, []);
+
+  // the tap could not reach the server: keep it on this kiosk
+  const saveOffline = (uid) => {
+    const at = new Date();
+    const t = { id: `${at.getTime()}-${Math.random().toString(36).slice(2, 7)}`, uid, at: at.toISOString() };
+    const q = [...loadQueue(), t];
+    writeJson(QUEUE_STORE, q);
+    setQueued(q.length);
+    setOnline(false);
+    const known = cachedName(uid);
+    const entry = { action: "OFFLINE", offlineId: t.id, uid, name: known?.name || null, photo: known?.photo || null,
+      time: manilaTime(at), date: manilaDate(at), token: t.id };
+    setLog((prev) => [entry, ...prev].slice(0, 50));
+    return entry;
+  };
+
+  const handleTap = async (uid, extra = {}) => {
     if (busy.current) return;           // ignore double taps while one is processing
     busy.current = true;
     setLoading(true);
@@ -117,23 +293,36 @@ export default function App() {
     const t0 = performance.now();
     const hold = () => new Promise((r) => setTimeout(r, Math.max(0, MIN_READING_MS - (performance.now() - t0))));
     try {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) throw new TypeError("offline");
       const res = await fetch(`${API}/tap`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
-        body: JSON.stringify({ uid }),
+        body: JSON.stringify({ uid, card: extra.card ?? null, writer: extra.writer ?? null }),
       });
+      if (res.status >= 500) throw new TypeError("server down");   // the database can't be reached: keep the tap
+      setOnline(true);
       const data = await res.json().catch(() => ({}));
+      // phone / ACR122U: put the next one-time code on the card (the intern still holds it there)
+      if (res.ok && data.card_write && extra.writer) {
+        const w = await writeNextCode(extra.writer, data.card_write, uid);
+        if (!w.ok) {
+          data.note = [data.note, "Your time was recorded, but the card was moved away too soon to update it. It will update on your next tap."].filter(Boolean).join(" ");
+        }
+      }
       await hold();
       // nothing was recorded, just tell the intern why:
       //   DUPLICATE_TAP = tapped again within 5 minutes
       //   TAP_BLOCKED   = outside check-in hours, a weekend, or a holiday
       if (data.code === "DUPLICATE_TAP" || data.code === "TAP_BLOCKED") { setWarning(data); return; }
       if (!res.ok) throw new Error(data.message || "Server error");
+      rememberName(uid, data.name, data.photo);
       setStatus(data);
       setLog((prev) => [data, ...prev].slice(0, 50));
+      syncRef.current();                    // anything saved while offline goes now too
     } catch (err) {
       await hold();
-      setError(err instanceof TypeError ? "Can't reach the server. Please tell the OJT coordinator." : err.message);
+      if (err instanceof TypeError) setStatus(saveOffline(uid));   // offline: saved on the kiosk, sent later
+      else setError(err.message);
     } finally {
       setLoading(false);
       busy.current = false;
@@ -141,16 +330,18 @@ export default function App() {
     }
   };
 
+  tapRef.current = handleTap;
+
   const isIn = status?.action === "CHECK_IN";
   const ins = log.filter((l) => l.action === "CHECK_IN").length;
-  const outs = log.length - ins;
+  const outs = log.filter((l) => l.action === "CHECK_OUT").length;
   const src = photoUrl(status?.photo);
 
   const dateLabel = time.toLocaleDateString("en-PH", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Manila" });
 
   const ampm = time.toLocaleTimeString("en-US", { hour: "numeric", timeZone: "Asia/Manila" }).slice(-2);
   const hour12 = time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" }).replace(/\s?[AP]M$/, "");
-  const mode = loading ? "reading" : status ? (isIn ? "in" : "out") : warning ? "warn" : error ? "err" : "idle";
+  const mode = loading ? "reading" : status ? (status.action === "OFFLINE" ? "saved" : isIn ? "in" : "out") : warning ? "warn" : error ? "err" : "idle";
   const first = (n) => String(n || "?").trim().charAt(0).toUpperCase();
 
   return (
@@ -172,7 +363,8 @@ export default function App() {
               <div><b>{kiosk.name}</b><small>{kiosk.who} can tap here</small></div>
             </div>
           ) : null}
-          <div className="kq-live">Online</div>
+          <div className={`kq-reader ${reader.state}`} title={reader.text}><i />{reader.text}</div>
+          {online ? <div className="kq-live">Online</div> : <div className="kq-live off">Offline</div>}
           <button type="button" className="kq-full" onClick={toggleFull} title={isFull ? "Exit full screen (Esc)" : "Full screen (F11)"} aria-label={isFull ? "Exit full screen" : "Full screen"}>
             {isFull ? (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
@@ -205,12 +397,16 @@ export default function App() {
                   ) : (
                     <>
                       <h1>Tap your<br />NFC card.</h1>
-                      <h2>Check in when you arrive, check out when you leave.</h2>
-                      <p>Hold your ID card flat on the reader until you see your name.</p>
+                      <h2>Time in when you arrive, time out when you leave.</h2>
+                      <p>{writers.current.webnfc ? "Hold your ID card flat on the back of this phone until you see your name." : "Hold your ID card flat on the reader until you see your name."}</p>
                       <div className="kq-steps">
-                        <div className="kq-glass"><b><em>1</em>Arrive</b>Tap to check in</div>
-                        <div className="kq-glass"><b><em>2</em>Leave</b>Tap to check out</div>
+                        <div className="kq-glass"><b><em>1</em>Arrive</b>Tap to time in</div>
+                        <div className="kq-glass"><b><em>2</em>Leave</b>Tap to time out</div>
                       </div>
+                      {reader.state === "needs-permission" && (
+                        <button type="button" className="kq-start" onClick={startPhoneNfc}>Start NFC</button>
+                      )}
+                      {readerFlash && <div className="kq-flash">{readerFlash}</div>}
                     </>
                   )}
                 </div>
@@ -224,7 +420,7 @@ export default function App() {
                   <i><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg></i>
                 </div>
                 <div className="kq-res-text">
-                  <div className="kq-k">{isIn ? "Checked in" : "Checked out"}</div>
+                  <div className="kq-k">{isIn ? "Time in recorded" : "Time out recorded"}</div>
                   <h1>{status.name || "Intern"}</h1>
                   <p>{isIn ? "Welcome! Have a good day at work." : "Thank you, see you next time!"}</p>
                   <div className="kq-meta">
@@ -233,6 +429,21 @@ export default function App() {
                     {status.uid && <span>Card ····{String(status.uid).slice(-4)}</span>}
                   </div>
                   {status.note && <div className="kq-note">{status.note}</div>}
+                </div>
+                <div className="kq-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
+              </div>
+            )}
+
+            {mode === "saved" && (
+              <div className="kq-result kq-glass saved" key={status.token}>
+                <div className="kq-photo icon">
+                  <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 21h14" /></svg>
+                </div>
+                <div className="kq-res-text">
+                  <div className="kq-k">Saved on this kiosk</div>
+                  <h1>{status.name || "Tap saved"}</h1>
+                  <p>The kiosk is offline right now. Your tap was saved with the time <b>{status.time}</b> and will be sent automatically when the internet is back. No need to tap again.</p>
+                  <div className="kq-meta"><span>Card ····{String(status.uid).slice(-4)}</span><span>{queued} waiting to send</span></div>
                 </div>
                 <div className="kq-count"><i style={{ animationDuration: RESET_MS + "ms" }} /></div>
               </div>
@@ -285,9 +496,12 @@ export default function App() {
             <h3>Recent taps<small>On this kiosk since it was opened</small></h3>
             {log.length > 0 && <button type="button" className="kq-clear" onClick={(e) => { e.currentTarget.blur(); setLog([]); }}>Clear</button>}
           </div>
+          {queued > 0 && (
+            <div className="kq-queue"><b>{queued}</b> tap{queued === 1 ? "" : "s"} saved while offline · sent automatically when the internet is back</div>
+          )}
           <div className="kq-nums">
-            <div className="in"><b>{ins}</b><small>Checked in</small></div>
-            <div className="out"><b>{outs}</b><small>Checked out</small></div>
+            <div className="in"><b>{ins}</b><small>Time in</small></div>
+            <div className="out"><b>{outs}</b><small>Time out</small></div>
           </div>
           <div className="kq-list">
             {log.length === 0 ? (
@@ -299,7 +513,10 @@ export default function App() {
               <div key={e.token + i} className="kq-row">
                 <span className="kq-av">{first(e.name)}</span>
                 <div className="kq-row-t"><b>{e.name || e.uid}</b><small>{e.date}</small></div>
-                <span className={e.action === "CHECK_IN" ? "kq-tag in" : "kq-tag out"}>{e.action === "CHECK_IN" ? "IN" : "OUT"}</span>
+                <span className={e.action === "CHECK_IN" ? "kq-tag in" : e.action === "CHECK_OUT" ? "kq-tag out" : e.action === "OFFLINE" ? "kq-tag wait" : "kq-tag bad"}
+                  title={e.reason || undefined}>
+                  {e.action === "CHECK_IN" ? "IN" : e.action === "CHECK_OUT" ? "OUT" : e.action === "OFFLINE" ? "SAVED" : "NOT RECORDED"}
+                </span>
                 <time>{e.time}</time>
               </div>
             ))}
@@ -343,7 +560,18 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-where.bad { padding: 8px 14px; background: rgba(185,28,28,.35); border-color: rgba(252,165,165,.5); font-size: 12.5px; font-weight: 600; max-width: 420px; }
 .kq-live { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; padding: 7px 13px; border-radius: 99px;
   background: rgba(34,197,94,.18); border: 1px solid rgba(134,239,172,.45); color: #bbf7d0; }
-.kq-brand + .kq-live { margin-left: auto; }
+.kq-brand + .kq-live, .kq-brand + .kq-reader { margin-left: auto; }
+/* which card reader this kiosk uses (phone NFC / ACR122U / USB) */
+.kq-reader { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 7px 13px; border-radius: 99px; max-width: 320px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff; }
+.kq-reader i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; }
+.kq-reader.ready i { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
+.kq-reader.usb i { background: #93c5fd; }
+.kq-reader:is(.error, .unsupported, .offline, .needs-permission) { background: rgba(185,28,28,.3); border-color: rgba(252,165,165,.5); }
+.kq-reader:is(.error, .unsupported, .offline, .needs-permission) i { background: #f87171; }
+.kq-start { margin-top: 18px; font: inherit; font-size: 18px; font-weight: 800; padding: 14px 30px; border-radius: 14px; border: 0; cursor: pointer;
+  color: #7c2d12; background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+.kq-flash { margin-top: 14px; font-size: 14px; font-weight: 600; padding: 10px 14px; border-radius: 12px; background: rgba(185,28,28,.35); border: 1px solid rgba(252,165,165,.5); max-width: 420px; }
 .kq-full { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; cursor: pointer; color: #fff;
   background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.28); transition: background .15s; }
 .kq-full:hover { background: rgba(255,255,255,.24); }
@@ -442,6 +670,13 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-row-t small { font-size: 11px; color: rgba(255,255,255,.7); }
 .kq-tag { font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 99px; flex: none; }
 .kq-tag.in { background: rgba(34,197,94,.22); color: #bbf7d0; } .kq-tag.out { background: rgba(255,180,143,.22); color: #ffd5c0; }
+.kq-queue { font-size: 12px; line-height: 1.45; padding: 9px 12px; border-radius: 12px; background: rgba(251,191,36,.16); border: 1px solid rgba(253,230,138,.45); color: #fef3c7; }
+.kq-queue b { font-size: 14px; color: #fde68a; }
+.kq-tag.wait { background: rgba(251,191,36,.22); color: #fde68a; } .kq-tag.bad { background: rgba(248,113,113,.25); color: #fecaca; }
+.kq-live.off { background: rgba(251,191,36,.18); border-color: rgba(253,230,138,.5); color: #fde68a; }
+.kq-live.off::before { background: #fbbf24; box-shadow: 0 0 10px #fbbf24; }
+.kq-result.saved .kq-photo.icon { background: linear-gradient(135deg, #fbbf24, #d97706); }
+.kq-result.saved .kq-k { color: #fde68a; }
 .kq-row time { font-size: 12px; font-weight: 700; flex: none; white-space: nowrap; }
 .kq-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px;
   border: 1px dashed rgba(255,255,255,.25); border-radius: 14px; color: rgba(255,255,255,.8); padding: 20px; }
@@ -467,8 +702,12 @@ html, body, #root { margin: 0; height: 100%; }
 @media (max-width: 700px) {
   .kq-top { flex-wrap: wrap; }
   .kq-where { margin-left: 0; order: 3; width: 100%; }
+  .kq-reader { order: 4; max-width: 100%; }
   .kq-idle { flex-direction: column; text-align: center; gap: 10px; }
-  .kq-scene { transform: scale(.8); margin: -30px 0; }
+  .kq-scene { transform: scale(.72); margin: -40px 0; }
+  .kq-left { min-height: auto; }
+  .kq-stage { flex: none; padding: 26px 0 10px; }
+  .kq-clock { font-size: 56px; }
   .kq-steps { justify-content: center; }
   .kq-result { flex-direction: column; text-align: center; padding: 24px 20px 28px; }
   .kq-meta { justify-content: center; }

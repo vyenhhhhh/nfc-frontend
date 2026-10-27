@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import Shell, {
-  Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar, Modal, Empty, Inbox,
+  Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar, Modal, Drawer, Empty, Inbox,
   calcHours, fmtTime, greeting, esc, requiredHoursFor, programKey,
   PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, dueStatus, AnnouncementBoard, AccountSecurity, UserDetails,
   sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, SCHEDULE, liveRefresh, todayManila,
@@ -15,7 +15,7 @@ import { DashLayout, Panel, DashRow, DashEmpty, TimeLine } from "../components/D
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API, STORAGE } from "../config.js";
-import { ID_OFFICE } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
+import { ID_OFFICE, CardFace, CardBack, idCardCss, loadCardSettings } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
 
 
 const NAV = [
@@ -104,8 +104,8 @@ export default function InternDashboard() {
       {path === "/intern/online" && <SubmitOnline user={user} />}
       {path === "/intern/movs" && <SubmitMov user={user} unlocked={user.tracking_type === "output" || totalHours >= required} totalHours={totalHours} required={required} />}
       {path === "/intern/requests" && <MyRequests user={user} records={records} />}
-      {path === "/intern/nfc" && <NfcApply user={user} />}
-      {path === "/intern/profile" && <Profile user={user} />}
+      {path === "/intern/nfc" && <NfcApply user={user} records={records} />}
+      {path === "/intern/profile" && <Profile user={user} totalHours={totalHours} required={required} days={uniqueDays} />}
     </Shell>
   );
 }
@@ -154,6 +154,9 @@ function MyRequests({ user, records }) {
   const [hasSup, setHasSup] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
+  const [type, setType] = useState("all");
+  const [openKey, setOpenKey] = useState(null);
+  const go = useNavigate();
 
   const load = async () => {
     const get = (url) => fetch(url, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null);
@@ -196,7 +199,7 @@ function MyRequests({ user, records }) {
     ...fixes.map((c) => ({
       key: `c${c.id}`, kind: "correction", date: c.date, status: c.status, viaSupervisor: true, supervisorOnly: true,
       endorsed: !!c.endorsed_at || c.status === "endorsed",
-      details: `${c.kind === "day" ? `Missed the whole day · in ${time12(c.requested_in)}, out` : c.kind === "in" ? `Forgot time in · in ${time12(c.requested_in)}, out` : "Forgot time out ·"} ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks,
+      details: `${c.kind === "day" ? `Missed the whole day · in ${time12(c.requested_in)}, out` : c.kind === "in" ? `Forgot to time in · in ${time12(c.requested_in)}, out` : "Forgot to time out ·"} ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks,
     })),
     ...wfh.map((w) => ({
       key: `w${w.id}`, kind: "wfh", date: w.created_at, status: w.status, viaSupervisor: true, supervisorOnly: true, endorsed: false,
@@ -205,51 +208,120 @@ function MyRequests({ user, records }) {
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   const groupOf = (r) => (r.status === "approved" ? "approved" : r.status === "rejected" ? "rejected" : "waiting");
-  const count = (g) => rows.filter((r) => groupOf(r) === g).length;
-  const shown = filter === "all" ? rows : rows.filter((r) => groupOf(r) === filter);
+  const ofType = type === "all" ? rows : rows.filter((r) => r.kind === type);
+  const count = (g) => ofType.filter((r) => groupOf(r) === g).length;
+  const shown = filter === "all" ? ofType : ofType.filter((r) => groupOf(r) === filter);
+  const open = rows.find((r) => r.key === openKey);
+
+  // this month's numbers for the side card
+  const ym = manilaToday().slice(0, 7);
+  const thisMonth = rows.filter((r) => String(r.date || "").slice(0, 7) === ym);
+  const otCredited = records.filter((r) => r.ot_status === "approved" && String(r.date || "").slice(0, 7) === ym)
+    .reduce((n, r) => n + Number(r.ot_approved_minutes || 0), 0);
+
+  const Steps = ({ r, big }) => (
+    <ol className={big ? "rq-steps rq-steps-lg" : "rq-trk"} aria-label="Progress">
+      {reqSteps(r).map((x) => (
+        <li key={x.label} className={x.state}><i>{big ? (x.state === "done" ? "✓" : x.state === "fail" ? "✕" : "") : ""}</i><span>{x.label}</span></li>
+      ))}
+    </ol>
+  );
 
   return (
     <>
       <PageHeader title="My Requests" sub="Everything you filed and where it is now." live />
 
-      <div className="mon-bar">
-        {[["all", "All", rows.length], ["waiting", "Waiting", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
+      <div className="mon-bar rq-bar">
+        {[["all", "All", ofType.length], ["waiting", "Waiting", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
           <button key={k} type="button" className={filter === k ? "mon-chip on" : "mon-chip"} onClick={() => setFilter(k)}>{l} · {n}</button>
         ))}
+        <span className="mon-sep" />
+        <select className="ix-select at-month rq-type" value={type} aria-label="Filter by type" onChange={(e) => setType(e.target.value)}>
+          <option value="all">All types</option>
+          {Object.entries(REQ_KINDS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
       </div>
 
-      {loading ? <Spinner /> : (
-        <Inbox
-          items={shown}
-          keyOf={(r) => r.key}
-          emptyTitle={rows.length ? "Nothing here" : "No requests yet"}
-          emptySub="Online attendance, overtime, time corrections and WFH requests you file will show up here."
-          row={(r) => {
-            const st = REQ_STATUS[r.status] || { label: r.status || "—", type: "none" };
-            return { icon: REQ_KINDS[r.kind].icon, tone: groupOf(r) === "waiting" ? "" : groupOf(r), name: REQ_KINDS[r.kind].label,
-              sub: r.details || "", tag: <Badge label={st.label} type={st.type} />, meta: day(r.date) };
-          }}
-          detail={(r) => {
-            const st = REQ_STATUS[r.status] || { label: r.status || "—", type: "none" };
-            return (
-              <>
-                <div className="ibx-head"><span className={`ibx-ic big ${groupOf(r) === "waiting" ? "" : groupOf(r)}`}><Icon name={REQ_KINDS[r.kind].icon} size={20} /></span>
-                  <div><b>{REQ_KINDS[r.kind].label}</b><small>{day(r.date)}</small></div>
-                  <span style={{ marginLeft: "auto" }}><Badge label={st.label} type={st.type} /></span></div>
-                <div className="ibx-sec"><span>Where it is now</span>
-                  <ol className="rq-steps rq-steps-lg" aria-label="Progress">
-                    {reqSteps(r).map((x) => (
-                      <li key={x.label} className={x.state}><i>{x.state === "done" ? "✓" : x.state === "fail" ? "✕" : ""}</i><span>{x.label}</span></li>
-                    ))}
-                  </ol>
-                </div>
-                {r.details && <div className="ibx-sec"><span>Details</span><p>{r.details}</p></div>}
-                {r.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{r.remarks}”</p></div>}
-              </>
-            );
-          }}
-        />
-      )}
+      <div className="rq-cols">
+        <div className="ix-card flush rq-table">
+          {loading ? <Spinner /> : shown.length === 0 ? (
+            <div className="rq-empty"><Icon name="inbox" size={22} /><b>{rows.length ? "Nothing here" : "No requests yet"}</b>
+              <small>Online attendance, overtime, time corrections and WFH requests you file will show up here.</small></div>
+          ) : (
+            <table>
+              <thead><tr><th>Request</th><th>Filed</th><th>Where it is</th><th>Status</th></tr></thead>
+              <tbody>
+                {shown.map((r) => {
+                  const st = REQ_STATUS[r.status] || { label: r.status || "—", type: "none" };
+                  const g = groupOf(r);
+                  return (
+                    <tr key={r.key} className={`g-${g}`} tabIndex={0} onClick={() => setOpenKey(r.key)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenKey(r.key); } }}>
+                      <td>
+                        <div className="rq-what">
+                          <span className={`rq-ic ${g}`}><Icon name={REQ_KINDS[r.kind].icon} size={15} /></span>
+                          <div><strong>{REQ_KINDS[r.kind].label}</strong><small>{r.details || ""}</small>
+                            {r.remarks && g === "rejected" && <em className="rq-rem">“{r.remarks}”</em>}</div>
+                        </div>
+                      </td>
+                      <td className="rq-date">{day(r.date)}</td>
+                      <td><Steps r={r} /></td>
+                      <td className="rq-st"><Badge label={r.status === "endorsed" ? "Waiting" : st.label} type={st.type} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <aside className="rq-side">
+          <div className="ix-card rq-box">
+            <b>This month</b>
+            <div className="rq-nums">
+              <div><small>Waiting</small><strong className="w">{thisMonth.filter((r) => groupOf(r) === "waiting").length}</strong></div>
+              <div><small>Approved</small><strong className="a">{thisMonth.filter((r) => groupOf(r) === "approved").length}</strong></div>
+              <div><small>Rejected</small><strong className="r">{thisMonth.filter((r) => groupOf(r) === "rejected").length}</strong></div>
+              <div><small>OT credited</small><strong>{fmtMinutes(otCredited)}</strong></div>
+            </div>
+          </div>
+          <div className="ix-card rq-box">
+            <b>File a request</b>
+            <div className="rq-new">
+              <button type="button" title="Opens My Attendance: use “Request fix” on that day" onClick={() => go("/intern/records")}><Icon name="pencil" size={15} /><span>Forgot to time in / out</span></button>
+              <button type="button" onClick={() => go("/intern/records?missed=1")}><Icon name="calendar" size={15} /><span>Missed a whole day</span></button>
+              <button type="button" onClick={() => go("/intern/online")}><Icon name="upload" size={15} /><span>Online attendance</span></button>
+              <button type="button" onClick={() => go("/intern/online?wfh=1")}><Icon name="globe" size={15} /><span>Work from home</span></button>
+            </div>
+          </div>
+          <div className="ix-card rq-box rq-how-box">
+            <b>How approval works</b>
+            <ol className="rq-how2">
+              <li><span>1</span><div><strong>You file it</strong><small>From My Attendance or Submit Online.</small></div></li>
+              <li><span>2</span><div><strong>Your HTE supervisor checks it</strong><small>Tap fixes and work arrangement end here.</small></div></li>
+              <li><span>3</span><div><strong>The OJT coordinator decides</strong><small>For online days and overtime.</small></div></li>
+            </ol>
+            <div className="rq-legend">
+              <small>What the colors mean</small>
+              <div><span><i className="done" />Done</span><span><i className="now" />Waiting</span><span><i className="fail" />Rejected</span></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {open && (() => {
+        const st = REQ_STATUS[open.status] || { label: open.status || "—", type: "none" };
+        return (
+          <Drawer inPage title={REQ_KINDS[open.kind].label} kicker={`Filed ${day(open.date)}`} icon={REQ_KINDS[open.kind].icon} onClose={() => setOpenKey(null)}>
+            <div className="rq-drawer">
+              <div className="rq-dst"><Badge label={st.label} type={st.type} /></div>
+              <div className="ibx-sec"><span>Where it is now</span><Steps r={open} big /></div>
+              {open.details && <div className="ibx-sec"><span>Details</span><p>{open.details}</p></div>}
+              {open.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{open.remarks}”</p></div>}
+            </div>
+          </Drawer>
+        );
+      })()}
     </>
   );
 }
@@ -345,11 +417,11 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   const lastTime = lastTap
     ? fmtTime(lastTap.action === "CHECK_OUT" && lastTap.checked_out_at ? lastTap.checked_out_at : lastTap.checked_in_at)
     : "";
-  let state = { tone: "", title: "Not checked in", text: "Tap your card on the kiosk when you arrive." };
+  let state = { tone: "", title: "No time in yet", text: "Tap your card on the kiosk when you arrive." };
   if (lastTap && lastIn && lastTap.date === today) {
-    state = { tone: "live", title: "You're on the clock", text: `Tapped in at ${lastTime} · ${fmtElapsed(now - new Date(lastTap.checked_in_at).getTime())} so far` };
+    state = { tone: "live", title: "You're on the clock", text: `Timed in at ${lastTime} · ${fmtElapsed(now - new Date(lastTap.checked_in_at).getTime())} so far` };
   } else if (lastTap && lastTap.date === today) {
-    state = { tone: "", title: "Checked out", text: `Tapped out at ${lastTime}` };
+    state = { tone: "", title: "Timed out", text: `Timed out at ${lastTime}` };
   }
 
   // one row per day (like My Attendance)
@@ -371,7 +443,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
     .slice(0, 5);
   const todayInfo = dayInfo(today);
 
-  // forgot to tap out / forgot to tap in: each day to fix, newest first (the request opens in My Attendance)
+  // forgot to time out / forgot to time in: each day to fix, newest first (the request opens in My Attendance)
   const toFix = missingTaps(records, fixes, today);
   const fixDay = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -503,7 +575,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
         { icon: "calendar", tone: "t-green", label: "Days present", value: uniqueDays, sub: "days logged" },
         { icon: "flame", tone: "t-amber", label: "Streak", value: streak + (streak === 1 ? " day" : " days"), sub: streak >= 3 ? "keep it going" : "weekdays in a row" },
         { icon: "globe", tone: "t-blue", label: "Onsite / online", value: `${onsite} / ${online}`, sub: "taps and remote logs" },
-        { icon: "folder", tone: "t-purple", label: "Requirements", value: pre ? `${pre.approved} / ${pre.total}` : "—", sub: "pre-internship approved", onClick: () => go("/intern/movs") },
+        { icon: "folder", tone: "t-purple", label: "Requirements", value: pre ? `${pre.approved} / ${pre.total}` : "—", sub: "pre-internship done", onClick: () => go("/intern/movs") },
       ]}
       left={(
         <>
@@ -520,7 +592,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
                     <div key={r.id} className="dbx-fix-row">
                       <span className="dbx-fix-ic"><Icon name="warn" size={14} /></span>
                       <span className="dbx-fix-tx">
-                        <b>{lone ? "Forgot to tap in?" : `No time out · ${fixDay(r.date)}`}</b>
+                        <b>{lone ? "Forgot to time in?" : `No time out · ${fixDay(r.date)}`}</b>
                         <small>{lone
                           ? `Your only tap today: ${fmtTime(r.checked_in_at).replace(/:\d\d(?= )/, "")}`
                           : `Only one tap: ${fmtTime(r.checked_in_at).replace(/:\d\d(?= )/, "")}`}</small>
@@ -616,7 +688,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
                 </span>
                 <span className="dbx-tap-day">{dShort(t.date).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}</span>
                 <span className={`dbx-tag ${t.online ? "purple" : "blue"}`}>{t.online ? "Online" : "Onsite"}</span>
-                <span className={`dbx-tag ${t.kind === "in" ? "green" : "orange"}`}>{t.kind === "in" ? "Check in" : "Check out"}</span>
+                <span className={`dbx-tag ${t.kind === "in" ? "green" : "orange"}`}>{t.kind === "in" ? "Time in" : "Time out"}</span>
                 <span className="dbx-tap-time">{fmtTime(t.at).replace(/:\d\d(?= )/, "")}</span>
               </li>
             ))}
@@ -628,8 +700,8 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
 }
 
 /* Days that need a time correction:
-   - a past day with a time in but no time out (forgot to tap out, or the only tap was really the time out)
-   - today, when the only tap is late in the afternoon (likely a time out: forgot to tap in)
+   - a past day with a time in but no time out (forgot to time out, or the only tap was really the time out)
+   - today, when the only tap is late in the afternoon (likely a time out: forgot to time in)
    Days with a request already waiting (or approved) are left out. */
 const FIX_OPEN = ["pending", "endorsed", "approved"];
 const minutesOf = (v) => Math.round(manilaHour(v) * 60);   // minutes after midnight, Manila time
@@ -644,10 +716,10 @@ export function missingTaps(records, fixes, today) {
 
 /* ───────────────────────── My Attendance (records + total hours) ───────────────────────── */
 function Attendance({ user, records, loading, required, program, onRefresh }) {
-  // forgot to tap out → request a time correction (the HTE supervisor approves or rejects it)
+  // forgot to time out → request a time correction (the HTE supervisor approves or rejects it)
   const [fixes, setFixes] = useState([]);
   const [fixFor, setFixFor] = useState(null);   // { id, date, tap, out, canOut } of the record being fixed
-  const [fixKind, setFixKind] = useState("out"); // "out" = forgot to tap out, "in" = forgot to tap in
+  const [fixKind, setFixKind] = useState("out"); // "out" = forgot to time out, "in" = forgot to time in
   const [fixTime, setFixTime] = useState("17:00");
   const [fixIn, setFixIn] = useState("08:00");
   // missed the whole day (no tap at all)
@@ -714,6 +786,13 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
   const fixOf = (attendanceId) => fixes.find((f) => f.attendance_id === attendanceId);
   const yesterday = addDays(manilaToday(), -1);
   const openDay = () => { setDayForm({ date: "", time_in: "08:00", time_out: "17:00", reason: "" }); setDayMsg(null); setDayOpen(true); };
+  // opened from My Requests → "Missed a whole day"
+  useEffect(() => {
+    if (!/[?&]missed=1/.test(window.location.search)) return;
+    window.history.replaceState(window.history.state, "", window.location.pathname);   // open it once, not on every refresh
+    openDay();
+    /* eslint-disable-next-line */
+  }, []);
   const sendDay = async (e) => {
     e.preventDefault();
     const wd = weekdayIdx(dayForm.date);
@@ -790,8 +869,8 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
     { icon: "clock", tone: "blue", label: "Total hours", value: totalHours + "h", hint: `${pct.toFixed(0)}% of ${required}h`, bar: pct },
     { icon: "tap", tone: "green", label: "Average / day", value: avgHours + "h", hint: "hours per day present" },
     noCheckout > 0
-      ? { icon: "warn", tone: "red", label: "No checkout", value: noCheckout, hint: noCheckout === 1 ? "day to fix" : "days to fix" }
-      : { icon: "check", tone: "red ok", label: "No checkout", value: 0, hint: "all days complete" },
+      ? { icon: "warn", tone: "red", label: "No time out", value: noCheckout, hint: noCheckout === 1 ? "day to fix" : "days to fix" }
+      : { icon: "check", tone: "red ok", label: "No time out", value: 0, hint: "all days complete" },
   ];
 
   const shownDays = monthDays.filter(([, t]) => filter === "all" || (filter === "online" ? t.online : !t.online));
@@ -803,18 +882,18 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
   const outCell = (date, t) => {
     if (t.checkout && !t.openId) return <span>{hm(t.checkout)}</span>;
     const f = t.openId && fixOf(t.openId);
-    const past = date < manilaToday();          // today you can still tap out at the kiosk
-    // today: a single tap late in the afternoon was probably the time out (forgot to tap in)
+    const past = date < manilaToday();          // today you can still time out at the kiosk
+    // today: a single tap late in the afternoon was probably the time out (forgot to time in)
     const lateTap = !past && t.openIn && minutesOf(t.openIn) >= 16 * 60;
     if (f?.status === "pending" || f?.status === "endorsed") return <Badge label="Fix requested" type="pending" />;
     return (
       <span className="at-fix">
-        <Badge label={f?.status === "rejected" ? "Fix rejected" : date === manilaToday() ? "Still in" : "No checkout"} type={f?.status === "rejected" ? "rejected" : date === manilaToday() ? "in" : "pending"} />
+        <Badge label={f?.status === "rejected" ? "Fix rejected" : date === manilaToday() ? "Still in" : "No time out"} type={f?.status === "rejected" ? "rejected" : date === manilaToday() ? "in" : "pending"} />
         {(past || lateTap) && t.openId && <button type="button" className="at-fix-btn" onClick={() => openFix(recOf(t.openId))}>Request fix</button>}
       </span>
     );
   };
-  // a late time in on a complete day: "Fix time in" (forgot to tap in when they arrived)
+  // a late time in on a complete day: "Fix time in" (forgot to time in when they arrived)
   const inFix = (t) => {
     if (t.online || !t.firstId || t.openId === t.firstId) return null;
     const f = fixOf(t.firstId);
@@ -822,7 +901,7 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
     if (f?.status === "approved") return null;
     if (!t.checkin || minutesOf(t.checkin) <= SCHEDULE_START_MIN) return null;
     if (t.date < addDays(manilaToday(), -7)) return null;   // only the last 7 days, so old days stay clean
-    return <button type="button" className="at-fix-btn sm at-fix-in" title="Forgot to tap in when you arrived?" onClick={() => openFix(recOf(t.firstId), "in")}>Fix time in</button>;
+    return <button type="button" className="at-fix-btn sm at-fix-in" title="Forgot to time in when you arrived?" onClick={() => openFix(recOf(t.firstId), "in")}>Fix time in</button>;
   };
   // group the days by month
   const groups = [];
@@ -845,13 +924,13 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
               {fixFor.canOut && (
                 <label className={fixKind === "out" ? "fx-kind on" : "fx-kind"}>
                   <input type="radio" name="fx-kind" checked={fixKind === "out"} onChange={() => setFixKind("out")} />
-                  <b>I forgot to tap out</b>
-                  <small>I tapped in at {hm(fixFor.tap)} but not when I left.</small>
+                  <b>I forgot to time out</b>
+                  <small>I timed in at {hm(fixFor.tap)} but not when I left.</small>
                 </label>
               )}
               <label className={fixKind === "in" ? "fx-kind on" : "fx-kind"}>
                 <input type="radio" name="fx-kind" checked={fixKind === "in"} onChange={() => setFixKind("in")} />
-                <b>I forgot to tap in</b>
+                <b>I forgot to time in</b>
                 <small>{fixFor.out
                   ? `I arrived earlier than my tap at ${hm(fixFor.tap)}.`
                   : `My tap at ${hm(fixFor.tap)} was when I left.`}</small>
@@ -886,8 +965,13 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
       )}
 
       {dayOpen && (
-        <Modal title="Missed a whole day?" sub="No tap at all on a workday. Your HTE supervisor approves or rejects it." onClose={() => setDayOpen(false)}>
-          <form onSubmit={sendDay} className="ix-form">
+        <Drawer title="Missed a whole day?" kicker="Attendance request" icon="calendar"
+          sub="No tap at all on a workday. Your HTE supervisor approves or rejects it." onClose={() => setDayOpen(false)}
+          footer={(close) => (<>
+            <button type="button" className="ix-b ghost" onClick={close} disabled={dayBusy}>Cancel</button>
+            <button type="submit" form="day-form" className="ix-b primary" disabled={dayBusy}>{dayBusy ? "Sending..." : "Send request"}</button>
+          </>)}>
+          <form id="day-form" onSubmit={sendDay} className="ix-form">
             <Msg msg={dayMsg} />
             <div className="ix-field">
               <label htmlFor="day-date">Which day?</label>
@@ -911,12 +995,22 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
                 placeholder="e.g. I left my card at home and the guard let me in. My supervisor saw me that day."
                 onChange={(e) => setDayForm((f) => ({ ...f, reason: e.target.value }))} />
             </div>
-            <div className="ix-form-actions">
-              <button type="button" className="ix-b ghost" onClick={() => setDayOpen(false)} disabled={dayBusy}>Cancel</button>
-              <button type="submit" className="ix-b primary" disabled={dayBusy}>{dayBusy ? "Sending..." : "Send request"}</button>
-            </div>
           </form>
-        </Modal>
+          <div className="ix-drawer-steps">
+            <h3>What happens next</h3>
+            <ol>
+              <li><span>1</span><b>Your HTE supervisor approves or rejects it</b></li>
+              <li><span>2</span><b>Approved days show on your attendance and DTR</b></li>
+              <li><span>3</span><b>Follow it in My Requests</b></li>
+            </ol>
+          </div>
+          {dayWaiting.length > 0 && (
+            <div className="ix-drawer-note">
+              <Icon name="clock" size={14} />
+              <span>Already waiting: {dayWaiting.map((f) => new Date(f.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")}</span>
+            </div>
+          )}
+        </Drawer>
       )}
 
       {/* one slim summary: progress on the left, the numbers beside it */}
@@ -948,8 +1042,9 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
           <option value="all">All months</option>
           {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
         </select>
-        <span className="at-scale-note">Bars show when you were in, 7 AM – 7 PM</span>
-        <button type="button" className="at-fix-btn at-day-btn" onClick={openDay} title="No tap at all on a workday? Ask your supervisor to add it.">Missed a whole day?</button>
+        <div className="at-day-box">
+          <button type="button" className="at-fix-btn at-day-btn" onClick={openDay} title="No tap at all on a workday? Ask your supervisor to add it.">Missed a whole day?</button>
+        </div>
       </div>
       {dayWaiting.length > 0 && (
         <div className="at-day-wait">
@@ -962,9 +1057,10 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
       <div className="at-log2">
         {loading ? <Spinner /> : shownDays.length === 0 ? (
           <Empty icon="list" title="No attendance records match this filter." />
-        ) : groups.map((g) => (
+        ) : groups.map((g, gi) => (
           <div key={g.m} className="at-grp">
-            <div className="at-grp-h"><span>{monthName(g.m)}</span><small>{g.days.length} day{g.days.length === 1 ? "" : "s"} · {Math.round(g.days.reduce((n, [, t]) => n + (hoursOf(t) || 0), 0) * 10) / 10}h</small></div>
+            <div className="at-grp-h"><span>{monthName(g.m)}</span><small>{g.days.length} day{g.days.length === 1 ? "" : "s"} · {Math.round(g.days.reduce((n, [, t]) => n + (hoursOf(t) || 0), 0) * 10) / 10}h</small>
+              {gi === 0 && <em className="at-scale-note">Bars show when you were in, 7 AM – 7 PM</em>}</div>
             <ul className="at-rows">
               {g.days.map(([date, t]) => {
                 const hrs = hoursOf(t);
@@ -1036,6 +1132,8 @@ function SubmitOnline({ user }) {
   const [msg, setMsg] = useState(null);
   const [subs, setSubs] = useState([]);
   const [loadingSubs, setLoadingSubs] = useState(true);
+  const [tab, setTab] = useState("all");
+  const [openId, setOpenId] = useState(null);
 
   const fetchSubs = async () => {
     try {
@@ -1068,6 +1166,10 @@ function SubmitOnline({ user }) {
     }
   };
 
+  const shown = subs
+    .filter((x) => tab === "all" || soGroup(x) === tab)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
   const handleSubmit = async (e) => {
     e.preventDefault(); setSub(true); setMsg(null);
     try {
@@ -1089,61 +1191,152 @@ function SubmitOnline({ user }) {
       <PageHeader title="Submit Online Attendance" sub="For asynchronous or remote workdays." />
       <WorkModeCard user={user} />
       <Msg msg={msg} />
-      {loadingSubs ? <Spinner /> : (
-        <Inbox
-          items={[{ id: "__new" }, ...subs]}
-          row={(x) => x.id === "__new"
-            ? { icon: "plus", name: "New online attendance", sub: "Log a day you worked remotely", tag: null, meta: "" }
-            : { icon: "upload", tone: x.status === "approved" ? "approved" : x.status === "rejected" ? "rejected" : "waiting",
-                name: String(x.date).slice(0, 10), sub: x.description,
-                tag: <Badge label={x.status === "endorsed" ? "Confirmed" : cap(x.status || "pending")} type={statusType(x.status)} />, meta: "" }}
-          detail={(x) => x.id === "__new" ? (
-            <form onSubmit={handleSubmit} className="ann-compose so-compose">
-              {/* everything fits in the panel: a shorter tasks box and the button right under it (no scrolling) */}
-              <style>{`
-                .ix-page .ix-content .ann-compose.so-compose { gap: 10px !important; min-height: 0 !important; }
-                .ix-page .ix-content .so-compose > .ix-field { flex: none !important; }
-                .ix-page .ix-content .so-compose textarea { height: 140px !important; min-height: 0 !important; flex: none !important; resize: vertical; }
-                .ix-page .ix-content .so-compose .ibx-act { position: static !important; margin: 2px 0 0 !important; padding: 0 !important;
-                  border: 0 !important; background: none !important; box-shadow: none !important; }
-              `}</style>
-              <div className="ibx-head"><span className="ibx-ic big"><Icon name="upload" size={20} /></span>
-                <div><b>New online attendance</b><small>Your HTE supervisor confirms it first, then your OJT coordinator approves or rejects it.</small></div></div>
-              <div className="ix-field">
-                <label htmlFor="ix-date">Date of work</label>
-                <input id="ix-date" type="date" value={form.date} required max={manilaToday()}
-                  onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
-              </div>
-              <div className="ix-field">
-                <label htmlFor="ix-desc">Tasks completed</label>
-                <textarea id="ix-desc" rows={5} value={form.description} required
-                  placeholder="Describe in detail what you worked on that day..."
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
-              </div>
-              <div className="ibx-act">
-                <span style={{ flex: 1 }} />
-                <button type="submit" disabled={submitting} className="ix-b primary">
-                  <Icon name="send" size={15} /> {submitting ? "Submitting..." : "Submit for approval"}</button>
-              </div>
-            </form>
+      <div className="so-cols">
+        {/* left: the form, always there */}
+        <form onSubmit={handleSubmit} className="ix-card so-form">
+          <div className="so-hd"><b>Log an online day</b></div>
+          <div className="so-body">
+            <div className="ix-field">
+              <label htmlFor="ix-date">Date of work</label>
+              <input id="ix-date" type="date" value={form.date} required max={manilaToday()}
+                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="ix-desc">Tasks completed</label>
+              <textarea id="ix-desc" rows={6} value={form.description} required
+                placeholder="Describe in detail what you worked on that day..."
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+            </div>
+            <small className="so-note">Your HTE supervisor confirms it first, then your OJT coordinator approves or rejects it. Approved days count as 8:00 AM – 5:00 PM.</small>
+            <button type="submit" disabled={submitting} className="ix-b primary so-send">
+              <Icon name="send" size={15} /> {submitting ? "Submitting..." : "Submit for approval"}</button>
+          </div>
+        </form>
+
+        {/* right: everything already sent, newest first */}
+        <div className="ix-card so-list">
+          <div className="so-hd">
+            <b>Your online days</b>
+            <div className="so-tabs" role="tablist">
+              {SO_TABS.map(([k, label]) => (
+                <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
+                  {label} · {subs.filter((x) => soGroup(x) === k || k === "all").length}
+                </button>
+              ))}
+            </div>
+          </div>
+          {loadingSubs ? <Spinner /> : shown.length === 0 ? (
+            <div className="so-empty"><Icon name="upload" size={20} /><b>{subs.length ? "Nothing here." : "No online days yet."}</b>
+              <small>{subs.length ? "Try another filter." : "Days you log on the left will show up here."}</small></div>
           ) : (
-            <>
-              <div className="ibx-head"><span className={`ibx-ic big ${x.status === "approved" ? "approved" : x.status === "rejected" ? "rejected" : "waiting"}`}><Icon name="upload" size={20} /></span>
-                <div><b>{String(x.date).slice(0, 10)}</b><small>Online attendance</small></div>
-                <span style={{ marginLeft: "auto" }}><Badge label={x.status === "endorsed" ? "Confirmed by supervisor" : cap(x.status || "pending")} type={statusType(x.status)} /></span></div>
-              <div className="ibx-sec"><span>Tasks completed</span><p>{x.description}</p></div>
-              {x.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{x.remarks}”</p></div>}
-              {(x.status || "pending") === "pending" && (
-                <div className="ibx-act"><span className="ann-count">You can remove it while it's still waiting.</span><span style={{ flex: 1 }} />
-                  <RemoveBtn onConfirm={() => removeSub(x.id)} /></div>
-              )}
-            </>
+            <ul className="so-items">
+              {shown.map((x) => {
+                const st = soStage(x);
+                const d = new Date(String(x.date).slice(0, 10) + "T12:00:00");
+                const isOpen = openId === x.id;
+                return (
+                  <li key={x.id} className={isOpen ? "open" : ""}>
+                    <button type="button" className="so-row" onClick={() => setOpenId(isOpen ? null : x.id)} aria-expanded={isOpen}>
+                      <span className="so-dd"><b>{d.getDate()}</b><small>{d.toLocaleDateString("en-US", { weekday: "short" })}</small></span>
+                      <span className="so-tx">
+                        <b>{x.description}</b>
+                        <span className="so-steps"><i className={st.a} /><i className={st.b} /><em>{st.text}</em></span>
+                      </span>
+                      <span className={`so-pill ${st.tone}`}>{st.label}</span>
+                    </button>
+                    {isOpen && (
+                      <div className="so-more">
+                        <div><span>{d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span><p>{x.description}</p></div>
+                        {x.remarks && <div><span>Remarks</span><p>“{x.remarks}”</p></div>}
+                        {(x.status || "pending") === "pending" && (
+                          <div className="so-act"><small>You can remove it while it's still waiting.</small><RemoveBtn onConfirm={() => removeSub(x.id)} /></div>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
-        />
-      )}
+        </div>
+      </div>
+      <style>{SO_CSS}</style>
     </>
   );
 }
+
+const SO_TABS = [["all", "All"], ["waiting", "Waiting"], ["approved", "Approved"], ["rejected", "Rejected"]];
+const soGroup = (x) => (x.status === "approved" ? "approved" : x.status === "rejected" ? "rejected" : "waiting");
+// two dots: 1 = HTE supervisor, 2 = OJT coordinator
+function soStage(x) {
+  const s = x.status || "pending";
+  if (s === "approved") return { a: "done", b: "done", tone: "ok", label: "Approved", text: "Approved · counted 8:00 AM – 5:00 PM" };
+  if (s === "endorsed") return { a: "done", b: "wait", tone: "wait", label: "Waiting", text: "Supervisor confirmed · waiting for the coordinator" };
+  if (s === "rejected") {
+    const bySup = !x.endorsed_at;
+    return { a: bySup ? "no" : "done", b: bySup ? "" : "no", tone: "no", label: "Rejected",
+      text: `Rejected by the ${bySup ? "supervisor" : "coordinator"}${x.remarks ? `: “${x.remarks}”` : ""}` };
+  }
+  return { a: "wait", b: "", tone: "wait", label: "Waiting", text: "Waiting for your HTE supervisor" };
+}
+const SO_CSS = `
+.ix-page .ix-content .so-cols { display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.ix-page .ix-content .so-cols > .ix-card { padding: 0 !important; overflow: hidden; margin: 0 !important; }
+.ix-page .ix-content .so-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; min-height: 54px; padding: 10px 18px; border-bottom: 1px solid #eef0f3; box-sizing: border-box; }
+.ix-page .ix-content .so-hd > b { font-size: 15px; font-weight: 600; color: #111827; }
+.ix-page .ix-content .so-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 18px; }
+.ix-page .ix-content .so-body .ix-field { margin: 0 !important; }
+.ix-page .ix-content .so-body textarea { min-height: 150px; resize: vertical; }
+.ix-page .ix-content .so-note { font-size: 12px; line-height: 1.5; color: #6b7280; }
+.ix-page .ix-content .so-send { width: 100%; justify-content: center; }
+.ix-page .ix-content .so-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.ix-page .ix-content .so-tabs button { height: 28px; padding: 0 11px !important; border-radius: 99px; border: 1px solid #e7e9ee; background: #fff; color: #4b5563;
+  font: inherit; font-size: 11.5px; font-weight: 600; line-height: 1; cursor: pointer; }
+.ix-page .ix-content .so-tabs button.on { background: #fdece4; border-color: #f6c9b3; color: #c2410c; }
+.ix-page .ix-content .so-items { list-style: none; margin: 0; padding: 0 18px; max-height: 560px; overflow-y: auto; }
+.ix-page .ix-content .so-items > li { border-bottom: 1px solid #f1f2f4; }
+.ix-page .ix-content .so-items > li:last-child { border-bottom: 0; }
+.ix-page .ix-content .so-row { width: 100%; display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 0 !important;
+  border: 0; background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; border-radius: 0; }
+.ix-page .ix-content .so-row:hover .so-tx > b { color: #c2410c; }
+.ix-page .ix-content .so-dd { width: 46px; height: 46px; border-radius: 12px; background: #fff1ea; color: #c2410c; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+.ix-page .ix-content .so-dd b { font-size: 15px; } .ix-page .ix-content .so-dd small { font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.ix-page .ix-content .so-tx { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.ix-page .ix-content .so-tx > b { font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color .15s; }
+.ix-page .ix-content .so-steps { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.ix-page .ix-content .so-steps i { width: 8px; height: 8px; border-radius: 50%; background: #e5e7eb; flex-shrink: 0; }
+.ix-page .ix-content .so-steps i.done { background: #22c55e; } .ix-page .ix-content .so-steps i.wait { background: #f59e0b; } .ix-page .ix-content .so-steps i.no { background: #ef4444; }
+.ix-page .ix-content .so-steps em { font-style: normal; font-size: 11.5px; color: #6b7280; margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ix-page .ix-content .so-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ix-page .ix-content .so-pill.ok { background: #ecfdf3; color: #15803d; } .ix-page .ix-content .so-pill.wait { background: #fff7ed; color: #c2410c; } .ix-page .ix-content .so-pill.no { background: #fef2f2; color: #b91c1c; }
+.ix-page .ix-content .so-more { margin: 0 0 14px 60px; padding: 12px 14px; border-radius: 12px; background: #fafafb; border: 1px solid #f1f2f4; display: grid; gap: 10px; }
+.ix-page .ix-content .so-more span { display: block; font-size: 11px; color: #8b919b; margin-bottom: 2px; }
+.ix-page .ix-content .so-more p { margin: 0; font-size: 13px; line-height: 1.5; color: #374151; white-space: pre-wrap; word-break: break-word; }
+.ix-page .ix-content .so-act { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ix-page .ix-content .so-act small { font-size: 11.5px; color: #8b919b; }
+.ix-page .ix-content .so-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 40px 16px; color: #9ca3af; text-align: center; }
+.ix-page .ix-content .so-empty b { color: #374151; font-size: 13.5px; } .ix-page .ix-content .so-empty small { font-size: 12px; }
+/* computers: the page fits the window (no page scroll); only the "Your online days" list scrolls */
+@media (min-width: 901px) and (min-height: 520px) {
+  .ix-page.lay2 .ix-main:has(.so-cols) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.so-cols) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.so-cols) > .ix-content > * { flex: none; }
+  .ix-page .ix-content > .so-cols { flex: 1 1 0 !important; min-height: 0; margin-bottom: 0 !important; }
+  .ix-page .ix-content .so-cols > .ix-card { display: flex; flex-direction: column; min-height: 0; }
+  .ix-page .ix-content .so-list .so-items { flex: 1 1 0; min-height: 0; max-height: none; overflow-y: auto; }
+  .ix-page .ix-content .so-list > .ix-spin, .ix-page .ix-content .so-list > .so-empty { flex: 1; }
+  /* the form gives or takes space through the tasks box, so its button always shows */
+  .ix-page .ix-content .so-form .so-body { flex: 1 1 0; min-height: 0; }
+  .ix-page .ix-content .so-form .so-body > .ix-field:has(textarea) { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .ix-page .ix-content .so-form .so-body textarea { flex: 1 1 0; min-height: 70px !important; height: auto !important; resize: none; }
+}
+@media (max-width: 900px) {
+  .ix-page .ix-content .so-cols { grid-template-columns: 1fr; }
+  .ix-page .ix-content .so-items { max-height: none; padding: 0 14px; }
+  .ix-page .ix-content .so-more { margin-left: 0; }
+  .ix-page .ix-content .so-steps em { white-space: normal; }
+}
+`;
 
 /* ───────────────────────── Work arrangement (WFH) ─────────────────────────
    From the OJT coordinator: WFH needs a letter from the HTE approving it (plus the student's request),
@@ -1174,6 +1367,11 @@ function WorkModeCard({ user }) {
   const want = wfh ? "onsite" : "offsite";
   const pending = reqs.find((r) => r.status === "pending");
   const last = reqs[0];
+  // opened from My Requests → "Work from home"
+  if (!open && !pending && /[?&]wfh=1/.test(window.location.search)) {
+    window.history.replaceState(window.history.state, "", window.location.pathname);   // open it once, not on every refresh
+    setTimeout(() => setOpen(true), 0);
+  }
 
   const send = async (e) => {
     e.preventDefault();
@@ -1293,6 +1491,8 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   const [otherFile, setOtherFile] = useState(null);
   const [deadlines, setDeadlines] = useState({});   // { "pre:moa": "2026-11-05", ... }
   const [reports, setReports] = useState([]);       // reports the coordinator asked for (weekly / monthly report)
+  const [openKey, setOpenKey] = useState(null);     // the requirement opened on the right
+  const [showApproved, setShowApproved] = useState(false);
 
   useEffect(() => {
     const loadDue = () => {
@@ -1384,98 +1584,8 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   const reportsApproved = reports.filter((r) => reportStatus(r.id) === "approved").length;
   const oldReports = movs.filter((x) => x.requirement === "weekly_report" && !x.report_id);   // sent before reports were added
 
-  return (
-    <>
-      <PageHeader title="Submit MOV" sub="Upload your requirements for your coordinator to review." tabs={(
-        <div className="grp-tabs" role="tablist" aria-label="Requirement phase">
-          {[["pre", "Pre-Internship", false], ["during", "During Internship", duringLocked], ["post", "Post-Internship", !unlocked]].map(([k, l, locked]) => (
-            <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "grp-tab active" : "grp-tab"}
-              onClick={() => { setTab(k); setMsg(null); }}>
-              <Icon name={locked ? "lock" : "folder"} size={14} /><span>{l}</span>
-            </button>
-          ))}
-        </div>
-      )} />
-      <style>{`
-        .req-due { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; vertical-align: 1px; background: #f1f5f9; color: #475569; }
-        .req-due.pending { background: #fff4d6; color: #9a5b00; }
-        .req-due.rejected { background: #fee2e2; color: #b91c1c; }
-        .rp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-        .rp-item { border: 1px solid #f1ece9; border-radius: 12px; padding: 12px 14px; background: var(--ix-surface, #fff); display: flex; flex-direction: column; gap: 10px; }
-        .rp-item.rejected { border-color: #fecaca; }
-        .rp-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .rp-ic { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: #f3f4f6; color: #9ca3af; flex-shrink: 0; }
-        .rp-item.approved .rp-ic { background: #ecfdf3; color: #16a34a; } .rp-item.pending .rp-ic { background: #fffbeb; color: #d97706; }
-        .rp-item.rejected .rp-ic { background: #fef2f2; color: #dc2626; }
-        .rp-txt { flex: 1; min-width: 140px; display: flex; flex-direction: column; }
-        .rp-txt b { font-size: 13px; } .rp-txt small { font-size: 11.5px; color: #8a7a71; }
-        .rp-note { font-size: 12px; color: #b91c1c; background: #fef2f2; border-radius: 8px; padding: 7px 10px; }
-        .rp-files { margin: 0; }
-        .rp-drop { padding: 10px 12px !important; min-height: 0 !important; }
-      `}</style>
-
-      {tab === "during" && duringLocked ? (
-        <div className="ix-card">
-          <div className="req-locked">
-            <span className="req-lock-icon"><Icon name="lock" size={28} /></span>
-            <h3>During-internship requirements are locked</h3>
-            <p>
-              They open when your internship starts, once <strong>all</strong> your pre-internship requirements are
-              approved by your OJT coordinator. <strong>{pre.approved} of {pre.total}</strong> are approved so far.
-            </p>
-            <div className="ix-prog"><Bar pct={(pre.approved / pre.total) * 100} /></div>
-          </div>
-        </div>
-      ) : tab === "post" && !unlocked ? (
-        <div className="ix-card">
-          <div className="req-locked">
-            <span className="req-lock-icon"><Icon name="lock" size={28} /></span>
-            <h3>Post-internship requirements are locked</h3>
-            <p>
-              They open once you complete your required OJT hours. You have rendered{" "}
-              <strong>{totalHours}h</strong> of <strong>{required}h</strong>
-              {" "}— <strong>{Math.max(Math.round((required - totalHours) * 10) / 10, 0)}h</strong> to go.
-            </p>
-            <div className="ix-prog"><Bar pct={Math.max(Math.min((totalHours / required) * 100, 100), 0)} /></div>
-          </div>
-        </div>
-      ) : (
-        <>
-          <Msg msg={msg} />
-          <div className="mv-prog">
-            <b>{doneCount} of {list.length} approved</b>
-            <span className="mv-bar"><i style={{ width: (list.length ? doneCount / list.length * 100 : 0) + "%" }} /></span>
-            <small>{phase === "pre" ? "Pre-internship requirements" : phase === "during" ? "During the internship" : "Post-internship requirements"}</small>
-          </div>
-          {loading ? <Spinner /> : (
-            <Inbox
-              items={[...list, { key: "__others", label: "Other documents", hint: "Any other document you need to submit." }]}
-              keyOf={(r) => r.key}
-              row={(r) => {
-                if (r.key === "__others") return { icon: "folder", name: r.label, sub: r.hint, tag: <span className="as-sup-n none">{others.length}</span>, meta: "" };
-                if (r.key === "weekly_report") {
-                  const next = reports.find((x) => !["pending", "approved"].includes(reportStatus(x.id)));
-                  const nd = next ? dueStatus(next.due_date, null) : null;
-                  const allDone = reports.length > 0 && reportsApproved === reports.length;
-                  return {
-                    icon: allDone ? "check" : "upload", tone: allDone ? "approved" : "",
-                    name: r.label, sub: reports.length ? `${reportsApproved} of ${reports.length} reports approved` : "No report asked for yet",
-                    tag: <Badge label={reports.length ? `${reportsApproved}/${reports.length}` : "None yet"} type={allDone ? "approved" : "none"} />,
-                    meta: nd ? <span className={`req-due ${nd.tone}`} style={{ margin: 0 }}>{nd.label}</span> : "",
-                  };
-                }
-                const m = latest(r.key);
-                const due = dueStatus(deadlines[`${phase}:${r.key}`], r.repeat ? null : m);
-                const st = m?.status;
-                return {
-                  icon: st === "approved" ? "check" : st === "rejected" ? "x" : st === "pending" ? "clock" : "upload",
-                  tone: st === "approved" ? "approved" : st === "rejected" ? "rejected" : st === "pending" ? "waiting" : "",
-                  name: r.label, sub: r.hint || "",
-                  tag: <Badge label={m ? cap(m.status) : "Not submitted"} type={m ? statusType(m.status) : "none"} />,
-                  meta: due ? <span className={`req-due ${due.tone}`} style={{ margin: 0 }}>{due.label}</span> : "",
-                };
-              }}
-              detail={(r) => {
+  // the full view of one requirement (opens from the right): upload, every file sent, remarks, remove
+  const renderDetail = (r) => {
                 if (r.key === "__others") return (
                   <>
                     <div className="ibx-head"><span className="ibx-ic big"><Icon name="folder" size={20} /></span>
@@ -1607,9 +1717,251 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                     </div>
                   </>
                 );
-              }}
-            />
-          )}
+              };
+
+  return (
+    <>
+      <PageHeader title="Submit MOV" sub="Upload your requirements for your coordinator to review." tabs={(
+        <div className="grp-tabs" role="tablist" aria-label="Requirement phase">
+          {[["pre", "Pre-Internship", false], ["during", "During Internship", duringLocked], ["post", "Post-Internship", !unlocked]].map(([k, l, locked]) => (
+            <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "grp-tab active" : "grp-tab"}
+              onClick={() => { setTab(k); setMsg(null); }}>
+              <Icon name={locked ? "lock" : "folder"} size={14} /><span>{l}</span>
+            </button>
+          ))}
+        </div>
+      )} />
+      <style>{`
+        .req-due { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; vertical-align: 1px; background: #f1f5f9; color: #475569; }
+        .req-due.pending { background: #fff4d6; color: #9a5b00; }
+        .req-due.rejected { background: #fee2e2; color: #b91c1c; }
+        .rp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+        .rp-item { border: 1px solid #f1ece9; border-radius: 12px; padding: 12px 14px; background: var(--ix-surface, #fff); display: flex; flex-direction: column; gap: 10px; }
+        .rp-item.rejected { border-color: #fecaca; }
+        .rp-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .rp-ic { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: #f3f4f6; color: #9ca3af; flex-shrink: 0; }
+        .rp-item.approved .rp-ic { background: #ecfdf3; color: #16a34a; } .rp-item.pending .rp-ic { background: #fffbeb; color: #d97706; }
+        .rp-item.rejected .rp-ic { background: #fef2f2; color: #dc2626; }
+        .rp-txt { flex: 1; min-width: 140px; display: flex; flex-direction: column; }
+        .rp-txt b { font-size: 13px; } .rp-txt small { font-size: 11.5px; color: #8a7a71; }
+        .rp-note { font-size: 12px; color: #b91c1c; background: #fef2f2; border-radius: 8px; padding: 7px 10px; }
+        .rp-files { margin: 0; }
+        .rp-drop { padding: 10px 12px !important; min-height: 0 !important; }
+        /* the requirements grouped by what to do next */
+        .ix-page .mv-groups { display: flex; flex-direction: column; gap: 16px; }
+        .ix-page .mv-grp > header { display: flex; align-items: center; gap: 8px; margin: 0 2px 8px; }
+        .ix-page .mv-grp > header b { font-size: 14px; font-weight: 600; color: #111827; }
+        .ix-page .mv-cnt { min-width: 22px; height: 20px; padding: 0 7px; border-radius: 99px; background: #f3f4f6; color: #4b5563; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+        .ix-page .g-todo .mv-cnt { background: #fdece4; color: #c2410c; }
+        .ix-page .mv-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 0 !important; border: 0; background: none; font: inherit; font-size: 12px; color: #6b7280; cursor: pointer; height: auto !important; min-height: 0 !important; }
+        .ix-page .mv-toggle:hover { color: #c2410c; }
+        .ix-page .mv-list { list-style: none; margin: 0; padding: 0; border: 1px solid #e7e9ee; border-radius: 14px; background: var(--ix-surface, #fff); overflow: hidden; }
+        .ix-page .mv-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 16px; border-bottom: 1px solid #f1f2f4; }
+        .ix-page .mv-row:last-child { border-bottom: 0; }
+        .ix-page .mv-row.s-rejected { background: #fffafa; }
+        .ix-page .mv-ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: #f3f4f6; color: #6b7280; }
+        .ix-page .mv-ic.s-none, .ix-page .mv-ic.s-todo { background: #fff3ec; color: #e8582a; }
+        .ix-page .mv-ic.s-rejected { background: #fef2f2; color: #dc2626; } .ix-page .mv-ic.s-pending { background: #fff7ed; color: #d97706; } .ix-page .mv-ic.s-approved { background: #ecfdf3; color: #16a34a; }
+        .ix-page .mv-tx { min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 0 !important; border: 0; background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; height: auto !important; min-height: 0 !important; }
+        .ix-page .mv-tx b { font-size: 13.5px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ix-page .mv-tx:hover b { color: #c2410c; }
+        .ix-page .mv-tx small { font-size: 12px; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ix-page .mv-tx em { font-style: normal; font-size: 12px; color: #b91c1c; margin-top: 2px; }
+        .ix-page .mv-rt { display: flex; align-items: center; gap: 12px; justify-content: flex-end; min-width: 0; }
+        .ix-page .mv-file { display: inline-flex; gap: 4px; align-items: baseline; max-width: 260px; min-width: 0; font-size: 12px; color: #c2410c; text-decoration: none; }
+        .ix-page .mv-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+        .ix-page .mv-file em { font-style: normal; color: #9ca3af; white-space: nowrap; }
+        .ix-page a.mv-file:hover span { text-decoration: underline; }
+        .ix-page .mv-pill { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+        .ix-page .mv-pill.approved { background: #ecfdf3; color: #15803d; } .ix-page .mv-pill.pending { background: #fff7ed; color: #c2410c; }
+        .ix-page .mv-act { position: relative; height: 32px !important; min-height: 32px !important; padding: 0 14px !important; font-size: 12.5px !important; gap: 6px; cursor: pointer; white-space: nowrap; }
+        .ix-page label.mv-act input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+        .ix-page .mv-act.busy { opacity: .6; pointer-events: none; }
+        .ix-page .mv-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border: 1px solid #e7e9ee; border-radius: 14px; background: var(--ix-surface, #fff); }
+        .ix-page .mv-chip { display: inline-flex; align-items: center; gap: 5px; height: 28px !important; min-height: 0 !important; padding: 0 11px !important; border: 0; border-radius: 99px; background: #ecfdf3; color: #15803d;
+          font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .ix-page .mv-chip:hover { background: #dcfce7; }
+        .ix-page .mv-alldone { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; background: #ecfdf3; color: #15803d; font-size: 13px; font-weight: 600; }
+        .ix-page .mv-drawer .ibx-head { display: none; }
+        .ix-page .mv-drawer { display: flex; flex-direction: column; gap: 12px; }
+        @media (max-width: 700px) {
+          .ix-page .mv-row { grid-template-columns: 34px minmax(0, 1fr); }
+          .ix-page .mv-rt { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
+          .ix-page .mv-tx small { white-space: normal; }
+        }
+      `}</style>
+
+      {tab === "during" && duringLocked ? (
+        <div className="ix-card">
+          <div className="req-locked">
+            <span className="req-lock-icon"><Icon name="lock" size={28} /></span>
+            <h3>During-internship requirements are locked</h3>
+            <p>
+              They open when your internship starts, once <strong>all</strong> your pre-internship requirements are
+              approved by your OJT coordinator. <strong>{pre.approved} of {pre.total}</strong> are approved so far.
+            </p>
+            <div className="ix-prog"><Bar pct={(pre.approved / pre.total) * 100} /></div>
+          </div>
+        </div>
+      ) : tab === "post" && !unlocked ? (
+        <div className="ix-card">
+          <div className="req-locked">
+            <span className="req-lock-icon"><Icon name="lock" size={28} /></span>
+            <h3>Post-internship requirements are locked</h3>
+            <p>
+              They open once you complete your required OJT hours. You have rendered{" "}
+              <strong>{totalHours}h</strong> of <strong>{required}h</strong>
+              {" "}— <strong>{Math.max(Math.round((required - totalHours) * 10) / 10, 0)}h</strong> to go.
+            </p>
+            <div className="ix-prog"><Bar pct={Math.max(Math.min((totalHours / required) * 100, 100), 0)} /></div>
+          </div>
+        </div>
+      ) : (
+        <>
+          <Msg msg={msg} />
+          {(() => {
+            // one state per requirement: approved / waiting / needs fix / to upload
+            const stateOf = (r) => {
+              if (r.key === "weekly_report") {
+                const sts = reports.map((x) => reportStatus(x.id));
+                if (sts.length && sts.every((x) => x === "approved")) return "approved";
+                if (sts.includes("rejected")) return "rejected";
+                if (sts.length && !sts.includes("none")) return "pending";
+                return "none";
+              }
+              return latest(r.key)?.status || "none";
+            };
+            const c = { approved: 0, pending: 0, rejected: 0, none: 0 };
+            list.forEach((r) => { const k = stateOf(r); c[k in c ? k : "none"]++; });
+            const n = list.length || 1;
+            const segs = [["approved", "approved"], ["pending", "waiting"], ["rejected", "needs fix"], ["none", "to upload"]];
+            return (
+              <div className="mv-prog2">
+                <b>{c.approved} of {list.length} approved</b>
+                <span className="mv-bar2" role="img" aria-label={segs.map(([k, l]) => `${c[k]} ${l}`).join(", ")}>
+                  {segs.slice(0, 3).map(([k]) => c[k] > 0 && <i key={k} className={k} style={{ width: (c[k] / n) * 100 + "%" }} />)}
+                </span>
+                <span className="mv-legend">
+                  {segs.map(([k, l]) => <span key={k}><i className={k} /><b>{c[k]}</b> {l}</span>)}
+                </span>
+              </div>
+            );
+          })()}
+          {loading ? <Spinner /> : (() => {
+            // sort every requirement into what the intern has to do next
+            const items = list.map((r, i) => {
+              if (r.key === "weekly_report") {
+                const needs = reports.some((x) => ["none", "rejected"].includes(reportStatus(x.id)));
+                const allDone = reports.length > 0 && reportsApproved === reports.length;
+                return { r, i, report: true, group: allDone ? "approved" : needs ? "todo" : reports.length ? "waiting" : "todo" };
+              }
+              const m = latest(r.key);
+              const st = m?.status || "none";
+              return { r, i, m, st, group: st === "approved" && !r.repeat ? "approved" : st === "pending" ? "waiting" : st === "approved" ? "approved" : "todo" };
+            });
+            const groups = [
+              ["todo", "Needs your action", items.filter((x) => x.group === "todo")],
+              ["waiting", "Waiting for your coordinator", items.filter((x) => x.group === "waiting")],
+              ["approved", "Approved", items.filter((x) => x.group === "approved")],
+            ];
+            const row = ({ r, m, st, report }) => {
+              if (report) {
+                const next = reports.find((x) => !["pending", "approved"].includes(reportStatus(x.id)));
+                const nd = next ? dueStatus(next.due_date, null) : null;
+                return (
+                  <li key={r.key} className="mv-row">
+                    <span className="mv-ic s-todo"><Icon name="file" size={15} /></span>
+                    <button type="button" className="mv-tx" onClick={() => setOpenKey(r.key)}>
+                      <b>{r.label}</b>
+                      <small>{reports.length ? `${reportsApproved} of ${reports.length} reports approved` : "Your coordinator hasn't asked for a report yet."}</small>
+                    </button>
+                    <span className="mv-rt">
+                      {nd && nd.tone !== "none" && <span className={`req-due ${nd.tone}`} style={{ margin: 0 }}>{nd.label}</span>}
+                      <button type="button" className="ix-b primary mv-act" onClick={() => setOpenKey(r.key)}>Open reports</button>
+                    </span>
+                  </li>
+                );
+              }
+              const due = dueStatus(deadlines[`${phase}:${r.key}`], r.repeat ? null : m);
+              const canUpload = r.repeat || !m || m.status === "rejected";
+              const busy = busyKey === r.key;
+              const pick = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) upload({ key: r.key, title: r.label, file: f }); };
+              const ic = st === "rejected" ? "warn" : st === "pending" ? "clock" : st === "approved" ? "check" : "upload";
+              return (
+                <li key={r.key} className={`mv-row s-${st}`}>
+                  <span className={`mv-ic s-${st}`}><Icon name={ic} size={15} /></span>
+                  <button type="button" className="mv-tx" onClick={() => setOpenKey(r.key)} title="See everything you sent">
+                    <b>{r.label}</b>
+                    <small>{r.hint || ""}</small>
+                    {st === "rejected" && m.remarks && <em>“{m.remarks}”</em>}
+                  </button>
+                  <span className="mv-rt">
+                    {m && (
+                      <a className="mv-file" href={`${STORAGE}${m.file_path}`} target="_blank" rel="noopener noreferrer" title={m.original_name}>
+                        <span>{m.original_name}</span>
+                        {m.created_at && !isNaN(new Date(m.created_at)) && <em>· sent {new Date(m.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</em>}
+                      </a>
+                    )}
+                    {due && due.tone !== "none" && st === "none" && <span className={`req-due ${due.tone}`} style={{ margin: 0 }}>{due.label}</span>}
+                    {canUpload ? (
+                      <label className={`ix-b primary mv-act ${busy ? "busy" : ""}`}>
+                        <input type="file" accept={ACCEPT} disabled={busyKey !== null} onChange={pick} />
+                        <Icon name="upload" size={14} />{busy ? "Uploading..." : st === "rejected" ? "Re-upload" : r.repeat && m ? "Upload new" : "Upload"}
+                      </label>
+                    ) : (
+                      <span className={`mv-pill ${st}`}>{st === "pending" ? "Waiting" : "Approved"}</span>
+                    )}
+                  </span>
+                </li>
+              );
+            };
+            return (
+              <div className="mv-groups">
+                {groups.map(([k, title, its]) => its.length === 0 ? null : (
+                  <section key={k} className={`mv-grp g-${k}`}>
+                    <header>
+                      <b>{title}</b><span className="mv-cnt">{its.length}</span>
+                      {k === "approved" && <button type="button" className="mv-toggle" onClick={() => setShowApproved((v) => !v)}>{showApproved ? "Hide" : "Show all"} <span aria-hidden="true">{showApproved ? "▴" : "▾"}</span></button>}
+                    </header>
+                    {k === "approved" && !showApproved ? (
+                      <div className="mv-chips">
+                        {its.map(({ r }) => (
+                          <button key={r.key} type="button" className="mv-chip" onClick={() => setOpenKey(r.key)}><Icon name="check" size={12} />{r.label}</button>
+                        ))}
+                      </div>
+                    ) : (
+                      <ul className="mv-list">{its.map(row)}</ul>
+                    )}
+                  </section>
+                ))}
+                {groups[0][2].length === 0 && groups[1][2].length === 0 && (
+                  <div className="mv-alldone"><Icon name="check" size={16} /> Everything here is approved. Nice work!</div>
+                )}
+                <section className="mv-grp g-other">
+                  <header><b>Other documents</b><span className="mv-cnt">{others.length}</span></header>
+                  <ul className="mv-list">
+                    <li className="mv-row">
+                      <span className="mv-ic"><Icon name="folder" size={15} /></span>
+                      <button type="button" className="mv-tx" onClick={() => setOpenKey("__others")}>
+                        <b>Other documents</b><small>{others.length ? `Last sent: ${others[0].title}` : "Any other document your coordinator asks for."}</small>
+                      </button>
+                      <span className="mv-rt"><button type="button" className="ix-b ghost mv-act" onClick={() => setOpenKey("__others")}>Send or view</button></span>
+                    </li>
+                  </ul>
+                </section>
+              </div>
+            );
+          })()}
+          {openKey && (() => {
+            const r = openKey === "__others" ? { key: "__others", label: "Other documents", hint: "Any other document you need to submit." } : list.find((x) => x.key === openKey);
+            if (!r) return null;
+            return (
+              <Drawer inPage title={r.label} kicker={r.key === "__others" ? "Submit MOV" : phase === "pre" ? "Pre-internship requirement" : phase === "during" ? "During the internship" : "Post-internship requirement"}
+                icon={r.key === "__others" ? "folder" : "file"} sub={r.hint || null} onClose={() => setOpenKey(null)}>
+                <div className="mv-drawer">{renderDetail(r)}</div>
+              </Drawer>
+            );
+          })()}
         </>
       )}
     </>
@@ -2211,7 +2563,7 @@ const STATUS_TEXT = {
   issued: "You claimed your card. It's active, so your taps on the kiosk are recorded.",
 };
 
-function NfcApply({ user }) {
+function NfcApply({ user, records = [] }) {
   const go = useNavigate();
   // taps count only after every pre-internship requirement is approved (same rule as the kiosk)
   const [pre, setPre] = useState(null);
@@ -2223,6 +2575,13 @@ function NfcApply({ user }) {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState(null);
   const [showReplace, setShowReplace] = useState(false);   // replacement form, opened on demand
+  const [me, setMe] = useState(null);                       // full account, for the card preview
+  const [back, setBack] = useState(false);                  // card preview: front or back
+  useEffect(() => {
+    fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => setMe(d?.user || d || {})).catch(() => setMe({}));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const load = async () => {
     try {
@@ -2283,167 +2642,244 @@ function NfcApply({ user }) {
     }
   };
 
+  // the card's journey: every step done once the card is claimed
+  const stage = stageOf(req);
+  const doneSteps = hasCard && (!req || status === "issued" || !active) ? STEPS.length : DONE_COUNT[stage] ?? 0;
+  // the latest kiosk taps (online days are not card taps)
+  const taps = records
+    .filter((r) => r.uid !== "ONLINE")
+    .flatMap((r) => [r.checked_in_at && { t: r.checked_in_at, kind: "in" }, r.checked_out_at && { t: r.checked_out_at, kind: "out" }])
+    .filter(Boolean)
+    .sort((x, y) => new Date(y.t) - new Date(x.t))
+    .slice(0, 5);
+  const tapDay = (t) => {
+    const d = new Date(t);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+    const day = d.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+    return day === today ? "Today" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Manila" });
+  };
+  const tapTime = (t) => new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
+  const cardUser = { ...user, ...(me || {}) };
+  const settings = loadCardSettings();
+
   return (
     <>
-      <PageHeader title="NFC Card" sub="Apply for your attendance card and track its status." />
+      <PageHeader title="NFC Card" sub="Your attendance card and its status." />
+      <style>{idCardCss}</style>
       {loading ? <Spinner /> : error ? (
         <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>
       ) : (
-        <div className="nfc-page">
-          {/* 1 · card preview */}
-          <div className={`nfc-hero ${hasCard ? "linked" : ""} ${notStarted ? "waiting" : ""}`}>
-            <div className="nfc-plastic" aria-hidden="true">
-              <span className="nfc-chip" />
-              <Icon name="card" size={22} />
-              <b>{hasCard ? `•••• ${String(info.uid || "").slice(-4) || "••••"}` : "No card yet"}</b>
+        <div className="nc-page">
+          {/* 1 · the card (same design as the printed ID) and where it is */}
+          <div className="ix-card nc-hero">
+            <div className="nc-card">
+              <div className={`nc-flip ${back ? "back" : ""} ${hasCard ? "" : "ghost"}`}>
+                <div className="nc-side front">{me ? <CardFace u={cardUser} settings={settings} /> : <div className="nc-skel" />}</div>
+                <div className="nc-side rear">{me ? <CardBack u={cardUser} settings={settings} /> : <div className="nc-skel" />}</div>
+              </div>
+              <button type="button" className="nc-turn" onClick={() => setBack((v) => !v)}>
+                <Icon name="card" size={13} /> {back ? "Show the front" : "Show the back"}
+              </button>
+              {!hasCard && <span className="nc-preview-tag">{["printed", "linked"].includes(stage) ? `Preview · your card is at the ${ID_OFFICE}` : "Preview · how your card will look"}</span>}
             </div>
-            <div className="nfc-hero-text">
-              <span className={`nfc-state ${notStarted ? "warn" : hasCard ? "ok" : ""}`}>
-                {notStarted ? "Linked · not active yet" : hasCard ? "Card linked" : "Not linked"}
+
+            <div className="nc-info">
+              <span className={`nc-state ${notStarted ? "warn" : hasCard ? "ok" : status === "rejected" ? "bad" : active ? "wait" : ""}`}>
+                {notStarted ? "Linked · not active yet" : hasCard ? "Card linked · ready" : status === "rejected" ? "Request not approved" : active ? "On its way" : "No card yet"}
               </span>
               <h3>
                 {notStarted ? "Your card is linked, but taps won't be recorded yet"
-                  : hasCard ? "Your NFC card is ready to use" : "You don't have an NFC card yet"}
+                  : hasCard ? "Your NFC card is ready to use"
+                  : active ? "Your card is being prepared" : "You don't have an NFC card yet"}
               </h3>
               <p>
                 {notStarted
                   ? `Your internship starts when all pre-internship requirements are approved (${pre.approved} of ${pre.total} approved so far). Until then, the kiosk won't log your time in.`
-                  : hasCard
-                    ? "Tap it on the reader to log your attendance."
-                    : active
-                      ? "Your card is on its way. Follow the steps below."
-                      : pre && !pre.started
-                      ? `Apply now, while you complete your pre-internship requirements (${pre.approved} of ${pre.total} approved), so your card is ready when your internship starts. Your OJT coordinator approves the request.`
-                      : "Apply below and your OJT coordinator will get your card ready."}
+                  : hasCard ? "Tap it on the kiosk reader when you arrive and when you leave."
+                  : active ? (["printed", "linked"].includes(stage) && pre && !pre.started
+                      ? `Your ID card is ${stage === "linked" ? "ready" : "printed"}. It's kept at the ${ID_OFFICE} until you can claim it.`
+                      : STATUS_TEXT[stage])
+                  : status === "rejected" ? `Your request wasn't approved.${req.remarks ? ` Remarks: ${req.remarks}` : ""} You can apply again below.`
+                  : pre && !pre.started
+                    ? `Apply now, while you complete your pre-internship requirements (${pre.approved} of ${pre.total} approved), so your card is ready when your internship starts.`
+                    : "Apply below and your OJT coordinator will get your card ready."}
               </p>
-              {notStarted && (
-                <button type="button" className="ix-b primary sm nfc-go" onClick={() => go("/intern/movs")}>
-                  Go to Submit MOV
-                </button>
+
+              {status !== "rejected" && (req || hasCard) && (
+                <ol className="nc-steps" aria-label="Card progress">
+                  {STEPS.map((label, i) => (
+                    <li key={label} className={i < doneSteps ? "done" : i === doneSteps && active ? "now" : ""}>
+                      <i>{i < doneSteps ? <Icon name="check" size={13} /> : i + 1}</i><span>{label}</span>
+                    </li>
+                  ))}
+                </ol>
               )}
+
+              {active && ["approved", "printed", "linked"].includes(stage) && pre && !pre.started && (
+                <div className="nfc-claim-warn" role="alert">
+                  <Icon name="warn" size={16} />
+                  <span><strong>You can't claim your card yet.</strong> All pre-internship requirements must be approved first ({pre.approved} of {pre.total} approved).</span>
+                  <button type="button" className="ix-b ghost sm" onClick={() => go("/intern/movs")}>Submit MOV</button>
+                </div>
+              )}
+              {notStarted && <button type="button" className="ix-b primary sm nfc-go" onClick={() => go("/intern/movs")}>Go to Submit MOV</button>}
+              {active && req?.remarks && <div className="ix-remarks">Remarks: {req.remarks}</div>}
             </div>
           </div>
 
-          {/* 2 · latest request */}
-          {req && (
-            <div className="ix-card nfc-req">
-              <div className="nfc-req-head">
-                <div className="ix-card-label">Your latest request</div>
-                <div className="ix-req-meta">
-                  <span className="ix-chip">{req.type || "NFC card"}</span>
-                  {req.created_at && (
-                    <span className="ix-muted">
-                      Applied {new Date(req.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" })}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {status === "rejected" ? (
-                <div className="ix-msg error" style={{ marginTop: 14, marginBottom: 0 }}>
-                  Your request wasn't approved.{req.remarks ? ` Remarks: ${req.remarks}` : ""} You can apply again in the form below.
-                </div>
+          {/* 2 · recent taps + replacement / application */}
+          <div className="nc-row">
+            <div className="ix-card flush nc-taps">
+              <div className="nc-hd"><b>Recent taps with this card</b>
+                <button type="button" className="nc-link" onClick={() => go("/intern/records")}>View all ›</button></div>
+              {taps.length === 0 ? (
+                <div className="nc-empty">{hasCard ? "No taps yet. Your taps on the kiosk will show here." : "Your taps will show here once your card is active."}</div>
               ) : (
-                <>
-                  <ol className="ix-steps">
-                    {STEPS.map((label, i) => {
-                      const done = DONE_COUNT[stageOf(req)] ?? 0;
-                      return (
-                        <li key={label} className={i < done ? "done" : i === done ? "current" : ""}>
-                          <span className="ix-step-dot">{i < done ? <Icon name="check" size={16} /> : i + 1}</span>
-                          <span>{label}</span>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                  <div className="ix-step-text">
-                    {["printed", "linked"].includes(stageOf(req)) && pre && !pre.started
-                      ? `Your ID card is ${stageOf(req) === "linked" ? "ready" : "printed"}. It's kept at the ${ID_OFFICE} until you can claim it.`
-                      : STATUS_TEXT[stageOf(req)]}
-                  </div>
-                  {["approved", "printed", "linked"].includes(stageOf(req)) && pre && !pre.started && (
-                    <div className="nfc-claim-warn" role="alert">
-                      <Icon name="warn" size={16} />
-                      <span>
-                        <strong>You can't claim your card yet.</strong> All pre-internship requirements must be approved first
-                        ({pre.approved} of {pre.total} approved). Your card can still be printed and prepared in the meantime.
-                      </span>
-                      <button type="button" className="ix-b ghost sm" onClick={() => go("/intern/movs")}>Submit MOV</button>
-                    </div>
-                  )}
-                  {req.remarks && <div className="ix-remarks" style={{ marginTop: 6 }}>Remarks: {req.remarks}</div>}
-                </>
+                <ul className="nc-tlist">
+                  {taps.map((x, i) => (
+                    <li key={i}><span><b>{tapDay(x.t)}</b> · {tapTime(x.t)}</span>
+                      <span className={`nc-pill ${x.kind}`}>{x.kind === "in" ? "Time in" : "Time out"}</span></li>
+                  ))}
+                </ul>
               )}
             </div>
-          )}
 
-          {/* 3 · application form (hidden while a request is pending/approved) */}
-          {!active && hasCard && !showReplace ? (
-            /* already has a card: the replacement form stays folded until it's needed */
-            <div className="ix-card nfc-replace">
-              <div>
-                <strong>Lost or damaged your card?</strong>
-                <span>Ask for a new one. Your current card keeps working until you claim the replacement.</span>
-              </div>
-              <button type="button" className="ix-b ghost" onClick={() => setShowReplace(true)}>Request a replacement</button>
-            </div>
-          ) : !active ? (
-            <div className="ix-card nfc-form">
-              <div className="ix-card-label">{hasCard ? "Request a replacement" : "Apply for your card"}</div>
-              <Msg msg={msg} />
-              <form onSubmit={submit} className="ix-form" style={{ marginTop: 14 }}>
-                <div className="nfc-form-row">
-                  {types.length > 1 ? (
-                    <div className="ix-field">
-                      <label htmlFor="nfc-type">Reason</label>
-                      <select id="nfc-type" value={chosen} onChange={(e) => setType(e.target.value)}>
-                        {types.map((t) => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="ix-field">
-                      <label>Request type</label>
-                      <span className="ix-chip" style={{ alignSelf: "flex-start" }}>{chosen}</span>
+            <div className="ix-card nc-act">
+              {active ? (
+                <>
+                  <b className="nc-act-t">You have an open request</b>
+                  <p className="nc-act-p">A new application isn't needed right now. Follow its progress above.</p>
+                </>
+              ) : (
+                <form onSubmit={submit} className="nc-form">
+                  <b className="nc-act-t">{hasCard ? "Lost or damaged your card?" : "Apply for your card"}</b>
+                  <p className="nc-act-p">{hasCard
+                    ? "Ask for a new one. Your current card keeps working until you claim the replacement."
+                    : `Your OJT coordinator approves it. Then you sign your ID at the ${ID_OFFICE}, the admin prints it, and it becomes active when you claim it.`}</p>
+                  <Msg msg={msg} />
+                  {types.length > 1 && (
+                    <div className="nc-seg" role="radiogroup" aria-label="Reason">
+                      {types.map((t) => (
+                        <button key={t} type="button" role="radio" aria-checked={chosen === t} className={chosen === t ? "on" : ""} onClick={() => setType(t)}>
+                          {t.replace(" card", "")}
+                        </button>
+                      ))}
                     </div>
                   )}
-                  <div className="ix-field">
-                    <label htmlFor="nfc-notes">Notes <span className="ix-muted">(optional)</span></label>
-                    <textarea
-                      id="nfc-notes" rows={2} value={notes} maxLength={500}
-                      placeholder="Anything your OJT coordinator should know?"
-                      onChange={(e) => setNotes(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="nfc-foot">
-                  {hasCard ? (
-                    <button type="button" className="ix-b ghost" onClick={() => setShowReplace(false)} disabled={submitting}>Cancel</button>
-                  ) : (
-                    <div className="ix-note">
-                      <Icon name="info" size={16} />
-                      Your OJT coordinator approves the request. Then you sign your ID at the {ID_OFFICE}, the admin prints it, and the card becomes active when you claim it.
-                    </div>
-                  )}
-                  <button type="submit" disabled={submitting} className="ix-btn">
-                    {submitting ? "Sending..." : hasCard ? "Send replacement request" : "Apply for my card"}
+                  <textarea rows={2} value={notes} maxLength={500} placeholder="Notes for your OJT coordinator (optional)"
+                    aria-label="Notes" onChange={(e) => setNotes(e.target.value)} className="nc-notes" />
+                  <button type="submit" disabled={submitting} className="ix-b primary nc-send">
+                    {submitting ? "Sending..." : hasCard ? "Request a replacement" : "Apply for my card"}
                   </button>
-                </div>
-              </form>
+                </form>
+              )}
+              <small className="nc-sec"><Icon name="lock" size={13} /> Each tap is checked with a one-time card code, so a copied card won't work.</small>
             </div>
-          ) : (
-            <div className="ix-note nfc-wait">
-              <Icon name="info" size={18} />
-              You have an open request, so a new application isn't needed right now.
-            </div>
-          )}
+          </div>
         </div>
       )}
+      <style>{NC_CSS}</style>
     </>
   );
 }
 
+const NC_CSS = `
+.ix-page .nc-page { display: flex; flex-direction: column; gap: 14px; }
+.ix-page .ix-card.nc-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 32px; align-items: center; padding: 24px 28px !important; margin: 0 !important; }
+.ix-page .nc-card { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.ix-page .nc-flip { position: relative; width: 85.6mm; height: 54mm; perspective: 1200px; zoom: 1.12; }
+.ix-page .nc-side { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; transition: transform .6s cubic-bezier(.2,.8,.2,1); }
+.ix-page .nc-side.rear { transform: rotateY(180deg); }
+.ix-page .nc-flip.back .nc-side.front { transform: rotateY(-180deg); }
+.ix-page .nc-flip.back .nc-side.rear { transform: rotateY(0deg); }
+.ix-page .nc-flip.ghost { opacity: .55; filter: grayscale(.35); }
+.ix-page .nc-skel { width: 100%; height: 100%; border-radius: 3mm; background: linear-gradient(90deg, #f3f4f6, #fafafb, #f3f4f6); }
+.ix-page .nc-turn { display: inline-flex; align-items: center; gap: 6px; height: 28px !important; min-height: 0 !important; padding: 0 12px !important; border-radius: 99px; border: 1px solid #e7e9ee;
+  background: #fff; color: #4b5563; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.ix-page .nc-turn:hover { border-color: #f6c9b3; color: #c2410c; }
+.ix-page .nc-preview-tag { font-size: 11px; color: #9ca3af; }
+.ix-page .nc-info { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.ix-page .nc-state { align-self: flex-start; display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px; font-size: 11.5px; font-weight: 600; background: #f3f4f6; color: #4b5563; }
+.ix-page .nc-state.ok { background: #ecfdf3; color: #15803d; } .ix-page .nc-state.warn, .ix-page .nc-state.wait { background: #fff7ed; color: #c2410c; } .ix-page .nc-state.bad { background: #fef2f2; color: #b91c1c; }
+.ix-page .nc-info h3 { margin: 0; font-size: 21px; font-weight: 700; color: #111827; line-height: 1.25; }
+.ix-page .nc-info > p { margin: 0; font-size: 13.5px; line-height: 1.55; color: #6b7280; max-width: 620px; }
+.ix-page .nc-steps { list-style: none; margin: 14px 0 0; padding: 0; display: flex; max-width: 640px; }
+.ix-page .nc-steps li { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; color: #9ca3af; text-align: center; }
+.ix-page .nc-steps li + li::before { content: ""; position: absolute; top: 13px; right: 50%; width: 100%; height: 2px; background: #e5e7eb; }
+.ix-page .nc-steps li.done + li::before { background: #22c55e; }
+.ix-page .nc-steps i { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700;
+  background: #fff; border: 2px solid #e5e7eb; color: #9ca3af; box-sizing: border-box; }
+.ix-page .nc-steps li.done i { background: #22c55e; border-color: #22c55e; color: #fff; }
+.ix-page .nc-steps li.done span { color: #15803d; font-weight: 600; }
+.ix-page .nc-steps li.now i { border-color: #f59e0b; color: #b45309; background: #fffbeb; box-shadow: 0 0 0 4px rgba(245,158,11,.15); }
+.ix-page .nc-steps li.now span { color: #b45309; font-weight: 600; }
+.ix-page .nc-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.ix-page .ix-card.nc-taps { padding: 0 !important; overflow: hidden; margin: 0 !important; }
+.ix-page .nc-hd { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #eef0f3; }
+.ix-page .nc-hd b { font-size: 14px; font-weight: 600; color: #111827; }
+.ix-page .nc-link { padding: 0 !important; border: 0; background: none; font: inherit; font-size: 12px; font-weight: 600; color: #6b7280; cursor: pointer; height: auto !important; min-height: 0 !important; }
+.ix-page .nc-link:hover { color: #c2410c; }
+.ix-page .nc-tlist { list-style: none; margin: 0; padding: 0; }
+.ix-page .nc-tlist li { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #f1f2f4; font-size: 12.5px; color: #6b7280; }
+.ix-page .nc-tlist li:last-child { border-bottom: 0; }
+.ix-page .nc-tlist b { color: #111827; font-weight: 600; }
+.ix-page .nc-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+.ix-page .nc-pill.in { background: #ecfdf3; color: #15803d; } .ix-page .nc-pill.out { background: #fff7ed; color: #c2410c; }
+.ix-page .nc-empty { padding: 28px 16px; text-align: center; font-size: 12.5px; color: #9ca3af; }
+.ix-page .ix-card.nc-act { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px !important; margin: 0 !important; }
+.ix-page .nc-form { display: flex; flex-direction: column; gap: 10px; }
+.ix-page .nc-act-t { font-size: 14px; font-weight: 600; color: #111827; }
+.ix-page .nc-act-p { margin: 0; font-size: 12.5px; line-height: 1.5; color: #6b7280; }
+.ix-page .nc-seg { display: flex; gap: 8px; flex-wrap: wrap; }
+.ix-page .nc-seg button { height: 34px !important; min-height: 0 !important; padding: 0 14px !important; border-radius: 10px; border: 1px solid #e3e5ea; background: #fff; font: inherit; font-size: 12.5px; font-weight: 600; color: #374151; cursor: pointer; }
+.ix-page .nc-seg button.on { border-color: #e8582a; background: #fff3ec; color: #c2410c; }
+.ix-page .nc-notes { width: 100%; min-height: 64px !important; resize: vertical; box-sizing: border-box; padding: 10px 12px !important; border: 1px solid #e3e5ea !important; border-radius: 10px !important;
+  font: inherit; font-size: 13px; color: #111827; background: #fff; outline: none; }
+.ix-page .nc-notes:focus { border-color: #e8582a !important; box-shadow: 0 0 0 3px rgba(232,88,42,.12); }
+.ix-page .nc-info .nfc-go, .ix-page .nc-info .ix-b { align-self: flex-start; width: auto !important; }
+.ix-page .nc-send { align-self: flex-start; }
+.ix-page .nc-sec { margin-top: auto; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #6b7280; padding-top: 6px; }
+/* computers: the page fits the window (no scrolling); even gaps; the bottom row takes the space left */
+@media (min-width: 1001px) and (min-height: 600px) {
+  .ix-page.lay2 .ix-main:has(.nc-page) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.nc-page) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.nc-page) > .ix-content > * { flex: none; }
+  .ix-page .ix-content > .nc-page { flex: 1 1 0 !important; min-height: 0; gap: 14px; }
+  .ix-page .ix-card.nc-hero { flex: none; padding: clamp(14px, 2.2vh, 24px) 28px !important; gap: 36px; }
+  .ix-page .nc-card { gap: 8px; }
+  .ix-page .nc-info { gap: 6px; }
+  .ix-page .nc-steps { margin-top: 10px; }
+  .ix-page .nc-row { flex: 1 1 0; min-height: 0; }
+  .ix-page .nc-row > .ix-card { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .ix-page .nc-tlist { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .ix-page .nc-tlist li { flex: 1 1 0; min-height: 0; padding-top: 0; padding-bottom: 0; }
+  /* the request form grows with the box: the notes field takes the extra height, the button sits under it */
+  .ix-page .nc-act .nc-form { flex: 1 1 auto; min-height: 0; }
+  .ix-page .nc-act .nc-notes { flex: 1 1 auto; max-height: 180px; }
+  .ix-page .nc-empty { flex: 1; display: grid; place-items: center; }
+  .ix-page .ix-card.nc-act { padding: clamp(14px, 2vh, 20px) 20px !important; gap: 10px; }
+}
+/* tall screens (full HD, full screen): a bigger card and steps, so the rows below don't stretch too far */
+@media (min-width: 1001px) and (min-height: 920px) {
+  .ix-page .nc-flip { zoom: 1.5; }
+  .ix-page .nc-info h3 { font-size: 24px; } .ix-page .nc-info > p { font-size: 14.5px; }
+  .ix-page .nc-steps { max-width: 720px; margin-top: 18px; }
+}
+@media (min-width: 1001px) and (max-height: 860px) { .ix-page .nc-flip { zoom: .95; } .ix-page .nc-info h3 { font-size: 19px; } }
+@media (min-width: 1001px) and (max-height: 760px) { .ix-page .nc-flip { zoom: .82; } .ix-page .nc-notes { min-height: 44px !important; } }
+@media (max-width: 1000px) {
+  .ix-page .ix-card.nc-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .ix-page .nc-info { align-items: center; } .ix-page .nc-state { align-self: center; }
+  .ix-page .nc-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .ix-page .nc-flip { zoom: .9; }
+  .ix-page .nc-steps span { font-size: 10.5px; }
+}
+`;
+
 /* ───────────────────────── Profile ───────────────────────── */
-function Profile({ user }) {
+function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
   const [acct, setAcct] = useState(null);
 
   // the full account (program, supervisor, NFC card, emergency contact...)
@@ -2455,18 +2891,163 @@ function Profile({ user }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const u = { ...user, ...(acct || {}) };
+  const parts = (u.name || "").trim().split(/\s+/);
+  const bday = u.date_of_birth
+    ? new Date(String(u.date_of_birth).slice(0, 10) + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "";
+  const kv = (label, value, full) => (
+    <div key={label} className={full ? "pf-kv full" : "pf-kv"}><small>{label}</small><b>{value || "—"}</b></div>
+  );
+  const fmtH = (h) => `${Math.round((Number(h) || 0) * 10) / 10}h`;
+
   return (
     <>
       <PageHeader title="My Profile" sub="Your account information. Ask the admin if something needs to be changed." />
       {!acct ? <Spinner /> : (
-        <div className="prof-stack">
-          <div className="ix-card prof-main"><UserDetails u={{ ...user, ...acct }} /></div>
-          <div className="prof-sec"><AccountSecurity user={user} /></div>
+        <div className="pf-page">
+          {/* header: who you are, at a glance */}
+          <div className="ix-card pf-head">
+            <Avatar name={u.name} photo={u.photo} size={76} />
+            <div className="pf-who">
+              <h2>{u.name}</h2>
+              <div className="pf-sub">
+                <span>Student ID <b>{u.student_id || "—"}</b></span>
+                {u.program && <span>{u.program}</span>}
+                {u.placement && <span>{u.placement}</span>}
+              </div>
+              <div className="pf-tags">
+                <span className="pf-tag o">OJT Intern</span>
+                <span className="pf-tag">{u.work_mode === "offsite" ? "Work from home" : "Onsite"}</span>
+                <span className={u.nfc_uid ? "pf-tag g" : "pf-tag"}>{u.nfc_uid ? "Card linked" : "No card yet"}</span>
+              </div>
+            </div>
+            <div className="pf-right">
+              <div className="pf-stats">
+                <div><small>Hours</small><b>{fmtH(totalHours)}</b></div>
+                <div><small>Required</small><b>{required}h</b></div>
+                <div><small>Days present</small><b>{days}</b></div>
+              </div>
+              <span className="pf-lock"><Icon name="lock" size={12} /> Only the admin can edit these</span>
+            </div>
+          </div>
+
+          <div className="pf-grid">
+            <section className="ix-card flush pf-card">
+              <header>Personal information</header>
+              <div className="pf-body">
+                {kv("First name", u.first_name || parts[0])}
+                {kv("Middle name", u.middle_name)}
+                {kv("Last name", u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""))}
+                {kv("Birthday", bday)}
+                {kv("Email", u.email)}
+                {kv("Contact number", u.contact_number)}
+                {kv("Address", u.address, true)}
+              </div>
+            </section>
+            <section className="ix-card flush pf-card">
+              <header>Internship details</header>
+              <div className="pf-body">
+                {kv("College", u.college || "CCIS")}
+                {kv("Program", u.program)}
+                {kv("Semester", u.semester)}
+                {kv("Placement", u.placement)}
+                {kv("HTE supervisor", u.supervisor_name || "Not assigned yet")}
+                {kv("Required hours", `${requiredHoursFor(u.program)}h`)}
+                {kv("Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite")}
+                {kv("Tracking", u.tracking_type === "output" ? "Output-based" : "Hours-based")}
+                {kv("DTR type", DTR_MODES[dtrModeOf(u)])}
+              </div>
+            </section>
+            <section className="ix-card flush pf-card">
+              <header>In case of emergency</header>
+              <div className="pf-body">
+                {kv("Full name", u.emergency_contact_name)}
+                {kv("Relationship", u.emergency_contact_relation)}
+                {kv("Contact number", u.emergency_contact_number)}
+                {kv("Address", u.emergency_contact_address, true)}
+              </div>
+            </section>
+            <div className="pf-sec"><AccountSecurity user={user} /></div>
+          </div>
         </div>
       )}
+      <style>{PF_CSS}</style>
     </>
   );
 }
+
+const PF_CSS = `
+.ix-page .pf-page { display: flex; flex-direction: column; gap: 14px; }
+.ix-page .ix-card.pf-head { position: relative; overflow: hidden; display: flex; align-items: center; gap: 18px; margin: 0 !important; padding: 18px 22px !important;
+  background: linear-gradient(100deg, #fff7f2 0%, #fff 60%) !important; }
+.ix-page .ix-card.pf-head { background: linear-gradient(100deg, #fff4ec 0%, #fffaf7 45%, #fff 100%) !important; }
+.ix-page .pf-head > * { position: relative; z-index: 1; }
+.ix-page .pf-who { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.ix-page .pf-who h2 { margin: 0; font-size: 20px; line-height: 1.25 !important; font-weight: 700; color: #111827; }
+.ix-page .pf-page :is(.pf-sub, .pf-stats small, .pf-stats b, .pf-lock, .pf-card > header) { line-height: 1.3 !important; }
+.ix-page .pf-sec .sec-card :is(.sec-label, .sec-hint, .ipv-title) { line-height: 1.4 !important; }
+.ix-page .pf-sub { display: flex; flex-wrap: wrap; gap: 0; font-size: 12.5px; color: #6b7280; }
+.ix-page .pf-sub span + span::before { content: "·"; margin: 0 7px; color: #c4c8cf; }
+.ix-page .pf-sub b { color: #111827; font-weight: 600; }
+.ix-page .pf-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.ix-page .pf-tag { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px; background: #f3f4f6; color: #374151; font-size: 11.5px; font-weight: 600; }
+.ix-page .pf-tag.o { background: #fff3ec; color: #c2410c; } .ix-page .pf-tag.g { background: #ecfdf3; color: #15803d; }
+.ix-page .pf-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.ix-page .pf-stats { display: flex; gap: 28px; }
+.ix-page .pf-stats div { text-align: right; }
+.ix-page .pf-stats small { display: block; font-size: 11.5px; color: #6b7280; }
+.ix-page .pf-stats b { font-size: 19px; font-weight: 700; color: #111827; }
+.ix-page .pf-lock { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #8b919b; }
+.ix-page .pf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
+.ix-page .ix-card.pf-card { margin: 0 !important; padding: 0 !important; overflow: hidden; }
+.ix-page .pf-card > header { padding: 13px 18px; border-bottom: 1px solid #eef0f3; font-size: 14px; font-weight: 600; color: #111827; }
+.ix-page .pf-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; padding: 16px 18px 18px; }
+.ix-page .pf-kv { min-width: 0; }
+.ix-page .pf-kv.full { grid-column: 1 / -1; }
+.ix-page .pf-kv small { display: block; font-size: 11.5px; line-height: 1.35 !important; color: #8b919b; margin: 0 0 2px !important; }
+.ix-page .pf-kv b { display: block; font-size: 13.5px; line-height: 1.35 !important; font-weight: 600; color: #111827; overflow-wrap: anywhere; margin: 0 !important; }
+/* account security uses the same card header as the others */
+.ix-page .pf-sec, .ix-page .pf-sec > .sec-card { height: 100%; }
+.ix-page .pf-sec > .ix-card.sec-card { margin: 0 !important; padding: 0 0 16px !important; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; }
+.ix-page .pf-sec .sec-card > .ipv-title { margin: 0 !important; padding: 13px 18px; border-bottom: 1px solid #eef0f3; font-size: 14px !important; font-weight: 600 !important; color: #111827; text-transform: none !important; letter-spacing: 0 !important; }
+.ix-page .pf-sec .sec-card > .ipv-title::after { display: none !important; }
+.ix-page .pf-sec .sec-card > :not(.ipv-title) { margin-left: 18px !important; margin-right: 18px !important; }
+.ix-page .pf-sec .sec-change { align-self: flex-start; }
+@media (max-width: 1100px) { .ix-page .pf-stats { gap: 18px; } }
+/* computers: the page fits the window; the four cards share the height left */
+@media (min-width: 901px) and (min-height: 600px) {
+  .ix-page.lay2 .ix-main:has(.pf-page) { overflow-y: auto !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content > * { flex: none; }
+  .ix-page .ix-content > .pf-page { flex: 1 0 auto !important; min-height: 0; }
+  .ix-page .ix-card.pf-head { flex: none; padding: clamp(12px, 1.8vh, 18px) 22px !important; }
+  /* each row is at least as tall as its content (nothing is cut); extra height is shared */
+  .ix-page .pf-grid { flex: 1 0 auto; grid-template-rows: minmax(min-content, 1.15fr) minmax(min-content, 1fr); }
+  .ix-page .pf-grid > * { min-height: 0; }
+  .ix-page .pf-card > header, .ix-page .pf-sec .sec-card > .ipv-title { padding: clamp(9px, 1.4vh, 13px) 18px !important; }
+  .ix-page .pf-body { gap: clamp(8px, 1.4vh, 14px) 24px; padding: clamp(10px, 1.6vh, 16px) 18px; }
+  .ix-page .pf-sec > .ix-card.sec-card { gap: clamp(6px, 1.2vh, 12px); padding-bottom: clamp(10px, 1.6vh, 16px) !important; }
+  .ix-page .pf-sec .sec-hint { font-size: 11.5px; line-height: 1.45; }
+}
+/* wide screens: three facts per row, so the cards stay short */
+@media (min-width: 1200px) and (max-height: 900px) { .ix-page .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* tall screens: roomier facts so the cards are filled */
+@media (min-width: 901px) and (min-height: 901px) { .ix-page .pf-body { gap: 18px 24px; } .ix-page .pf-kv b { font-size: 14px; } }
+@media (min-width: 901px) and (max-height: 800px) {
+  .ix-page .pf-sec .sec-hint { display: none; }
+  .ix-page .pf-kv small { margin-bottom: 0; font-size: 11px; } .ix-page .pf-kv b { font-size: 12.5px; }
+  .ix-page .pf-head .ix-avatar, .ix-page .pf-head > :first-child { transform: scale(.85); }
+}
+@media (max-width: 900px) {
+  .ix-page .ix-card.pf-head { flex-wrap: wrap; }
+  .ix-page .pf-stats { margin-left: 0; width: 100%; justify-content: space-between; }
+  .ix-page .pf-stats div { text-align: left; }
+  .ix-page .pf-lock { position: static !important; }
+  .ix-page .pf-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) { .ix-page .pf-body { grid-template-columns: 1fr; } }
+`;
 
 /* ───────── ONE PLACE TO CHANGE ALL CARD BORDERS ─────────
    Change --card-border below and every page follows (Home, DTR, Submit Online,
@@ -2557,7 +3138,7 @@ export const internCss = `
 
 /* ═════════ HOME (redesign) ═════════ */
 .hv-hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 22px;
-  padding: 20px 24px; border-radius: 22px; color: #eb0f0f;
+  padding: 20px 24px; border-radius: 22px; color: #fff;
   background: linear-gradient(120deg, #f2733a 0%, #e8582a 55%, #d4401a 100%);
   box-shadow: 0 16px 34px rgba(232,88,42,.32); }
 .hv-blob { position: absolute; border-radius: 50%; pointer-events: none; background: rgba(255,255,255,.12); }
@@ -2791,6 +3372,34 @@ export const internCss = `
 .ix-page .mv-hist-main small { font-size: 11px; color: #8a7a71; }
 .ix-page .mv-upform { display: flex; flex-direction: column; gap: 10px; }
 .ix-page .mv-upform .ix-b { align-self: flex-end; }
+/* progress split by color, with a legend: green approved, amber waiting, red needs fix, gray to upload */
+.ix-page .mv-prog2 { display: flex; align-items: center; gap: 14px; margin: 2px 0 14px; flex-wrap: wrap; }
+.ix-page .mv-prog2 > b { font-size: 13px; font-weight: 700; color: #111827; white-space: nowrap; }
+.ix-page .mv-bar2 { flex: 1; min-width: 160px; height: 8px; border-radius: 99px; background: #eef0f3; display: flex; overflow: hidden; }
+.ix-page .mv-bar2 i { display: block; height: 100%; transition: width .4s ease; }
+.ix-page :is(.mv-bar2, .mv-legend) i.approved { background: #22c55e; } .ix-page :is(.mv-bar2, .mv-legend) i.pending { background: #f59e0b; }
+.ix-page :is(.mv-bar2, .mv-legend) i.rejected { background: #ef4444; } .ix-page .mv-legend i.none { background: #d1d5db; }
+.ix-page .mv-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #6b7280; }
+.ix-page .mv-legend > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ix-page .mv-legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ix-page .mv-legend b { color: #111827; font-weight: 700; }
+/* each row and its icon use the same colors as the legend, so interns can match them at a glance */
+.ix-page .mv-row { box-shadow: inset 3px 0 0 #d1d5db; }
+.ix-page .mv-row.s-approved { box-shadow: inset 3px 0 0 #22c55e; } .ix-page .mv-row.s-pending { box-shadow: inset 3px 0 0 #f59e0b; }
+.ix-page .mv-row.s-rejected { box-shadow: inset 3px 0 0 #ef4444; }
+.ix-page .mv-ic.s-none, .ix-page .mv-ic.s-todo { background: #f3f4f6 !important; color: #6b7280 !important; }
+.ix-page .g-other .mv-row { box-shadow: none; }
+.ix-page .mv-chip { box-shadow: inset 0 0 0 1px #bbf7d0; }
+/* the "Other documents" file box: a tidy row, the real file input hidden over it */
+.ix-page .mv-upform .ix-drop { position: relative; display: flex !important; flex-direction: row !important; align-items: center; gap: 12px; min-height: 0 !important; height: auto !important;
+  padding: 14px 16px !important; border: 1.5px dashed #f0c9b5; border-radius: 12px; background: #fffaf7; cursor: pointer; box-sizing: border-box; }
+.ix-page .mv-upform .ix-drop:hover, .ix-page .mv-upform .ix-drop.has-file { border-color: #e8582a; background: #fff3ec; }
+.ix-page .mv-upform .ix-drop input[type="file"] { position: absolute !important; inset: 0; width: 100% !important; height: 100% !important; opacity: 0; cursor: pointer; margin: 0; padding: 0; }
+.ix-page .mv-upform .ix-drop-icon { width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px; display: grid; place-items: center; }
+.ix-page .mv-upform .ix-drop-text { flex: 1; min-width: 0; display: flex !important; flex-direction: column; writing-mode: horizontal-tb; font-size: 13px; font-weight: 600; color: #1e293b;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ix-page .mv-upform .ix-drop-text small { font-size: 11.5px; font-weight: 400; color: #94a3b8; }
+.ix-page .mv-upform .ix-input { height: 40px; }
 .ix-page .ibx-ic.big { width: 48px; height: 48px; border-radius: 14px; }
 .ix-page .rq-steps-lg { transform: none; margin-top: 4px; }
 .ix-page .rq-steps-lg li span { font-size: 12.5px !important; }
@@ -2965,10 +3574,31 @@ export const internCss = `
 .fx-kind.on { border-color: #e8582a; background: #fff7f2; }
 .fx-hint { display: block; margin-top: 4px; font-size: 12px; color: #6b7280; }
 .fx-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.ix-page .at-bar .at-day-btn { margin-left: 8px; padding: 5px 12px; font-size: 12px; white-space: nowrap; }
+/* "Missed a whole day?" (the pill) on the right; the bars note sits under it */
+/* one even row: chips, month and the button all 34px tall; the bars note hangs under the button
+   (on the same line as the month heading) so it doesn't make the row taller */
+.ix-page .at-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; position: relative; margin: 0 !important; }
+.ix-page .at-bar :is(.mon-chip, .at-month, .at-day-btn) { height: 34px !important; min-height: 34px !important; box-sizing: border-box; display: inline-flex; align-items: center; margin: 0 !important; }
+.ix-page .at-bar .at-month { padding-top: 0 !important; padding-bottom: 0 !important; }
+.ix-page .at-bar .mon-sep { align-self: center; height: 20px; margin: 0 4px !important; }
+.ix-page .at-bar .at-day-box { margin-left: auto; }
+/* the bars note sits at the right end of the first month heading, right under the button */
+.ix-page .at-grp-h .at-scale-note { margin-left: auto; font-style: normal; font-size: 11px; color: #a99d96; white-space: nowrap; }
+.ix-page .at-bar .at-day-btn { padding: 0 14px !important; font-size: 12.5px; line-height: 1; white-space: nowrap; }
+.ix-page .at-bar { margin: 4px 0 6px !important; }
+/* the description line sits as close to the summary as the other gaps on this page */
+.ix-page.lay2 .ix-content .at-stack > .ix-ph.ix-ph.ix-ph { margin-bottom: 4px !important; }
+/* every attendance row the same height: badges and buttons stay on one line, OT sits beside the hours */
+@media (min-width: 901px) {
+  .ix-page .at-rows li { grid-template-columns: 38px 66px 300px minmax(120px, 1fr) 230px; height: 52px; padding: 0 14px; box-sizing: border-box; }
+  .ix-page .at-io, .ix-page .at-io .at-fix { flex-wrap: nowrap; }
+  .ix-page .at-io :is(.ix-badge, [class*="badge"]) { padding: 3px 8px !important; font-size: 11px !important; line-height: 1.3 !important; white-space: nowrap; }
+  .ix-page .at-io .at-fix-btn { padding: 3px 10px !important; font-size: 11px; line-height: 1.3; }
+  .ix-page .at-h { flex-direction: row-reverse; align-items: baseline; justify-content: flex-start; gap: 10px; white-space: nowrap; }
+}
 .ix-page .at-day-wait { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; padding: 8px 12px; border-radius: 10px;
   background: #fff7ed; border: 1px solid #fde4cc; color: #9a3412; font-size: 12.5px; }
-/* Home: "No time out" / "Forgot to tap in?" reminder inside the Today card */
+/* Home: "No time out" / "Forgot to time in?" reminder inside the Today card */
 .ix-page .ix-content .dbx-fix { margin-top: 10px; display: grid; gap: 6px; }
 .ix-page .ix-content .dbx-fix-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
   border: 1px solid #fde2cf; background: #fff7f1; border-radius: 10px; }
@@ -3003,6 +3633,108 @@ export const internCss = `
 
 
 /* My Requests */
+.ix-page .rq-bar { margin-bottom: 12px !important; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ix-page .rq-bar .rq-type { height: 34px; }
+.ix-page .rq-cols { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; }
+.ix-page .ix-card.rq-table { padding: 0 !important; overflow: hidden; margin: 0 !important; }
+.ix-page .rq-table table { width: 100%; border-collapse: collapse; }
+.ix-page .rq-table th { padding: 10px 16px; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8b919b; background: #fafafb; border-bottom: 1px solid #eef0f3; white-space: nowrap; }
+.ix-page .rq-table td { padding: 12px 16px; border-bottom: 1px solid #f1f2f4; vertical-align: middle; font-size: 12.5px; }
+.ix-page .rq-table tbody tr { cursor: pointer; transition: background .15s; }
+.ix-page .rq-table tbody tr:hover, .ix-page .rq-table tbody tr:focus-visible { background: #fffaf7; outline: none; }
+.ix-page .rq-table tbody tr:last-child td { border-bottom: 0; }
+.ix-page .rq-table tr.g-rejected { box-shadow: inset 3px 0 0 #ef4444; } .ix-page .rq-table tr.g-waiting { box-shadow: inset 3px 0 0 #f59e0b; } .ix-page .rq-table tr.g-approved { box-shadow: inset 3px 0 0 #22c55e; }
+.ix-page .rq-table .rq-what { max-width: none; min-width: 0; }
+.ix-page .rq-ic.approved { background: #ecfdf3; color: #16a34a; } .ix-page .rq-ic.rejected { background: #fef2f2; color: #dc2626; } .ix-page .rq-ic.waiting { background: #fff7ed; color: #d97706; }
+.ix-page .rq-rem { font-style: normal; font-size: 11.5px; color: #b91c1c; margin-top: 2px; }
+.ix-page .rq-date { white-space: nowrap; color: #6b7280; }
+.ix-page .rq-st { white-space: nowrap; }
+.ix-page .rq-trk { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ix-page .rq-trk li { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #9ca3af; font-weight: 500; }
+.ix-page .rq-trk li + li::before { content: ""; width: 18px; height: 2px; border-radius: 2px; background: #e5e7eb; margin-right: 1px; }
+.ix-page .rq-trk li.done + li::before { background: #22c55e; }
+.ix-page .rq-trk i { width: 9px; height: 9px; border-radius: 50%; background: #e5e7eb; display: inline-block; }
+.ix-page .rq-trk li.done { color: #15803d; } .ix-page .rq-trk li.done i { background: #22c55e; }
+.ix-page .rq-trk li.now { color: #c2410c; } .ix-page .rq-trk li.now i { background: #f59e0b; box-shadow: 0 0 0 3px #fde7c3; }
+.ix-page .rq-trk li.fail { color: #b91c1c; } .ix-page .rq-trk li.fail i { background: #ef4444; }
+.ix-page .rq-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 48px 16px; text-align: center; color: #9ca3af; }
+.ix-page .rq-empty b { color: #374151; font-size: 13.5px; } .ix-page .rq-empty small { font-size: 12px; max-width: 360px; }
+.ix-page .rq-side { display: flex; flex-direction: column; gap: 12px; }
+.ix-page .ix-card.rq-box { padding: 14px 16px !important; margin: 0 !important; }
+.ix-page .rq-box > b { display: block; font-size: 13.5px; font-weight: 600; color: #111827; margin-bottom: 10px; }
+.ix-page .rq-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.ix-page .rq-nums small { display: block; font-size: 11.5px; color: #6b7280; }
+.ix-page .rq-nums strong { font-size: 20px; font-weight: 700; color: #111827; }
+.ix-page .rq-nums .w { color: #c2410c; } .ix-page .rq-nums .a { color: #15803d; } .ix-page .rq-nums .r { color: #b91c1c; }
+.ix-page .rq-new { display: grid; gap: 6px; }
+.ix-page .rq-new button { display: flex; align-items: center; gap: 10px; width: 100%; height: auto !important; min-height: 40px; padding: 8px 10px !important; border: 1px solid #eef0f3; border-radius: 10px;
+  background: #fff; text-align: left; font: inherit; font-size: 12.5px; font-weight: 500; color: #374151; cursor: pointer; transition: border-color .15s, background .15s; }
+.ix-page .rq-new button:hover { border-color: #f6c9b3; background: #fff7f2; color: #c2410c; }
+.ix-page .rq-new button > svg { color: #e8582a; flex-shrink: 0; }
+.ix-page .rq-new button span { display: flex; flex-direction: column; }
+.ix-page .rq-new button small { font-size: 11px; color: #9ca3af; font-weight: 400; }
+.ix-page .rq-how2 { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.ix-page .rq-how2 li { position: relative; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; }
+.ix-page .rq-how2 li > span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #fff3ec; border: 1px solid #fbe0d2; color: #e8582a; font-size: 12px; font-weight: 700; position: relative; z-index: 1; }
+.ix-page .rq-how2 strong { display: block; font-size: 12.5px; font-weight: 600; color: #111827; line-height: 1.35; }
+.ix-page .rq-how2 small { display: block; font-size: 11.5px; color: #6b7280; line-height: 1.4; margin-top: 1px; }
+.ix-page .rq-legend { margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f2f4; }
+.ix-page .rq-legend > small { display: block; font-size: 11px; color: #8b919b; margin-bottom: 6px; }
+.ix-page .rq-legend > div { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: #374151; }
+.ix-page .rq-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.ix-page .rq-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.ix-page .rq-legend i.done { background: #22c55e; } .ix-page .rq-legend i.now { background: #f59e0b; box-shadow: 0 0 0 3px #fde7c3; } .ix-page .rq-legend i.fail { background: #ef4444; }
+.ix-page .rq-how { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 12px; line-height: 1.5; color: #6b7280; }
+.ix-page .rq-drawer { display: flex; flex-direction: column; gap: 12px; }
+.ix-page .rq-dst { display: flex; }
+/* computers: the page fits the window; only the requests table scrolls (inside its border) */
+@media (min-width: 1101px) and (min-height: 560px) {
+  .ix-page.lay2 .ix-main:has(.rq-cols) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content > * { flex: none; }
+  .ix-page .ix-content > .rq-cols { flex: 1 1 0 !important; min-height: 0; align-items: stretch; }
+  .ix-page .rq-cols > .rq-table { display: flex; flex-direction: column; min-height: 0; overflow-y: auto !important; }
+  .ix-page .rq-table thead th { position: sticky; top: 0; z-index: 1; }
+  .ix-page .rq-cols > .rq-side { min-height: 0; overflow: hidden; }
+  .ix-page .rq-side .ix-card.rq-box { padding: 12px 14px !important; }
+  .ix-page .rq-box > b { margin-bottom: 8px; }
+  .ix-page .rq-nums strong { font-size: 18px; }
+  .ix-page .rq-new button { min-height: 36px; padding: 6px 10px !important; }
+}
+/* shorter windows: the approval guide steps aside so the side column still fits */
+/* the side column shrinks and grows with the window height, so it always fits without scrolling */
+@media (min-width: 1101px) and (min-height: 560px) {
+  .ix-page .rq-side { gap: clamp(8px, 1.4vh, 12px) !important; }
+  .ix-page .rq-side .ix-card.rq-box { padding: clamp(10px, 1.6vh, 16px) 14px !important; }
+  .ix-page .rq-side .rq-box > b { margin-bottom: clamp(4px, 1vh, 10px); font-size: 13.5px; }
+  .ix-page .rq-side .rq-nums { gap: clamp(4px, 1vh, 10px) 12px; }
+  .ix-page .rq-side .rq-nums strong { font-size: clamp(16px, 2.3vh, 20px); line-height: 1.2; }
+  .ix-page .rq-side .rq-new { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .ix-page .rq-side .rq-new button { min-height: clamp(34px, 4.6vh, 44px); padding: 6px 9px !important; font-size: 12px; line-height: 1.25; gap: 7px; }
+  .ix-page .rq-side .rq-how { gap: clamp(2px, .6vh, 6px); font-size: 12px; line-height: 1.45; }
+  .ix-page .rq-side > .rq-how-box { overflow: hidden !important; }
+  .ix-page .rq-side > .rq-how-box .rq-how2 { flex: 1 1 auto; gap: clamp(6px, 1vh, 10px); min-height: 0; }
+  .ix-page .rq-side > .rq-how-box .rq-how2 li { flex: 1 1 0; min-height: 0; max-height: 120px; }
+  .ix-page .rq-side > .rq-how-box .rq-how2 li { padding: clamp(6px, 1.2vh, 12px); border-radius: 12px; background: #fafafb; border: 1px solid #f1f2f4; align-items: center; }
+  .ix-page .rq-side > .rq-how-box .rq-legend { margin-top: auto; }
+}
+/* short windows: keep the steps, drop the small lines and the color guide */
+@media (min-width: 1101px) and (max-height: 820px) { .ix-page .rq-how2 small, .ix-page .rq-side .rq-legend { display: none; } }
+@media (min-width: 1101px) and (max-height: 640px) { .ix-page .rq-side .rq-how-box { display: none; } }
+/* the side column ends exactly where the requests table ends: the approval guide takes the space left */
+@media (min-width: 1101px) and (min-height: 560px) {
+  .ix-page .rq-cols > .rq-side { display: flex; flex-direction: column; }
+  .ix-page .rq-side > .rq-box { flex: none; }
+  .ix-page .rq-side > .rq-how-box { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+}
+@media (max-width: 1100px) { .ix-page .rq-cols { grid-template-columns: 1fr; } .ix-page .rq-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } }
+@media (max-width: 760px) {
+  .ix-page .rq-table thead { display: none; }
+  .ix-page .rq-table tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; padding: 12px 14px; border-bottom: 1px solid #f1f2f4; }
+  .ix-page .rq-table td { padding: 0; border: 0; }
+  .ix-page .rq-table td:first-child { grid-column: 1 / -1; }
+  .ix-page .rq-trk span { display: none; }
+}
 .rq-what { display: flex; align-items: flex-start; gap: 10px; min-width: 220px; max-width: 420px; }
 .rq-what > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .rq-what strong { font-size: 13.5px; color: #111827; }

@@ -1,5 +1,5 @@
 //login.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
 import campus from "../assets/campus.jpg";
@@ -43,7 +43,7 @@ a: "Click \"Forgot password?\" on the log in form and enter your ID number with 
 },
 {
 q: "How is attendance recorded?",
-a: "Attendance can be recorded through the available attendance features, such as NFC check-in and check-out for registered users."
+a: "Attendance can be recorded through the available attendance features, such as NFC time-in and time-out for registered users."
 },
 {
 q: "What are MOVs?",
@@ -128,7 +128,7 @@ function RecoverFlow({ onDone }) {
   const Msg = () => (msg ? <div className={msg.type === "success" ? "lf-rec-msg ok" : "lf-rec-msg err"} role="alert">{msg.text}</div> : null);
 
   return (
-    <div className="lf-rec">
+    <div className="lf-rec" key={step}>
       {step === "verify" && (
         <>
           <h3>Recover account</h3>
@@ -188,9 +188,22 @@ export default function LoginForm({ variant = "student" }) {
   const [error, setError] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [slide, setSlide] = useState(0);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [panel, setPanel] = useState(null); // null | "about" | "faqs" | "forgot"
+  // the log-in box slides to "Recover account" (and back) instead of opening a separate window
+  const [dropView, setDropView] = useState("login");   // "login" | "recover"
+  const [dropH, setDropH] = useState(null);
+  const loginPane = useRef(null);
+  const recoverPane = useRef(null);
+  useEffect(() => {
+    const el = dropView === "login" ? loginPane.current : recoverPane.current;
+    if (!el) return undefined;
+    const fit = () => setDropH(el.offsetHeight);
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  });
   const [faqOpen, setFaqOpen] = useState(-1);   // every question starts closed
   const [isFull, setIsFull] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -248,7 +261,6 @@ export default function LoginForm({ variant = "student" }) {
       if (e.key === "Escape") {
         setLoginOpen(false);
         setPanel(null);
-        setMenuOpen(false);
       }
     };
     const onFs = () => setIsFull(!!document.fullscreenElement);
@@ -261,12 +273,10 @@ export default function LoginForm({ variant = "student" }) {
   }, []);
 
   const go = (path) => {
-    setMenuOpen(false);
     setPanel(null);
     navigate(path);
   };
   const openPanel = (name) => {
-    setMenuOpen(false);
     setFaqOpen(-1);
     setPanel(name);
   };
@@ -339,10 +349,6 @@ export default function LoginForm({ variant = "student" }) {
     }).requestAccessToken();
   };
 
-  const sideItems = [
-    { label: "Home", icon: <HomeIcon />, onClick: () => go("/login"), active: true },
-  ];
-
   const clock = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   return (
@@ -351,20 +357,9 @@ export default function LoginForm({ variant = "student" }) {
       <header className="lf-nav">
         <button className="lf-logo-btn" onClick={() => go("/login")} aria-label="Home">
           <img src={logo} alt="CSU CCIS" className="lf-nav-logo" />
-          <span className={menuOpen ? "lf-brand-name show" : "lf-brand-name"} aria-hidden={!menuOpen}>
+          <span className="lf-brand-name show">
             CSU CCIS<br />MYTRACK
           </span>
-        </button>
-
-        <button
-          className="lf-icon-btn"
-          aria-label={menuOpen ? "Close menu" : "Open menu"}
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((o) => !o)}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1e293b" strokeWidth="2.4" strokeLinecap="round">
-            <path d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
         </button>
 
         <button className="lf-icon-btn lf-fs-btn" aria-label="Toggle fullscreen" onClick={toggleFullscreen}>
@@ -381,36 +376,105 @@ export default function LoginForm({ variant = "student" }) {
         <button
           className={loginOpen ? "lf-login-link open" : "lf-login-link"}
           aria-expanded={loginOpen}
-          onClick={() => { setLoginOpen((o) => !o); setMenuOpen(false); }}
+          onClick={() => { setDropView("login"); setTimeout(() => document.getElementById("lf-email")?.focus(), 50); }}
         >
           <UserIcon /> Log in
         </button>
       </header>
 
       <div className="lf-body">
-        {/* White sidebar: expands to show labels when the ☰ is pressed */}
-        <div className={menuOpen ? "lf-strip open" : "lf-strip"} />
-        {menuOpen && <div className="lf-backdrop" onClick={() => setMenuOpen(false)} />}
-        <aside className={menuOpen ? "lf-side open" : "lf-side"} aria-label="Main navigation">
-          {sideItems.map((it) => (
-            <button
-              key={it.label}
-              className={it.active ? "lf-side-item active" : "lf-side-item"}
-              onClick={it.onClick}
-              title={it.label}
-              tabIndex={0}
-            >
-              <span className="lf-side-icon">{it.icon}</span>
-              <span className="lf-side-label">{it.label}</span>
-            </button>
-          ))}
-          <div className="lf-side-foot">MYTRACK</div>
-        </aside>
-
+        {/* no sidebar on the login page: it only had "Home" (the logo goes home too) */}
         <div className="lf-main">
           {/* ── Log in dropdown (opened from the navbar) ── */}
-          {loginOpen && (
-            <div className="lf-drop" role="dialog" aria-label="Log in">
+          <div className="lf-split">
+            {/* ── Left: hero with campus photo ── */}
+            <section className="lf-hero">
+              <img src={campus} alt="CSU CCIS building" className="lf-campus" />
+              <div className="lf-shade" />
+              <div className="lf-grain" />
+
+              <div className="lf-hero-text">
+                <h1>Simple. Secure. Connected.</h1> <h2>Manage your OJT activities with ease.</h2> 
+                <p className="lf-desc"> Access attendance, submissions, 
+                  notifications, and other OJT features in one convenient system. 
+                </p>
+
+                <div className="lf-slide" aria-live="polite">
+                  <div key={slide} className="lf-slide-inner">
+                    <div className="lf-slide-title">{SLIDES[slide].title}</div>
+                    <div className="lf-slide-text">{SLIDES[slide].text}</div>
+                  </div>
+                  <div className="lf-dots">
+                    {SLIDES.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setSlide(i)}
+                        className={i === slide ? "lf-dot active" : "lf-dot"}
+                        aria-label={`Show tip ${i + 1}: ${SLIDES[i].title}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* The one big moment: a card taps the reader, the time in lands */}
+              <div className="lf-scene" aria-hidden="true">
+                <div className={demoIn ? "lf-toast" : "lf-toast out"} onAnimationIteration={() => setDemoIn((v) => !v)}>
+                  <span className="lf-toast-ok">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+                  </span>
+                  <span className="lf-toast-body">
+                    <b>{demoIn ? "Time in" : "Time out"} <em>{clock}</em></b>
+                    <small>Student ID 221-02399</small>
+                  </span>
+                </div>
+
+                {/* a plain white NFC reader (ACR122U-like) lying on the desk, with its USB cable */}
+                <svg className="lf-cable" viewBox="0 0 1000 560" aria-hidden="true">
+                  <defs>
+                    <linearGradient id="lfCable" x1="0" x2="1"><stop offset="0" stopColor="#d9d3cd" /><stop offset=".5" stopColor="#fff" /><stop offset="1" stopColor="#cfc8c1" /></linearGradient>
+                  </defs>
+                  <path d="M834 256 C 800 210, 730 185, 685 235 S 600 420, 565 560" fill="none" stroke="rgba(40,12,4,.35)" strokeWidth="13" strokeLinecap="round" transform="translate(4,8)" />
+                  <path d="M834 256 C 800 210, 730 185, 685 235 S 600 420, 565 560" fill="none" stroke="url(#lfCable)" strokeWidth="11" strokeLinecap="round" />
+                  <path d="M834 256 C 800 210, 730 185, 685 235 S 600 420, 565 560" fill="none" stroke="rgba(255,255,255,.75)" strokeWidth="2" strokeLinecap="round" transform="translate(-2,-2)" />
+                </svg>
+                <div className="lf-reader">
+                  <span className="lf-reader-shadow" />
+                  <div className="lf-reader-3d">
+                    <div className="lf-reader-top">
+                      <span className="lf-reader-ring" />
+                      <span className="lf-reader-ring r2" />
+                      <span className="lf-reader-led" />
+                      <span className="lf-reader-waves"><WaveIcon size={50} /></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lf-tapcard">
+                  <div className="lf-tapcard-top">
+                    <img src={logo} alt="" />
+                    <span className="lf-chip" />
+                  </div>
+                  <div className="lf-tapcard-lines">
+                    <span />
+                    <span />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* ── Right: info panel (the login form now lives in the navbar dropdown) ── */}
+            <section className="lf-right">
+              <span className="lf-orb o1" />
+              <span className="lf-orb o2" />
+              <span className="lf-orb o3" />
+              <div className="lf-card lf-formcard">
+                <span className="lf-hello">Welcome back</span>
+                <h3 className="lf-welcome">Log in to your account</h3>
+                <p className="lf-welcome-sub">Interns, coordinators, supervisors and admins.</p>
+             <div className="lf-dv" style={{ height: dropH ?? "auto" }}>
+              <div className={`lf-dv-track ${dropView}`}>
+              <div className="lf-dv-pane" ref={loginPane} aria-hidden={dropView !== "login"} inert={dropView !== "login" ? "" : undefined}>
               {error && (
                 <div className="lf-error" role="alert">
                   <span className="lf-error-dot">!</span> {error}
@@ -426,6 +490,8 @@ export default function LoginForm({ variant = "student" }) {
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
+                        style={{ fontSize: email.length > 34 ? 12.5 : email.length > 26 ? 13.5 : undefined }}
+                        title={email || undefined}
                         placeholder="Email address"
                         required
                         autoComplete="username"
@@ -478,7 +544,7 @@ export default function LoginForm({ variant = "student" }) {
                       />
                       Remember me for 7 days
                     </label>
-                    <button type="button" className="lf-link" onClick={() => { setLoginOpen(false); openPanel("forgot"); }}>
+                    <button type="button" className="lf-link" onClick={() => setDropView("recover")}>
                       Forgot password?
                     </button>
                   </div>
@@ -486,11 +552,11 @@ export default function LoginForm({ variant = "student" }) {
                   <button type="submit" disabled={loading} className="lf-login-btn">
                     {loading ? (
                       <>
-                        <span className="lf-spinner" aria-hidden="true" /> Signing in...
+                        <span className="lf-spinner" aria-hidden="true" /> Logging in...
                       </>
                     ) : (
                       <>
-                        <WaveIcon size={18} /> Sign in
+                        <WaveIcon size={18} /> Log in
                       </>
                     )}
                   </button>
@@ -507,111 +573,18 @@ export default function LoginForm({ variant = "student" }) {
                   </svg>
                   Sign in with Google
                 </button>
-            </div>
-          )}
-          <div className="lf-split">
-            {/* ── Left: hero with campus photo ── */}
-            <section className="lf-hero">
-              <img src={campus} alt="CSU CCIS building" className="lf-campus" />
-              <div className="lf-shade" />
-              <div className="lf-grain" />
-
-              <div className="lf-hero-text">
-                <h1>Simple. Secure. Connected.</h1> <h2>Manage your OJT activities with ease.</h2> 
-                <p className="lf-desc"> Access attendance, submissions, 
-                  notifications, and other OJT features in one convenient system. 
-                </p>
-
-                <div className="lf-slide" aria-live="polite">
-                  <div key={slide} className="lf-slide-inner">
-                    <div className="lf-slide-title">{SLIDES[slide].title}</div>
-                    <div className="lf-slide-text">{SLIDES[slide].text}</div>
-                  </div>
-                  <div className="lf-dots">
-                    {SLIDES.map((_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setSlide(i)}
-                        className={i === slide ? "lf-dot active" : "lf-dot"}
-                        aria-label={`Show tip ${i + 1}: ${SLIDES[i].title}`}
-                      />
-                    ))}
-                  </div>
-                </div>
               </div>
 
-              {/* The one big moment: a card taps the reader, the check-in lands */}
-              <div className="lf-scene" aria-hidden="true">
-                <div className={demoIn ? "lf-toast" : "lf-toast out"} onAnimationIteration={() => setDemoIn((v) => !v)}>
-                  <span className="lf-toast-ok">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
-                  </span>
-                  <span className="lf-toast-body">
-                    <b>{demoIn ? "Checked in" : "Checked out"}</b>
-                    <small>{clock} · ID 221-02399</small>
-                  </span>
-                </div>
-
-                <div className="lf-reader">
-                  <span className="lf-reader-ring" />
-                  <span className="lf-reader-ring r2" />
-                  <span className="lf-reader-pad"><WaveIcon size={46} /></span>
-                  <span className="lf-reader-led" />
-                </div>
-
-                <div className="lf-tapcard">
-                  <div className="lf-tapcard-top">
-                    <img src={logo} alt="" />
-                    <span className="lf-chip" />
-                  </div>
-                  <div className="lf-tapcard-lines">
-                    <span />
-                    <span />
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* ── Right: info panel (the login form now lives in the navbar dropdown) ── */}
-            <section className="lf-right">
-              <span className="lf-orb o1" />
-              <span className="lf-orb o2" />
-              <span className="lf-orb o3" />
-              <div className="lf-card lf-info">
-                <div className="lf-card-head">
-                  <img src={logo} alt="" className="lf-card-logo" />
-                  <div className="lf-brand">
-                    <span className="lf-underline">MYTRACK</span>
-                  </div>
-                </div>
-
-                <h3 className="lf-welcome">Your OJT, tracked in one tap.</h3>
-                <p className="lf-welcome-sub">Attendance, requirements and updates for CCIS interns, all in one place.</p>
-
-                <div className="lf-now" aria-label="Current date and time">
-                  <span className="lf-now-dot" aria-hidden="true" />
-                  <span>{now.toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" })}</span>
-                  <b>{clock}</b>
-                </div>
-
-                <h4 className="lf-info-h">How it works</h4>
-                <ol className="lf-steps">
-                  <li><span>1</span><div><b>Tap your NFC card</b><small>Check in and out at the reader. Each tap gets its own secure UUID.</small></div></li>
-                  <li><span>2</span><div><b>Submit your requirements</b><small>Upload pre-internship documents online and track their approval.</small></div></li>
-                  <li><span>3</span><div><b>Follow your hours</b><small>See rendered hours, your DTR and notifications as they happen.</small></div></li>
-                </ol>
-
-                <h4 className="lf-info-h">Who uses it</h4>
-                <div className="lf-roles-grid">
-                  <div><UserIcon /><b>Interns</b><small>Hours, MOVs, DTR</small></div>
-                  <div><StaffIcon /><b>Coordinators</b><small>Review and monitor</small></div>
-                  <div><HomeIcon /><b>Supervisors</b><small>Attendance reports</small></div>
-                  <div><LockIcon /><b>Admins</b><small>Accounts, calendar</small></div>
-                </div>
-
-                <button type="button" className="lf-login-btn lf-info-cta" onClick={() => { setLoginOpen(true); setMenuOpen(false); }}>
-                  <WaveIcon size={18} /> Log in to continue
+              {/* ── Recover account: slides in from the right ── */}
+              <div className="lf-dv-pane" ref={recoverPane} aria-hidden={dropView !== "recover"} inert={dropView !== "recover" ? "" : undefined}>
+                <button type="button" className="lf-dv-back" onClick={() => setDropView("login")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                  Back to log in
                 </button>
+                {dropView === "recover" && <RecoverFlow onDone={() => setDropView("login")} />}
+              </div>
+              </div>
+             </div>
                 <div className="lf-switch">Need help? Contact your OJT coordinator.</div>
               </div>
             </section>
@@ -631,7 +604,7 @@ export default function LoginForm({ variant = "student" }) {
                 <h3>About CSU CCIS OJT</h3>
                 <p className="lf-modal-lead">Attendance tracking built for the way interns actually work.</p>
                 <p>
-                  This system replaces paper logbooks with a single NFC tap. Interns check in and out in
+                  This system replaces paper logbooks with a single NFC tap. Interns time in and time out in
                   a second, admins see who is on duty, and coordinators can follow every intern's
                   progress toward their required hours without chasing signatures.
                 </p>
@@ -656,7 +629,8 @@ export default function LoginForm({ variant = "student" }) {
                         <span>{f.q}</span>
                         <span className="lf-faq-plus">+</span>
                       </button>
-                      {faqOpen === i && <p>{f.a}</p>}
+                      {/* the answer slides down / up (height animates from 0 to its real size) */}
+                      <div className="lf-faq-a" aria-hidden={faqOpen !== i}><div><p>{f.a}</p></div></div>
                     </div>
                   ))}
                 </div>
@@ -787,7 +761,7 @@ const css = `
 
   /* ───── Hero: photo with a warm colour grade ───── */
   .lf-hero { position: relative; flex: 1 1 0; min-width: 0; background: #2a120a; overflow: hidden; color: #fff; }
-  .lf-campus { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 35%; }
+  .lf-campus { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 75%; }
   .lf-shade {
     position: absolute; inset: 0; pointer-events: none;
     background:
@@ -827,21 +801,25 @@ const css = `
     position: absolute; z-index: 3; right: clamp(24px, 5vw, 68px); top: 56%;
     width: 300px; height: 330px; margin-top: -135px;
   }
-  .lf-reader { position: absolute; left: 75px; top: 160px; width: 150px; height: 150px; }
-  .lf-reader-pad {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff;
-    border-radius: 40px;
-    background: linear-gradient(150deg, rgba(255,255,255,0.28), rgba(255,255,255,0.08));
-    border: 1px solid rgba(255,255,255,0.42);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 24px 50px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.5);
+  /* white reader seen at an angle (like an ACR122U on a desk) */
+  .lf-cable { position: absolute; left: -710px; top: -60px; width: 1000px; height: 560px; z-index: 0; overflow: visible; pointer-events: none; }
+  .lf-reader { position: absolute; left: 48px; top: 142px; width: 210px; height: 240px; z-index: 1; perspective: 760px; }
+  .lf-reader-shadow { position: absolute; left: 6px; right: -16px; bottom: -4px; height: 64px; border-radius: 50%; background: rgba(40,12,4,.55); filter: blur(18px); }
+  .lf-reader-3d { position: absolute; left: 18px; top: 0; width: 174px; height: 234px; transform: rotateX(52deg) rotateZ(-18deg); transform-style: preserve-3d; }
+  .lf-reader-top {
+    position: absolute; inset: 0; border-radius: 24px;
+    background: linear-gradient(160deg, #ffffff 0%, #f4f1ee 45%, #e4dfda 100%);
+    box-shadow: inset 0 1px 0 #fff, inset 0 -3px 8px rgba(0,0,0,.06),
+      0 3px 0 #d9d3cd, 0 6px 0 #cfc8c1, 0 9px 0 #c4bcb5, 0 12px 0 #b8afa7, 0 34px 40px rgba(40,12,4,.45);
   }
+  .lf-reader-top::before { content: ""; position: absolute; inset: 11px; border-radius: 16px; border: 1.5px solid rgba(0,0,0,.07); }
+  .lf-reader-waves { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #e8582a; }
   .lf-reader-led {
-    position: absolute; right: 16px; bottom: 16px; width: 9px; height: 9px; border-radius: 50%;
+    position: absolute; top: 18px; left: 50%; margin-left: -15px; width: 30px; height: 6px; border-radius: 3px;
     background: #ffb48f; box-shadow: 0 0 12px #ffb48f; animation: lf-led 6s ease-in-out infinite;
   }
   .lf-reader-ring {
-    position: absolute; inset: 0; border-radius: 40px; border: 2px solid rgba(255,255,255,0.8);
+    position: absolute; inset: 0; border-radius: 24px; border: 2px solid rgba(232,88,42,.7);
     opacity: 0; animation: lf-ring 6s ease-out infinite;
   }
   .lf-reader-ring.r2 { animation-delay: .35s; }
@@ -872,6 +850,7 @@ const css = `
   .lf-toast-body { display: flex; flex-direction: column; line-height: 1.25; }
   .lf-toast-body b { font-size: 13.5px; font-weight: 700; }
   .lf-toast-body small { font-size: 11.5px; color: var(--mut); }
+  .lf-toast-body b em { font-style: normal; font-weight: 600; color: var(--o); margin-left: 4px; }
 
   /* ───── Right side ───── */
   /* the card is centred with margin:auto, so on a short screen it scrolls instead of being cut off */
@@ -921,7 +900,9 @@ const css = `
     background: var(--field); border: 1.5px solid transparent; border-radius: 16px; padding: 0 8px 0 16px;
     transition: background .2s, border-color .2s, box-shadow .2s, color .2s;
   }
-  .lf-field:hover { border-color: var(--line); }
+  /* white fields; a light border when idle, orange when active */
+  .lf-field { background: #fff; border-color: #e9e0da; }
+  .lf-field:hover { border-color: #dccfc7; }
   .lf-field:focus-within { background: #fff; border-color: var(--o); color: var(--o); box-shadow: 0 0 0 4px rgba(232,88,42,0.14); }
   .lf-field-icon { flex-shrink: 0; display: flex; }
   .lf-field-body { flex: 1; padding: 9px 0 8px; min-width: 0; }
@@ -931,16 +912,20 @@ const css = `
   .lf-field input:focus { outline: none; }
 
   /* Stop the browser's blue/gray autofill background */
+  /* (no white box: the saved-password fill stays see-through, so the field is gray, or white when clicked) */
   .lf-field input:-webkit-autofill,
   .lf-field input:-webkit-autofill:hover,
   .lf-field input:-webkit-autofill:focus,
   .lf-field input:-webkit-autofill:active {
-    -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
+    -webkit-box-shadow: none !important; box-shadow: none !important;
     -webkit-text-fill-color: #1b1410 !important;
     caret-color: #1b1410;
-    transition: background-color 9999s ease-in-out 0s;
+    background-color: transparent !important;
+    transition: background-color 600000s 0s, color 600000s 0s;
   }
-  .lf-field input:autofill { box-shadow: 0 0 0 1000px #fff inset !important; -webkit-text-fill-color: #1b1410 !important; }
+  .lf-field input:autofill { box-shadow: none !important; background-color: transparent !important; }
+  /* long emails: smaller text, and "..." when it still doesn't fit */
+  .lf-field input { text-overflow: ellipsis; }
   .lf-eye { background: none; border: none; cursor: pointer; color: #8a7d75; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; transition: color .15s, background .15s; flex-shrink: 0; }
   .lf-eye:hover { color: var(--o); background: var(--o-soft); }
   .lf-eye:focus-visible { outline: 2px solid var(--o); outline-offset: 2px; }
@@ -1000,6 +985,13 @@ const css = `
   .lf-faq-plus { color: var(--o); font-size: 18px; transition: transform .2s; }
   .lf-faq-item.open .lf-faq-plus { transform: rotate(45deg); }
   .lf-faq-item p { padding: 0 15px 12px; margin: 0; }
+  .lf-faq-a { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .3s cubic-bezier(.2,.8,.2,1), opacity .25s ease; }
+  .lf-faq-a > div { overflow: hidden; min-height: 0; }
+  .lf-faq-a p { transform: translateY(-6px); transition: transform .3s cubic-bezier(.2,.8,.2,1); }
+  .lf-faq-item.open .lf-faq-a { grid-template-rows: 1fr; opacity: 1; }
+  .lf-faq-item.open .lf-faq-a p { transform: none; }
+  .lf-faq-plus { transition: transform .3s cubic-bezier(.2,.8,.2,1) !important; }
+  @media (prefers-reduced-motion: reduce) { .lf-faq-a, .lf-faq-a p { transition: none; } }
 
 
   /* ───── Recover account ───── */
@@ -1033,14 +1025,35 @@ const css = `
   .lf-login-link:hover, .lf-login-link.open { color: var(--o); background: var(--o-soft); }
   .lf-login-link:focus-visible { outline: 2px solid var(--o); outline-offset: 2px; }
   .lf-drop {
-    position: absolute; top: 0; right: 24px; z-index: 25; width: 380px; max-width: calc(100% - 24px);
+    position: absolute; top: 0; right: 24px; z-index: 25; width: 400px; max-width: calc(100% - 24px);
     background: #fff; border-radius: 0 0 10px 10px; padding: 22px 22px 20px;
     box-shadow: 0 24px 60px rgba(27,20,16,0.28), 0 2px 8px rgba(27,20,16,0.08);
     animation: lf-pop .2s ease-out;
   }
   .lf-drop .lf-form { gap: 12px; }
+  /* log in ⇄ recover account: two panes side by side; the box slides and changes height smoothly */
+  .lf-dv { overflow: hidden; margin: -4px -6px; padding: 4px 6px; transition: height .35s cubic-bezier(.2,.8,.2,1); }
+  .lf-dv-track { display: flex; width: 200%; align-items: flex-start; transition: transform .4s cubic-bezier(.2,.8,.2,1); }
+  .lf-dv-track.recover { transform: translateX(-50%); }
+  .lf-dv-pane { width: 50%; flex: none; padding: 0 6px 6px; transition: opacity .3s; }
+  /* same white fields as the log-in form */
+  .lf-drop .lf-rec input:not([type="checkbox"]) { background: #fff !important; border: 1.5px solid #e9e0da !important; }
+  .lf-drop .lf-rec input:not([type="checkbox"]):focus { border-color: var(--o) !important; }
+  .lf-dv-track.login > .lf-dv-pane:last-child, .lf-dv-track.recover > .lf-dv-pane:first-child { opacity: 0; }
+  .lf-dv-back { display: inline-flex; align-items: center; gap: 4px; margin: -4px 0 6px -4px; padding: 4px 8px 4px 4px; border: 0; background: none;
+    border-radius: 8px; color: var(--mut); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .lf-dv-back:hover { color: var(--o); background: var(--o-soft); }
+  .lf-drop .lf-rec { animation: lf-slidein .3s ease-out; }
+  .lf-drop .lf-rec h3 { margin: 0; font-size: 18px; }
+  .lf-drop .lf-rec .lf-rec-btn { padding: 10px 14px; font-size: 14px; border-radius: 12px; }
+  @media (prefers-reduced-motion: reduce) { .lf-dv, .lf-dv-track, .lf-dv-pane { transition: none; } }
+  /* smaller Sign in / Google buttons in the log-in box */
+  .lf-drop .lf-login-btn { padding: 10px 14px; font-size: 14px; border-radius: 12px; box-shadow: 0 8px 18px var(--o-glow); }
+  .lf-drop .lf-login-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(232,88,42,0.35); }
+  .lf-drop .lf-google { padding: 9px 14px; font-size: 13.5px; border-radius: 12px; }
+  .lf-drop .lf-or { margin: 10px 0 9px; }
   /* the picture always covers its box without being squashed */
-  .lf-campus { object-fit: cover; object-position: center 35%; }
+  .lf-campus { object-fit: cover; object-position: center 75%; }
 
 
   /* ───── Info panel (right) ───── */
@@ -1100,13 +1113,14 @@ const css = `
   }
   @keyframes lf-led {
     0%, 36% { background: #ffb48f; box-shadow: 0 0 12px #ffb48f; }
-    40%, 82% { background: #3ddc97; box-shadow: 0 0 14px #3ddc97; }
+    38%, 82% { background: #3ddc97; box-shadow: 0 0 14px #3ddc97; }
     92%, 100% { background: #ffb48f; box-shadow: 0 0 12px #ffb48f; }
   }
+  /* the result shows the moment the card touches the reader (~37%), together with the green LED */
   @keyframes lf-toast {
-    0%, 37% { opacity: 0; transform: translateY(14px) scale(.96); }
-    43%     { opacity: 1; transform: translateY(0) scale(1); }
-    80%     { opacity: 1; transform: translateY(0) scale(1); }
+    0%, 37% { opacity: 0; transform: translateY(10px) scale(.97); }
+    41%     { opacity: 1; transform: translateY(0) scale(1); }
+    82%     { opacity: 1; transform: translateY(0) scale(1); }
     90%, 100% { opacity: 0; transform: translateY(-8px) scale(.98); }
   }
 
@@ -1160,4 +1174,95 @@ const css = `
     .lf-roles { margin-top: 10px; }
     .lf-field-body { padding: 7px 0 6px; }
   }
+
+  /* ═══════ Same look as the dashboards ═══════
+     gray page, the logo in a white tile, one white rounded panel with the content inside,
+     cards with a thin gray border, solid orange buttons */
+  .lf-page { background: #f3f4f6 !important; }
+  .lf-nav { background: transparent !important; box-shadow: none !important; height: 72px; padding: 0 22px 0 18px; }
+  .lf-nav-logo { width: 42px; height: 42px; object-fit: contain; padding: 4px; box-sizing: border-box; background: #fff;
+    border: 1px solid #e7e9ee; border-radius: 12px; box-shadow: 0 1px 2px rgba(15,23,42,.05); }
+  .lf-brand-name { color: #111827; }
+  .lf-icon-btn { width: 40px; height: 40px; align-items: center; justify-content: center; background: #fff; border: 1px solid #e7e9ee; border-radius: 12px; }
+  .lf-icon-btn:hover { background: #fff7f2; border-color: #f6c9b3; }
+  .lf-nav-links > button { color: #374151; font-weight: 500; }
+  .lf-nav-links > button:hover { background: #fff; color: #c2410c; }
+  .lf-login-link { background: #e8582a !important; color: #fff !important; border-radius: 10px !important; height: 40px; padding: 0 16px !important; font-weight: 600; }
+  .lf-login-link svg { stroke: #fff; }
+  .lf-login-link:hover, .lf-login-link.open { background: #d44b20 !important; color: #fff !important; }
+
+  /* the white panel (like the dashboard's) */
+  .lf-body { padding: 0 12px 12px; }
+  .lf-main { background: #fff; border: 1px solid #e7e9ee; border-radius: 18px; overflow: hidden; }
+  .lf-split { gap: 14px; padding: 14px; }
+  .lf-hero { border-radius: 14px; }
+  .lf-right { flex-basis: 440px; padding: 0; background: #fff !important; }
+  .lf-card { max-width: none; height: 100%; margin: 0; display: flex; flex-direction: column; justify-content: center;
+    background: #fff; border: 1px solid #e7e9ee; border-radius: 16px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 24px 28px; }
+  .lf-card-logo { width: 34px; height: 34px; padding: 3px; border: 1px solid #e7e9ee; border-radius: 10px; background: #fff; }
+  .lf-underline { border-bottom: 0; }
+  .lf-welcome { font-weight: 700; color: #111827; }
+  .lf-info-h { color: #8b919b !important; letter-spacing: .07em; font-size: 11px !important; }
+  /* steps and role tiles like the dashboard's small tiles */
+  .lf-steps > li > span:first-child, .lf-steps li > span:first-child { background: #fff3ec !important; border: 1px solid #fbe0d2 !important; color: #e8582a !important; box-shadow: none !important; }
+  .lf-roles-grid > * { background: #fafafb !important; border: 1px solid #eef0f3 !important; border-radius: 12px !important; box-shadow: none !important; }
+  .lf-roles-grid svg { color: #e8582a; }
+  /* solid orange button like "Submit MOV" on the dashboard */
+  .lf-login-btn { background: #e8582a !important; background-image: none !important; box-shadow: 0 1px 2px rgba(232,88,42,.25) !important; border-radius: 12px !important; }
+  .lf-login-btn:hover:not(:disabled) { background: #d44b20 !important; transform: none !important; }
+  .lf-field { border-radius: 12px; border-color: #e3e5ea; }
+  .lf-google { border-radius: 12px; border-color: #e3e5ea; }
+
+  /* the log-in box: a floating card like the dashboard's slide-in panel */
+  .lf-drop { top: 10px; right: 22px; border-radius: 18px; border: 1px solid #e7e9ee; box-shadow: 0 24px 60px rgba(17,24,39,.18); }
+
+  /* the hero's bottom slide card: same rounded glass, smaller radius to match */
+  .lf-slide { border-radius: 14px !important; }
+
+  @media (max-width: 900px) {
+    .lf-body { padding: 0 8px 8px; }
+    .lf-split { padding: 8px; gap: 8px; }
+    .lf-card { height: auto; }
+    .lf-nav-logo { width: 36px; height: 36px; padding: 3px; border-radius: 10px; }
+    .lf-login-link { height: 36px; padding: 0 12px !important; white-space: nowrap; flex-shrink: 0; }
+    .lf-nav { gap: 6px; padding: 0 10px; }
+    .lf-nav-links { margin-left: auto; }
+    .lf-main { overflow: visible; }
+    .lf-right { flex: none !important; height: auto !important; overflow: visible !important; }
+    .lf-card { margin: 0 !important; }
+  }
+
+  /* ═══ Layout C: the form lives on the page (right card), no dropdown ═══ */
+  .lf-login-link { display: none !important; }
+  .lf-formcard { justify-content: center; gap: 0; padding: 28px 34px !important; }
+  .lf-hello { align-self: flex-start; display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px; background: #fff3ec; color: #c2410c; font-size: 11.5px; font-weight: 600; margin-bottom: 10px; }
+  .lf-formcard .lf-welcome { text-align: left; margin: 0; font-size: 26px; }
+  .lf-formcard .lf-welcome-sub { text-align: left; margin: 4px 0 18px; max-width: none; }
+  .lf-formcard .lf-dv { width: 100%; }
+  .lf-formcard .lf-switch { display: block !important; text-align: center; margin-top: 14px; font-size: 12px; color: #6b7280; }
+  .lf-formcard .lf-dv-pane { padding-bottom: 6px; }
+  @media (max-width: 900px) {
+    .lf-formcard { padding: 22px 20px !important; }
+    /* phones: the form first, the photo below it */
+    .lf-right { order: -1; }
+    .lf-hero { height: 420px !important; }
+  }
+
+  /* ═══ Spacing that doesn't depend on the project's global h1/h2/p styles ═══ */
+  .lf-hero .lf-hero-text h1 { color: #fff !important; margin: 0 !important; line-height: 1.06 !important; }
+  .lf-hero .lf-hero-text h2 { margin: 14px 0 0 !important; line-height: 1.35 !important; font-size: 16px !important; font-weight: 600 !important; color: #ffb48f !important; }
+  .lf-hero .lf-hero-text .lf-desc { margin: 6px 0 0 !important; line-height: 1.6 !important; }
+  .lf-formcard .lf-welcome { margin: 0 !important; line-height: 1.2 !important; color: #111827 !important; }
+  .lf-formcard .lf-welcome-sub { margin: 6px 0 20px !important; line-height: 1.45 !important; display: block !important; color: #6b7280 !important; font-size: 13px !important; }
+  .lf-formcard .lf-hello { margin-bottom: 12px !important; line-height: 1 !important; }
+  .lf-formcard .lf-form { gap: 12px !important; }
+  .lf-formcard .lf-field label { margin: 0 0 2px !important; line-height: 1.2 !important; }
+  .lf-formcard .lf-field input { line-height: 1.3 !important; height: auto !important; }
+  .lf-formcard .lf-field-body { padding: 9px 0 8px !important; }
+  .lf-formcard .lf-or { margin: 14px 0 !important; }
+  .lf-formcard .lf-switch { margin-top: 16px !important; line-height: 1.4 !important; }
+  .lf-formcard .lf-login-btn { margin-top: 2px !important; }
+  /* top bar: logo on the left; About, FAQs and full screen on the right */
+  .lf-nav .lf-nav-links { margin-left: auto !important; order: 2; }
+  .lf-nav .lf-fs-btn { order: 3; margin-left: 6px; }
 `;

@@ -556,6 +556,74 @@ export function Modal({ title, sub, onClose, actions, wide, children }) {
   );
 }
 
+/* A form that slides in from the right side (instead of a window in the middle).
+   <Drawer title icon kicker sub onClose footer>…</Drawer>  — footer = the buttons pinned at the bottom */
+const DRAWER_CSS = `
+.ix-modal-wrap.ix-drawer-wrap { position: fixed; inset: 0; z-index: 1200; display: block; padding: 0; background: rgba(17, 24, 39, 0.18); animation: ixdwFade .22s ease both; }
+.ix-modal-wrap.ix-drawer-wrap.closing { animation: ixdwFadeOut .2s ease both; }
+.ix-drawer { position: absolute; top: 12px; right: 12px; bottom: 12px; width: min(440px, calc(100vw - 24px)); display: flex; flex-direction: column;
+  background: #fff; border: 1px solid #e7e9ee; border-radius: 20px; box-shadow: -18px 0 50px rgba(17, 24, 39, 0.14);
+  font-family: inherit; color: #111827; overflow: hidden; animation: ixdwIn .3s cubic-bezier(.2,.8,.2,1) both; }
+.ix-drawer-wrap.closing .ix-drawer { animation: ixdwOut .2s ease both; }
+.ix-drawer-head { display: flex; align-items: center; gap: 14px; padding: 16px 20px 14px; border-bottom: 1px solid #eef0f3; }
+.ix-drawer-ico { width: 46px; height: 46px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: #fff3ec; color: #e8582a; border: 1px solid #fbe0d2; }
+.ix-drawer-ttl { flex: 1; min-width: 0; }
+.ix-drawer-ttl small { display: block; font-size: 12px; color: #8b919b; margin-bottom: 2px; }
+.ix-drawer-ttl h2 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.25; color: #111827; }
+.ix-drawer-x { width: 36px; height: 36px; padding: 0 !important; flex-shrink: 0; border-radius: 50%; border: 1px solid #e7e9ee; background: #fff; color: #4b5563;
+  display: grid; place-items: center; cursor: pointer; transition: background .15s; }
+.ix-drawer-x:hover { background: #f3f4f6; }
+.ix-drawer-sub { margin: 0; padding: 12px 20px 0; font-size: 13px; line-height: 1.45; color: #6b7280; }
+.ix-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 20px 16px; }
+.ix-drawer-body .ix-form { gap: 12px !important; }
+.ix-drawer-body .ix-field textarea { min-height: 70px !important; }
+/* "what happens next" steps under a form, so the panel isn't half empty */
+.ix-drawer-steps { margin-top: 16px; padding: 12px 14px; border: 1px solid #eef0f3; border-radius: 14px; background: #fafafb; }
+.ix-drawer-steps h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: #111827; }
+.ix-drawer-steps ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.ix-drawer-steps li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: center; }
+.ix-drawer-steps li > span { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #fff; border: 1px solid #fbe0d2; color: #e8582a; font-size: 11px; font-weight: 700; }
+.ix-drawer-steps li b { display: block; font-size: 12.5px; font-weight: 500; color: #374151; line-height: 1.35; }
+.ix-drawer-steps li small { display: block; font-size: 12px; color: #6b7280; line-height: 1.45; margin-top: 1px; }
+.ix-drawer-note { margin-top: 12px; display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: #fff7ed; color: #9a3412; font-size: 12px; line-height: 1.45; }
+.ix-drawer-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 20px 14px; border-top: 1px solid #eef0f3; background: #fff; }
+.ix-drawer-foot > * { width: 100%; }
+@keyframes ixdwIn { from { transform: translateX(calc(100% + 24px)); } to { transform: none; } }
+@keyframes ixdwOut { from { transform: none; } to { transform: translateX(calc(100% + 24px)); } }
+@keyframes ixdwFade { from { background-color: rgba(17, 24, 39, 0); } to { background-color: rgba(17, 24, 39, 0.18); } }
+@keyframes ixdwFadeOut { from { background-color: rgba(17, 24, 39, 0.18); } to { background-color: rgba(17, 24, 39, 0); } }
+@media (max-width: 600px) { .ix-drawer { top: 0; right: 0; bottom: 0; width: 100vw; border-radius: 0; border: 0; } }
+/* short screens: the steps box steps aside so the form never needs scrolling */
+@media (max-height: 700px) { .ix-drawer-steps { display: none; } }
+@media (prefers-reduced-motion: reduce) { .ix-drawer, .ix-drawer-wrap { animation-duration: .01s !important; } }
+`;
+export function Drawer({ title, kicker, sub, icon = "calendar", onClose, footer, inPage, children }) {
+  const [closing, setClosing] = useState(false);
+  const close = () => { if (closing) return; setClosing(true); setTimeout(onClose, 200); };
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && close();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  return createPortal(
+    <div className={`ix-modal-wrap ix-drawer-wrap${closing ? " closing" : ""}`} style={inPage ? { zIndex: 5000 } : undefined} onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <style>{DRAWER_CSS}</style>
+      <aside className="ix-drawer" role="dialog" aria-modal="true" aria-label={title}>
+        <header className="ix-drawer-head">
+          <span className="ix-drawer-ico"><Icon name={icon} size={20} /></span>
+          <div className="ix-drawer-ttl">{kicker && <small>{kicker}</small>}<h2>{title}</h2></div>
+          <button type="button" className="ix-drawer-x" onClick={close} aria-label="Close"><Icon name="x" size={16} /></button>
+        </header>
+        {sub && <p className="ix-drawer-sub">{sub}</p>}
+        <div className="ix-drawer-body">{typeof children === "function" ? children(close) : children}</div>
+        {footer && <footer className="ix-drawer-foot">{typeof footer === "function" ? footer(close) : footer}</footer>}
+      </aside>
+    </div>,
+    // inPage: opened inside the page, so the page's own styles (lists, badges, upload boxes) apply inside the panel
+    (inPage && document.querySelector(".ix-page")) || document.body
+  );
+}
+
 /* Account security: recovery code (view / replace) and change password.
    Each action asks for the current password in a small window. Used on every "My Profile" page. */
 function PwInput({ value, onChange, placeholder, autoComplete, autoFocus }) {
@@ -2329,6 +2397,8 @@ export default function Shell({ navItems, user, children }) {
       <style>{css}</style>
       {/* loaded LAST so it wins over every page's own styles: one look for all roles */}
       <style>{uiUnify}</style>
+      {/* the light "panel" look (white sidebar, pages inside one white rounded panel) */}
+      <style>{lay3}</style>
     </div>
   );
 }
@@ -2337,6 +2407,195 @@ export default function Shell({ navItems, user, children }) {
    Same font, colours, buttons, dropdowns, inputs and tabs on the Intern, Coordinator,
    Supervisor and Admin pages. To change the look of the whole system, change the
    values in --u-* below. */
+/* ═════════════ Light layout: white sidebar with section labels, every page inside one white rounded panel,
+   thin-bordered cards, a number strip with round icons. Loaded last, so it decides the look. ═════════════ */
+export const lay3 = `
+  .ix-page.lay2 { --l3-bg: #f4f5f7; --l3-line: #e7e9ee; --l3-ink: #1f2430; --l3-mut: #6b7280; --l3-o: #e8582a; --l3-o-soft: #fdeee5;
+    --ix-surface: #fff; --ix-surface-2: #f6f7f9; background: var(--l3-bg) !important; }
+  /* the white panel behind the top bar + page */
+  .ix-page.lay2::before { content: ""; position: absolute; z-index: 0; top: 12px; right: 12px; bottom: 12px; left: var(--sb-w);
+    background: #fff; border: 1px solid var(--l3-line); border-radius: 20px; box-shadow: 0 1px 2px rgba(16,24,40,.04); transition: left .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-page.lay2.menu-open::before { left: var(--sb-w-open); }
+  .ix-page.lay2::after { content: ""; position: absolute; z-index: 0; top: 76px; right: 13px; height: 1px; left: calc(var(--sb-w) + 1px); background: var(--l3-line);
+    transition: left .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-page.lay2.menu-open::after { left: calc(var(--sb-w-open) + 1px); }
+  .ix-page.lay2 > .ix-nav, .ix-page.lay2 > .ix-body { position: relative; z-index: 1; }
+
+  /* top bar: no own background; the logo sits over the sidebar, the page title inside the panel */
+  .ix-page.lay2 .ix-nav { height: 77px !important; padding: 12px 24px 0 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important; gap: 8px !important; }
+  /* the top bar (and its account / notification menus) always sits above the page, so "Log out" can be clicked */
+  .ix-page.lay2 .ix-nav { position: relative !important; z-index: 400 !important; }
+  .ix-page.lay2 :is(.ix-acct-menu, .ix-notification-dropdown) { z-index: 410 !important; }
+  /* the logo sits in a neat white tile (its file has a white background, so this looks intentional, not like a pasted box) */
+  .ix-page.lay2 .ix-nav-logo { width: 42px !important; height: 42px !important; object-fit: contain; padding: 4px; box-sizing: border-box;
+    background: #fff; border: 1px solid #e7e9ee; border-radius: 12px; box-shadow: 0 1px 2px rgba(15,23,42,.05); flex-shrink: 0; }
+  /* phones: a smaller logo tile; with the menu open the bar shows the brand, without it the page name (never both, so nothing overlaps) */
+  @media (max-width: 900px) {
+    .ix-page.lay2 .ix-nav-logo { width: 36px !important; height: 36px !important; padding: 3px; border-radius: 10px; }
+    .ix-page.lay2 .ix-nav .ix-top-title { min-width: 0; overflow: hidden; }
+    .ix-page.lay2 .ix-nav .ix-top-title h2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ix-page.lay2.menu-open .ix-nav .ix-top-title { visibility: hidden; }
+    .ix-page.lay2:not(.menu-open) .ix-brand-name { display: none !important; }
+    .ix-page.lay2 .ix-sb-collapse { display: none !important; }
+  }
+  .ix-page.lay2 .ix-nav::after { display: none !important; }
+  .ix-page.lay2 .ix-logo-btn { flex: none; width: var(--sb-w); justify-content: center; padding: 0 !important; margin: 0 !important; transition: width .3s cubic-bezier(.2,.8,.2,1); }
+  .ix-page.lay2.menu-open .ix-logo-btn { width: var(--sb-w-open); justify-content: flex-start; padding-left: 20px !important; }
+  .ix-page.lay2 .ix-brand-name { color: var(--l3-ink) !important; }
+  .ix-page.lay2 .ix-nav > .ix-icon-btn:not(.ix-fs-btn) { display: none !important; }      /* the menu opens/closes from the sidebar's « button */
+  .ix-page.lay2 .ix-nav > .ix-fs-btn { order: 3; border: 1px solid var(--l3-line) !important; border-radius: 10px !important; width: 38px; height: 38px; background: #fff !important; }
+  .ix-page.lay2 .ix-nav > .ix-nav-right { order: 4; }
+  .ix-page.lay2 .ix-top-title { order: 2; margin-left: 0 !important; padding-left: 28px !important; border-left: 0 !important; }
+  .ix-page.lay2 .ix-top-title h2 { font-size: 21px !important; font-weight: 600 !important; color: var(--l3-ink) !important; letter-spacing: -.2px; }
+  .ix-page.lay2 .ix-notification-btn, .ix-page.lay2 .ix-nav-right .ix-icon-btn { border: 1px solid var(--l3-line) !important; border-radius: 10px !important; background: #fff !important; }
+
+  /* sidebar: white (no colour of its own), grey section labels, the open page is a soft orange pill */
+  .ix-page.lay2 .ix-side { background: transparent !important; color: var(--l3-ink) !important; box-shadow: none !important; }
+  .ix-page.lay2 .ix-sb-top { padding: 6px 14px 2px !important; }
+  .ix-page.lay2 .ix-sb-search { background: #fff !important; border: 1px solid var(--l3-line) !important; color: var(--l3-mut) !important; border-radius: 10px !important; }
+  .ix-page.lay2 .ix-sb-search:focus-within { border-color: var(--l3-o) !important; box-shadow: 0 0 0 3px rgba(232,88,42,.12); }
+  .ix-page.lay2 .ix-sb-search input { color: var(--l3-ink) !important; }
+  .ix-page.lay2 .ix-sb-search input::placeholder { color: #9aa1ab !important; }
+  .ix-page.lay2 .ix-sb-search kbd { background: #f1f2f4 !important; color: var(--l3-mut) !important; border: 1px solid var(--l3-line); }
+  .ix-page.lay2 .ix-side.open .ix-side-menu::before { content: "Main"; display: block; padding: 10px 26px 6px; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: #8b919b; }
+  .ix-page.lay2 .ix-side .ix-side-item { width: auto !important; margin: 1px 12px !important; border-radius: 10px !important; padding: 0 12px 0 14px !important;
+    color: #3a3f4a !important; background: transparent !important; box-shadow: none !important; }
+  .ix-page.lay2 .ix-side:not(.open) .ix-side-item { width: 52px !important; margin: 1px 12px !important; padding: 0 0 0 17px !important; justify-content: flex-start !important; overflow: hidden !important; }
+  .ix-page.lay2 .ix-side:not(.open) .ix-side-section { font-size: 0 !important; padding: 4px 0 !important; text-align: center; }
+  .ix-page.lay2 .ix-side:not(.open) .ix-sb-top { align-items: center; }
+  .ix-page.lay2 .ix-side .ix-side-item .ix-side-icon { color: #5b616c !important; }
+  .ix-page.lay2 .ix-side .ix-side-label { font-weight: 500 !important; color: inherit !important; }
+  .ix-page.lay2 .ix-side .ix-side-item:hover { background: #f1f2f4 !important; color: var(--l3-ink) !important; }
+  .ix-page.lay2 .ix-side .ix-side-item:hover .ix-side-icon { color: var(--l3-ink) !important; }
+  .ix-page.lay2 .ix-side .ix-side-item.active { background: var(--l3-o-soft) !important; color: #7c2d12 !important; box-shadow: none !important; }
+  .ix-page.lay2 .ix-side .ix-side-item.active .ix-side-icon { color: var(--l3-o) !important; }
+  .ix-page.lay2 .ix-side .ix-side-item.active .ix-side-label { font-weight: 600 !important; }
+  .ix-page.lay2 .ix-side .ix-side-chev { color: #9aa1ab !important; }
+  .ix-page.lay2 .ix-side .ix-side-sub { margin: 2px 12px 4px 36px !important; }
+  .ix-page.lay2 .ix-side .ix-side-sub::before { background: var(--l3-line) !important; }
+  .ix-page.lay2 .ix-side .ix-side-subitem { color: #6b7280 !important; border-radius: 8px !important; }
+  .ix-page.lay2 .ix-side .ix-side-subitem:hover { color: var(--l3-ink) !important; background: #f1f2f4 !important; }
+  .ix-page.lay2 .ix-side .ix-side-subitem.on { color: #c2410c !important; background: transparent !important; font-weight: 600 !important; }
+  .ix-page.lay2 .ix-side .ix-side-subitem.on::before { background: var(--l3-o) !important; }
+  .ix-page.lay2 .ix-side .ix-side-sep { background: var(--l3-line) !important; margin: 10px 24px !important; }
+  .ix-page.lay2 .ix-side .ix-side-section { color: #8b919b !important; font-size: 11px !important; font-weight: 600 !important; letter-spacing: .08em !important; padding-left: 26px !important; }
+  .ix-page.lay2 .ix-side .ix-side-badge { background: #fff !important; color: var(--l3-ink) !important; border: 1px solid var(--l3-line); font-weight: 700; }
+  .ix-page.lay2 .ix-side .ix-side-badge.sm { background: var(--l3-o) !important; color: #fff !important; border: 0; }
+  .ix-page.lay2 .ix-side:not(.open) .ix-side-badge { background: var(--l3-o) !important; color: #fff !important; border: 0; }
+  .ix-page.lay2 .ix-sb-bottom { border-top: 1px solid var(--l3-line) !important; margin: 0 12px 12px; padding: 10px 6px 0 14px !important; background: transparent !important; }
+  .ix-page.lay2 .ix-sb-foot { color: #8b919b !important; }
+  .ix-page.lay2 .ix-sb-collapse { background: #fff !important; border: 1px solid var(--l3-line) !important; color: var(--l3-mut) !important; }
+  .ix-page.lay2 .ix-sb-collapse:hover { color: var(--l3-o) !important; border-color: #f2c7b3 !important; }
+  .ix-page.lay2 .ix-tip, .ix-page.lay2 .ix-side-tip { background: var(--l3-ink) !important; color: #fff !important; }
+
+  /* the page itself sits inside the panel */
+  .ix-page.lay2 .ix-main { background: transparent !important; margin: 0 12px 12px 0; border-radius: 0 0 20px 20px; padding: 20px 30px 24px 30px !important; }
+
+  /* cards: white with a thin border, no heavy shadow */
+  .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card, .imp-panel, .ibx-split, .mon-split, .ipv) {
+    background: #fff !important; border: 1px solid var(--l3-line) !important; border-radius: 16px !important; box-shadow: none !important; }
+  .ix-page.lay2 .ix-content .dbx-ch { border-bottom: 1px solid var(--l3-line) !important; }
+  .ix-page.lay2 .ix-content .dbx-ch b { font-size: 15px !important; font-weight: 600 !important; color: var(--l3-ink) !important; }
+  .ix-page.lay2 .ix-content .dbx-n { background: #fff !important; border: 1px solid var(--l3-line); color: var(--l3-mut) !important; }
+  .ix-page.lay2 .ix-content .dbx-link { border: 1px solid var(--l3-line); border-radius: 9px; padding: 4px 9px; font-size: 12px !important; background: #fff; color: var(--l3-ink) !important; font-weight: 600; white-space: nowrap; flex: none; }
+  .ix-page.lay2 .ix-content .dbx-ch b { white-space: nowrap; }
+  .ix-page.lay2 .ix-content .dbx-ch { gap: 8px !important; }
+  .ix-page.lay2 .ix-content .dbx-link:hover { border-color: #f2c7b3; color: #c2410c !important; }
+  .ix-page.lay2 .ix-content .ix-ph h1, .ix-page.lay2 .ix-content .dbx > .ix-ph h1 { color: var(--l3-ink) !important; }
+
+  /* number strip: one bordered card, cells split by thin lines, round outlined icon, small grey label */
+  .ix-page.lay2 .ix-content .dbx-sum.tiles { background: #fff !important; border: 1px solid var(--l3-line) !important; border-radius: 16px !important; gap: 0 !important; overflow: hidden !important; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num { background: transparent !important; border: 0 !important; border-radius: 0 !important; padding: 16px 20px !important;
+    grid-template-columns: 44px minmax(0, 1fr) !important; column-gap: 14px !important; row-gap: 2px !important; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num + .dbx-num { border-left: 1px solid var(--l3-line) !important; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num::after { display: none !important; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num > .dbx-num-ic { width: 44px !important; height: 44px !important; border-radius: 50% !important;
+    border: 1px solid var(--l3-line) !important; background: #fff !important; box-shadow: 0 1px 2px rgba(16,24,40,.05) !important; color: var(--tc) !important; align-self: start; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num > .dbx-num-ic svg { width: 21px !important; height: 21px !important; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num > small { font-size: 11px !important; font-weight: 500 !important; letter-spacing: .06em; text-transform: uppercase; color: #8b919b !important; opacity: 1 !important; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num > b { font-size: 22px !important; font-weight: 600 !important; color: var(--l3-ink) !important; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num > em { font-size: 12px !important; color: var(--l3-mut) !important; }
+  /* the small line under each number shows in full (wraps to a second line instead of "...") */
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num > em { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; line-height: 1.35 !important; display: block; }
+  .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num.click:hover { background: #fafafb !important; transform: none !important; filter: none !important; }
+  @media (max-width: 700px) {
+    .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num { border-left: 0 !important; border-top: 1px solid var(--l3-line) !important; padding: 12px 14px !important; grid-template-columns: 36px minmax(0, 1fr) !important; }
+    .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num:nth-child(-n+2) { border-top: 0 !important; }
+    .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num:nth-child(even) { border-left: 1px solid var(--l3-line) !important; }
+    .ix-page.lay2 .ix-content .dbx-sum.tiles > .dbx-num > .dbx-num-ic { width: 36px !important; height: 36px !important; }
+  }
+
+  /* dashboards: cards take their natural height and the page scrolls (no squeezing to fit the window,
+     so nothing looks cut off when the browser isn't full screen) */
+  @media (min-width: 1251px) {
+    .ix-page.lay2 .ix-main:has(.dbx-grid) { display: block !important; padding-bottom: 28px !important; }
+    .ix-page.lay2 .ix-main:has(.dbx-grid.has-left.has-right) > .ix-content { flex: none !important; min-height: auto !important; }
+    .ix-page.lay2 .ix-content > .dbx:has(> .dbx-grid.has-left.has-right) { flex: none !important; min-height: auto !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right { flex: none !important; height: auto !important; min-height: 0 !important;
+      grid-template-rows: auto auto !important; align-content: start !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side { overflow: visible !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > :last-child { overflow: visible !important; flex: 1 1 auto !important; min-height: 0 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col:not(.dbx-side) > *,
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col:not(.dbx-side) > :nth-child(2) { overflow: visible !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .ix-card.adm-cal { flex: none !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .ann-list { overflow: visible !important; flex: none !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .adm-duty-empty { overflow: visible !important; min-height: 90px !important; }
+    /* three equal rows across: [today | finish line | calendar] then [requirements | recent attendance | announcements] */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right { align-items: stretch !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side { display: contents !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > * { grid-column: 3 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > :first-child { grid-row: 1 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > :nth-child(2) { grid-row: 2 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > :only-child { grid-row: 1 / 3 !important; }
+    /* a list fills its card: when a card in the same row is taller, the rows share the extra space
+       evenly (no empty gap under the last row) */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col > * { display: flex !important; flex-direction: column !important; }
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-fill { flex: 1 1 auto !important; justify-content: stretch !important; display: flex !important; flex-direction: column !important; }
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-fill > * { flex: 1 1 auto !important; }
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-fill > .dbx-more { flex: none !important; }
+    /* every list row the same height as a Recent attendance row (clickable or not) */
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-it { min-height: 56px; box-sizing: border-box; padding: 8px 14px !important; line-height: 1.3 !important; margin: 0 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-it .dbx-tx { gap: 2px; }
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-it .dbx-tx :is(b, small) { display: block; line-height: 1.3 !important; margin: 0 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-tap { min-height: 56px; box-sizing: border-box; }
+    /* announcements: the same header line as the other cards */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child { padding: 0 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .adm-duty-head { min-height: 48px !important; margin: 0 !important; padding: 10px 14px !important; border-bottom: 1px solid var(--l3-line) !important; box-sizing: border-box; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .adm-duty-head h2 { font-size: 15px !important; font-weight: 600 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > :not(.adm-duty-head) { margin: 12px 14px 14px !important; }
+    /* announcements: the list or empty message reaches the bottom of the card, like Recent attendance */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child { display: flex !important; flex-direction: column !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .adm-duty-empty { flex: 1 1 auto !important; min-height: 0 !important; height: auto !important; padding: 18px 12px !important; display: flex !important; flex-direction: column; align-items: center; justify-content: center !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .ann-list { flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important; }
+    /* the announcements card never makes its row taller: it takes the row's height and scrolls inside */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:nth-child(2):last-child { height: 0 !important; min-height: 100% !important; overflow: hidden !important; }
+    /* a roomier calendar again */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-grid { grid-auto-rows: 29px !important; row-gap: 2px !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-day { min-height: 29px !important; height: 29px !important; font-size: 12.5px !important; }
+    /* right column: one stack across both rows, a tall calendar on top and announcements below it.
+       Its bottom still lines up with the other columns, and it never makes the page taller. */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side { display: flex !important; flex-direction: column !important; gap: 12px !important;
+      grid-column: 3 !important; grid-row: 1 / 3 !important; height: 0 !important; min-height: 100% !important; overflow: visible !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .ix-card.adm-cal { flex: 0 0 auto !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:nth-child(2):last-child { flex: 1 1 0 !important; height: auto !important; min-height: 150px !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-grid { grid-auto-rows: 40px !important; row-gap: 4px !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-day { min-height: 40px !important; height: 40px !important; font-size: 13.5px !important; }
+  }
+
+  /* phones: no panel frame (the screen is the panel); the menu button comes back */
+  @media (max-width: 900px) {
+    .ix-page.lay2::before { left: 0 !important; top: 0; right: 0; bottom: 0; border-radius: 0; border: 0; }
+    .ix-page.lay2::after { left: 0 !important; right: 0; top: 64px; }
+    .ix-page.lay2 .ix-nav { height: 64px !important; padding: 0 14px 0 0 !important; }
+    .ix-page.lay2 .ix-nav > .ix-icon-btn:not(.ix-fs-btn) { display: flex !important; order: 1; }
+    .ix-page.lay2 .ix-logo-btn, .ix-page.lay2.menu-open .ix-logo-btn { width: auto; padding-left: 14px !important; }
+    .ix-page.lay2 .ix-top-title { padding-left: 8px !important; }
+    .ix-page.lay2 .ix-side { background: #fff !important; }
+    .ix-page.lay2 .ix-main { margin: 0; border-radius: 0; padding: 16px 14px 28px !important; }
+  }
+`;
+
 export const uiUnify = `
   @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
   :is(.ix-page, .ix-modal-wrap) {
@@ -2781,7 +3040,7 @@ export const uiUnify = `
   .ix-page .ix-content .ann-list li, .ix-page .ix-content .ann-list > * { background: var(--ix-surface, #fff) !important; border-color: #eceef2 !important; }
 
   /* ───── Sidebar (new look): grey text and icons, soft grey highlight, sub-menus with a tree line ───── */
-  .ix-page .ix-side { background: var(--ix-surface, #fff) !important; border-right: 1px solid rgb(247, 86, 0) !important; box-shadow: none !important; }
+  .ix-page .ix-side { background: var(--ix-surface, #fff) !important; border-right: 1px solid #eceef1 !important; box-shadow: none !important; }
   .ix-page .ix-side-group { display: flex; flex-direction: column; }
   .ix-page .ix-side-item { height: 40px !important; min-height: 40px !important; flex: 0 0 40px !important; margin: 1px 10px !important; padding: 0 10px 0 12px !important;
     gap: 12px !important; border-radius: 10px !important; color: #64748b !important; background: transparent !important; box-shadow: none !important; transform: none !important; }
@@ -2826,7 +3085,7 @@ export const uiUnify = `
 
 
   /* ═════════════ Layout: dark sidebar on the left, white top bar, roomy pages (all roles) ═════════════ */
-  .ix-page.lay2 { --sb-w: 76px; --sb-w-open: 252px; --sb-bg: #ac320a; --sb-bg-2: #e8582a; --sb-ink: #ffe9de; --sb-mut: #f6c3a8;
+  .ix-page.lay2 { --sb-w: 76px; --sb-w-open: 252px; --sb-bg: #9a3412; --sb-bg-2: #7c2d12; --sb-ink: #ffe9de; --sb-mut: #f6c3a8;
     position: relative; background: #eef0f3; }
   .ix-page.lay2 .ix-strip { width: var(--sb-w) !important; }
   .ix-page.lay2 .ix-strip.open { width: var(--sb-w-open) !important; }
@@ -2925,6 +3184,33 @@ export const uiUnify = `
   .ix-page.lay2 .ix-top-tabs .grp-tab.active::after { background: #e8582a !important; }
   .ix-page.lay2 .ix-top-tabs .grp-tab svg { width: 15px; height: 15px; }
   .ix-page.lay2 .ix-top-title { margin-left: 10px; padding-left: 16px; border-left: 1px solid #ece4df; }
+  /* ───── phones (interns use MYTRACK mostly on their phones) ───── */
+  @media (max-width: 700px) {
+    /* page description: wrap instead of being cut with "..." */
+    .ix-page.lay2 .ix-main .ix-ph .ix-ph-title .ix-ph-text p, .ix-page .ix-ph .ix-ph-text p, .ix-page .ix-main .ix-ph p { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; max-width: none !important; line-height: 1.45 !important; }
+    /* tabs that don't fit scroll sideways (e.g. Submit MOV: Pre / During / Post) */
+    .ix-page .ix-content .grp-tabs, .ix-page .ix-ph-tabrow .grp-tabs { overflow-x: auto !important; flex-wrap: nowrap !important; scrollbar-width: none; max-width: 100%; }
+    .ix-page .ix-content .grp-tabs::-webkit-scrollbar { display: none; }
+    .ix-page .grp-tab { flex: none !important; white-space: nowrap; }
+    .ix-page .ix-ph-tabrow { overflow: hidden; max-width: 100%; }
+    /* number tiles: two per row, the last one full width when the count is odd */
+    .ix-page .ix-content .dbx-sum.tiles { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+    .ix-page .ix-content .dbx-sum.tiles > .dbx-num { padding: 10px 12px !important; column-gap: 10px !important; grid-template-columns: 26px minmax(0, 1fr) !important; }
+    .ix-page .ix-content .dbx-sum.tiles > .dbx-num > .dbx-num-ic { width: 26px; height: 26px; }
+    .ix-page .ix-content .dbx-sum.tiles > .dbx-num > .dbx-num-ic svg { width: 24px; height: 24px; }
+    .ix-page .ix-content .dbx-sum.tiles > .dbx-num:last-child:nth-child(odd) { grid-column: 1 / -1; }
+    .ix-page .ix-content .dbx-sum.tiles > .dbx-num > em { white-space: normal !important; }
+    .ix-page .ix-content .dbx-sum.tiles > .dbx-num > b { font-size: 18px !important; }
+    /* NFC card: the steps and the "can't claim yet" box */
+    .ix-page .ix-steps { gap: 4px !important; }
+    .ix-page .ix-steps li span { font-size: 10.5px !important; white-space: normal !important; text-align: center; line-height: 1.2; }
+    .ix-page .nfc-claim-warn { flex-wrap: wrap !important; }
+    .ix-page .nfc-claim-warn > span { flex: 1 1 200px !important; min-width: 0; }
+    .ix-page .nfc-claim-warn > :is(button, a) { margin-left: 30px; }
+    /* My Requests / inbox lists: the title may wrap above the status */
+    .ix-page .mon-item .mon-who b { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+  }
+
   /* colourful number tiles (intern dashboard): each one its own soft colour with an icon */
   .ix-page .ix-content .dbx-sum.tiles { background: none !important; border: 0 !important; box-shadow: none !important; gap: 12px; overflow: visible !important; }
   .ix-page .ix-content .dbx-sum.tiles > .dbx-num { position: relative; display: grid !important; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: auto auto auto;
@@ -2962,6 +3248,9 @@ export const uiUnify = `
   .ix-page.lay2 .ix-main :not(.dbx) > .ix-ph .ix-ph-text p { font-size: 14px !important; line-height: 1.5 !important; color: #4b5563 !important;
     margin: 0 !important; max-width: none !important; display: block !important; -webkit-line-clamp: unset !important;
     white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+  @media (max-width: 700px) {
+    .ix-page.lay2 .ix-main :not(.dbx) > .ix-ph .ix-ph-text p { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+  }
   .ix-page.lay2 .ix-main :not(.dbx) > .ix-ph .ix-ph-text { min-width: 0 !important; max-width: 100% !important; flex: 1 1 auto !important; }
   .ix-page.lay2 .ix-content .ix-ph .ix-ph-right { order: 2; }
   /* tabs: their own row under the description, underlined like the picture */
@@ -3081,72 +3370,6 @@ export const uiUnify = `
     .ix-page.lay2 .ix-top-tabs { display: none; }
     .ix-page.lay2 .ix-acct-name { display: none; }
   }
-
-  /* ═════════ Sidebar: white + orange, soft rounded rows (paste at the very END of uiUnify, before the closing backtick) ═════════ */
-  .ix-page.lay2 { --sb-w: 76px; --sb-w-open: 260px; --sb-bg: #ffffff; --sb-bg-2: #fdeee7; --sb-ink: #4b5563; --sb-mut: #94a3b8; }
-
-  .ix-page.lay2 .ix-side { background: #fff !important; border-right: 1px solid #eceef1 !important; color: var(--sb-ink); }
-  .ix-page.lay2 .ix-side.open { box-shadow: none !important; }
-  @media (max-width: 900px) { .ix-page.lay2 .ix-side.open { box-shadow: 8px 0 30px rgba(15,23,42,.18) !important; } }
-
-  /* search box */
-  .ix-page.lay2 .ix-sb-search { background: #f6f7f9; border: 1px solid #e5e7eb; color: #94a3b8; }
-  .ix-page.lay2 .ix-sb-search:focus-within { background: #fff; border-color: #e8582a; box-shadow: 0 0 0 3px rgba(232,88,42,.12); }
-  .ix-page.lay2 .ix-sb-search input { color: #111827 !important; }
-  .ix-page.lay2 .ix-sb-search input::placeholder { color: #94a3b8; }
-  .ix-page.lay2 .ix-sb-search kbd { background: #eceef1; color: #6b7280; }
-  .ix-page.lay2 .ix-sb-none { color: #94a3b8; }
-
-  /* page rows: rounded, roomy, grey text + outline icon */
-  .ix-page.lay2 .ix-side .ix-side-menu { padding: 4px 0 4px !important; }
-  .ix-page.lay2 .ix-side .ix-side-item {
-    width: auto !important; height: 38px !important; min-height: 38px !important; flex: 0 0 38px !important;
-    margin: 1px 10px !important; padding: 0 12px !important; gap: 12px !important;
-    border-radius: 10px !important; color: #4b5563 !important; background: transparent !important; box-shadow: none !important;
-  }
-  .ix-page.lay2 .ix-side:not(.open) .ix-side-item {
-    margin: 1px 10px !important; padding: 0 0 0 calc((var(--sb-w) - 20px - 17px) / 2) !important;
-  }
-  .ix-page.lay2 .ix-side .ix-side-item .ix-side-icon { color: #64748b !important; }
-  .ix-page.lay2 .ix-side .ix-side-item .ix-side-icon svg { width: 17px !important; height: 17px !important; stroke-width: 1.8 !important; }
-  .ix-page.lay2 .ix-side .ix-side-label { font-size: 13.5px !important; font-weight: 500 !important; letter-spacing: 0; }
-
-  /* hover: light orange */
-  .ix-page.lay2 .ix-side .ix-side-item:hover { background: #fff3ec !important; color: #c2410c !important; }
-  .ix-page.lay2 .ix-side .ix-side-item:hover .ix-side-icon { color: #e8582a !important; }
-
-  /* active page: soft orange pill, dark bold text, orange icon (like the grey pill in the picture) */
-  .ix-page.lay2 .ix-side .ix-side-item.active { background: #fdeee7 !important; color: #111827 !important; box-shadow: none !important; }
-  .ix-page.lay2 .ix-side .ix-side-item.active .ix-side-label { font-weight: 700 !important; }
-  .ix-page.lay2 .ix-side .ix-side-item.active .ix-side-icon { color: #e8582a !important; }
-  .ix-page.lay2 .ix-side .ix-side-item.active::before { display: none !important; }
-  .ix-page.lay2 .ix-side .ix-side-item:focus-visible { outline: 2px solid #e8582a !important; outline-offset: -2px; }
-  .ix-page.lay2 .ix-side .ix-side-chev { color: #94a3b8 !important; }
-
-  /* sub-pages (tabs of a page) */
-  .ix-page.lay2 .ix-side .ix-side-sub { margin: 2px 12px 6px 38px !important; padding-left: 14px; }
-  .ix-page.lay2 .ix-side .ix-side-sub::before { background: #e5e7eb !important; }
-  .ix-page.lay2 .ix-side .ix-side-subitem { height: 30px !important; min-height: 30px !important; border-radius: 8px !important; color: #6b7280 !important; font-size: 12.5px !important; }
-  .ix-page.lay2 .ix-side .ix-side-subitem:hover { background: #fff3ec !important; color: #c2410c !important; }
-  .ix-page.lay2 .ix-side .ix-side-subitem.on { background: #fdeee7 !important; color: #c2410c !important; font-weight: 700 !important; }
-  .ix-page.lay2 .ix-side .ix-side-subitem.on::before { background: #e8582a !important; }
-
-  /* counts */
-  .ix-page.lay2 .ix-side .ix-side-badge { background: #e8582a; color: #fff; }
-  .ix-page.lay2 .ix-side .ix-side-badge.sm { background: #e8582a; color: #fff; }
-
-  /* divider + "Account" label */
-  .ix-page.lay2 .ix-side .ix-side-sep { background: #eceef1 !important; margin: 6px 18px !important; }
-  .ix-page.lay2 .ix-side .ix-side-section { color: #94a3b8 !important; }
-  .ix-page.lay2 .ix-side:not(.open) .ix-side-section::after { color: #cbd5e1 !important; }
-
-  /* bottom strip */
-  .ix-page.lay2 .ix-sb-bottom { border-top: 1px solid #eceef1; }
-  .ix-page.lay2 .ix-sb-foot { color: #94a3b8; }
-  .ix-page.lay2 .ix-sb-collapse { background: #e8582a; color: #fff; box-shadow: 0 4px 12px rgba(232,88,42,.3); }
-  .ix-page.lay2 .ix-sb-collapse:hover { background: #d4481b; }
-  .ix-page.lay2 .ix-sb-bottom { padding-top: 6px !important; padding-bottom: 6px !important; }
-  .ix-page.lay2 .ix-side .ix-side-section { padding-top: 6px !important; padding-bottom: 2px !important; }
 `;
 
 /* ───────────────────────── styles ───────────────────────── */
@@ -4053,6 +4276,11 @@ const css = `
     white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; }
   .ix-page :is(.ix-content > .ix-ph, .ix-content > div:first-of-type > div.ix-ph:first-of-type, .ix-content > .dbx > div.ix-ph) .ix-ph-right { margin-left: auto; flex-shrink: 0; gap: 8px; }
   .ix-page :is(.ix-content > .ix-ph, .ix-content > div:first-of-type > div.ix-ph:first-of-type, .ix-content > .dbx > div.ix-ph) .ix-live { font-size: 11px; }
+  /* the Live pill: small and the same height everywhere */
+  .ix-page .ix-ph-right .ix-live { height: 26px; padding: 0 10px !important; line-height: 1 !important; box-sizing: border-box; gap: 6px; margin: 0 !important; }
+  .ix-page .ix-ph-right .ix-live i { width: 7px; height: 7px; }
+  /* the page description line and its Live pill sit on one tidy line */
+  .ix-page .ix-content .ix-ph:not(.has-tabs) { align-items: center !important; }
   /* base look of the tabs (also on pages that don't load the admin styles) */
   .ix-page .ix-ph .grp-tabs { display: flex; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .ix-page .ix-ph .grp-tabs::-webkit-scrollbar { display: none; }

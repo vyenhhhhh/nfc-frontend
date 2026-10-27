@@ -13,6 +13,8 @@ import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, CertifyBar, DTR_PICK_CSS } from "./InternDashboard.jsx";
 import { CardRequests } from "../components/NfcCards.jsx";
+import CardAlerts from "../components/CardAlerts.jsx";
+import QuarterlyReport from "../components/QuarterlyReport.jsx";
 import { currentFit } from "../fit.js";
 import { API, STORAGE } from "../config.js";
 
@@ -43,13 +45,15 @@ const GROUPS = {
       { key: "cards", label: "Card Requests",   icon: "card",     sub: "Approved ID cards: download the details for your printing app, then mark them as printed." },
       { key: "kiosks", label: "Kiosks",         icon: "tap",      sub: "Each kiosk has its own key. An HTE kiosk only accepts the interns placed at that HTE." },
       { key: "activity", label: "Activity Log", icon: "list",     sub: "Who did what, and when: sign-ins, approvals, edits and deletions." },
+      { key: "term",     label: "End of Term",  icon: "download", sub: "At the end of a term: export a batch's records to Excel, then deactivate their accounts (records are kept)." },
+      { key: "backup",   label: "Backups",      icon: "download", sub: "Download a copy of the whole database. Keep it somewhere safe (not only on this laptop)." },
     ],
   },
   "/admin/reports": {
     title: "Reports",
     tabs: [
       { key: "dtr",     label: "Generate DTR",        icon: "file",  sub: "Daily Time Record for each intern. Search an intern and pick a month to view or print it." },
-      { key: "summary", label: "Consolidated Report", icon: "chart", sub: "Monthly attendance summary for all interns." },
+      { key: "quarterly", label: "Quarterly Report", icon: "file", sub: "Unit Performance Review Report: the deployment tables fill in by themselves; type the rest, then print or save as PDF." },
     ],
   },
 };
@@ -237,9 +241,11 @@ export default function AdminDashboard() {
           {tab.key === "cards" && <PrintIdCards interns={interns} />}
           {tab.key === "kiosks" && <Kiosks />}
           {tab.key === "activity" && <ActivityLog />}
+          {tab.key === "term" && <EndOfTerm users={users} records={records} onRefresh={fetchAll} />}
+          {tab.key === "backup" && <Backups />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} />}
-          {tab.key === "summary" && <Reports interns={interns} records={records} />}
+          {tab.key === "quarterly" && <QuarterlyReport user={user} />}
         </GroupPage>
       )}
 
@@ -303,7 +309,7 @@ function Home({ user, records, interns, coordinators, loading }) {
     <DashLayout
       title={`${greeting()}, ${first}`}
       sub={dateLabel}
-      status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody checked in yet", tone: checkedIn > 0 ? "live" : "" }}
+      status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody timed in yet", tone: checkedIn > 0 ? "live" : "" }}
       actions={[
         { icon: "list", label: "Records", run: () => go("/admin/interns?tab=records") },
         { icon: "file", label: "DTR", run: () => go("/admin/reports?tab=dtr") },
@@ -580,8 +586,8 @@ export function Records({ records, loading }) {
               day(r.date),
               <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
               r.checked_out_at
-                ? <Badge label="Check out" type="out" />
-                : <Badge label="Check in" type="in" />,
+                ? <Badge label="Time out" type="out" />
+                : <Badge label="Time in" type="in" />,
               hm(r.checked_in_at),
               r.checked_out_at ? hm(r.checked_out_at) : <span className="rec-open">No time out yet</span>,
               hrs(r),
@@ -1479,7 +1485,7 @@ function CalEditor({ ev, onDone }) {
     <form onSubmit={save} className="ann-compose cal-compose">
       <style>{CAL_FORM_CSS}</style>
       <div className="ibx-head"><span className="ibx-ic big"><Icon name={ev ? "calendar" : "plus"} size={20} /></span>
-        <div><b>{ev ? "Edit event" : "New event"}</b><small>{ev ? "Change the details and click Update." : "Interns can't tap in on these days."}</small></div></div>
+        <div><b>{ev ? "Edit event" : "New event"}</b><small>{ev ? "Change the details and click Update." : "Interns can't time in on these days."}</small></div></div>
       <div className="ix-row-gap">
         <div className="ix-field">
           <label htmlFor="cal-date">Date</label>
@@ -1499,7 +1505,7 @@ function CalEditor({ ev, onDone }) {
       </div>
       <div className="ix-field">
         <label htmlFor="cal-desc">Description <span className="ix-muted">(optional)</span></label>
-        <textarea id="cal-desc" rows={3} placeholder="e.g. interns are not allowed to tap in" value={description} onChange={(e) => setDescription(e.target.value)} />
+        <textarea id="cal-desc" rows={3} placeholder="e.g. interns are not allowed to time in" value={description} onChange={(e) => setDescription(e.target.value)} />
       </div>
       <div className="ibx-act">
         {ev && <button type="button" className="ix-b danger" onClick={del}><Icon name="trash" size={14} /> Delete</button>}
@@ -1962,6 +1968,7 @@ function Kiosks() {
   const [form, setForm] = useState({ name: "", placement: "" });
   const [shown, setShown] = useState(null);     // { name, key } just made: shown once
   const [copied, setCopied] = useState(false);
+  const [readerPick, setReaderPick] = useState("auto");   // which card reader the kiosk device uses
 
   const load = () => fetch(`${API}/admin/kiosks`, { headers: { Accept: "application/json" } })
     .then((r) => r.json()).then((d) => setData(d && Array.isArray(d.kiosks) ? d : { kiosks: [], placements: [] }))
@@ -1993,7 +2000,7 @@ function Kiosks() {
   };
   const toggle = (k) => call(`${API}/admin/kiosks/${k.id}`, "PATCH", { active: !k.active }, "on" + k.id);
   const remove = (k) => window.confirm(`Remove "${k.name}"? Its key stops working.`) && call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id);
-  const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}` : "";
+  const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}${readerPick !== "auto" ? `&reader=${readerPick}` : ""}` : "";
   const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select it by hand */ } };
   const seen = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Never");
 
@@ -2005,6 +2012,15 @@ function Kiosks() {
         <div className="ix-card ks-key">
           <div className="ks-key-h"><Icon name="key" size={18} /><b>Set up "{shown.name}"</b><button type="button" className="ix-b ghost sm" onClick={() => setShown(null)}>Done</button></div>
           <p>Open this link <b>once</b> on the kiosk device. It saves the key there. This key is shown only now: if you lose it, make a new key.</p>
+          <div className="ks-reader">
+            <label htmlFor="ks-reader">Card reader on this kiosk</label>
+            <select id="ks-reader" className="ix-select" value={readerPick} onChange={(e) => { setReaderPick(e.target.value); setCopied(false); }}>
+              <option value="auto">Find it automatically</option>
+              <option value="phone">Android phone / tablet (NFC)</option>
+              <option value="acr122u">ACR122U (with the helper program)</option>
+              <option value="usb">Old USB reader (can't protect cards)</option>
+            </select>
+          </div>
           <div className="ks-link"><code>{link}</code><button type="button" className="ix-b primary sm" onClick={copy}>{copied ? "Copied" : "Copy link"}</button></div>
         </div>
       )}
@@ -2047,10 +2063,15 @@ function Kiosks() {
           )}
         </div>
       </div>
+      <CardAlerts />
     </div>
   );
 }
+
 const KIOSK_CSS = `
+  .ix-page .ks-reader { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
+  .ix-page .ks-reader label { font-size: 12.5px; font-weight: 600; color: #374151; }
+  .ix-page .ks-reader .ix-select { width: auto; min-width: 260px; }
   .ix-page .ks-wrap { display: flex; flex-direction: column; gap: 14px; }
   .ix-page .ks-grid { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 14px; align-items: start; }
   @media (max-width: 900px) { .ix-page .ks-grid { grid-template-columns: 1fr; } }
@@ -2068,6 +2089,208 @@ const KIOSK_CSS = `
   .ix-page .ks-link code { flex: 1; min-width: 240px; padding: 8px 10px; border-radius: 8px; background: #fff; border: 1px dashed #f0b896;
     font: 600 12px ui-monospace, monospace; color: #9a3412; word-break: break-all; }
 `;
+
+/* ───────────────────────── End of term (Accounts → End of Term) ─────────────────────────
+   Pick the batch (program, HTE, semester, or the term's dates), export its records to Excel,
+   then deactivate the accounts: graduated interns can't sign in or tap, their records stay. */
+function EndOfTerm({ users, records, onRefresh }) {
+  const interns = users.filter((u) => u.role === "intern");
+  const [f, setF] = useState({ program: "", placement: "", semester: "", from: "", to: "", status: "active" });
+  const [picked, setPicked] = useState(() => new Set());
+  const [busy, setBusy] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const inRange = (r) => (!f.from || r.date >= f.from) && (!f.to || r.date <= f.to);
+  const recsOf = (id) => records.filter((r) => String(r.user_id) === String(id) && inRange(r));
+  const rows = interns.map((u) => {
+    const recs = recsOf(u.id);
+    const days = [...new Set(recs.map((r) => r.date))].sort();
+    const hours = calcHours(recs);
+    const required = requiredHoursFor(u.program);
+    return { u, recs, days, hours, required, done: hours >= required, active: !u.deactivated_at };
+  }).filter(({ u, recs, done, active }) =>
+    (!f.program || programKey(u.program) === f.program)
+    && (!f.placement || (u.placement || "") === f.placement)
+    && (!f.semester || (u.semester || "") === f.semester)
+    && (!(f.from || f.to) || recs.length > 0)
+    && (f.status === "all" || (f.status === "active" && active) || (f.status === "done" && active && done)
+        || (f.status === "notdone" && active && !done) || (f.status === "inactive" && !active)));
+
+  const programs = [...new Set(interns.map((u) => programKey(u.program)).filter(Boolean))].sort();
+  const places = [...new Set(interns.map((u) => u.placement).filter(Boolean))].sort();
+  const allOn = rows.length > 0 && rows.every((r) => picked.has(r.u.id));
+  const toggleAll = () => setPicked(allOn ? new Set() : new Set(rows.map((r) => r.u.id)));
+  const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const chosen = rows.filter((r) => picked.has(r.u.id));
+  const set = (k) => (e) => { setF((x) => ({ ...x, [k]: e.target.value })); setPicked(new Set()); };
+
+  const hm = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" }) : "");
+  const exportXlsx = async () => {
+    setBusy("export"); setMsg(null);
+    try {
+      const XLSX = await import(/* @vite-ignore */ SHEETJS_URL);
+      const summary = chosen.map(({ u, days, hours, required, active }) => ({
+        "Student ID": u.student_id || "", Name: u.name, Program: u.program || "", Semester: u.semester || "", "HTE / placement": u.placement || "",
+        Supervisor: u.supervisor_name || "", "Required hours": required, "Hours rendered": hours, "Hours left": Math.max(Math.round((required - hours) * 10) / 10, 0),
+        "Days present": days.length, "First day": days[0] || "", "Last day": days[days.length - 1] || "", Status: active ? "Active" : "Deactivated",
+      }));
+      const detail = [];
+      chosen.forEach(({ u, recs }) => {
+        [...recs].sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.checked_in_at).localeCompare(String(b.checked_in_at))).forEach((r) => {
+          detail.push({
+            "Student ID": u.student_id || "", Name: u.name, Date: r.date, Type: r.uid === "ONLINE" ? "Online" : "Onsite",
+            "Time in": hm(r.checked_in_at), "Time out": hm(r.checked_out_at), Hours: calcHours([r]),
+            Overtime: r.ot_minutes ? `${r.ot_minutes} min (${r.ot_status || "pending"})` : "",
+          });
+        });
+      });
+      const wb = XLSX.utils.book_new();
+      const s1 = XLSX.utils.json_to_sheet(summary);
+      s1["!cols"] = [12, 28, 10, 13, 26, 22, 14, 14, 11, 12, 12, 12, 12].map((w) => ({ wch: w }));
+      const s2 = XLSX.utils.json_to_sheet(detail);
+      s2["!cols"] = [12, 28, 12, 8, 10, 10, 7, 18].map((w) => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, s1, "Summary");
+      XLSX.utils.book_append_sheet(wb, s2, "Attendance");
+      XLSX.writeFile(wb, `MYTRACK_interns_${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" })}.xlsx`);
+      setMsg({ type: "success", text: `Exported ${chosen.length} intern${chosen.length > 1 ? "s" : ""} (${detail.length} attendance rows).` });
+    } catch (err) {
+      setMsg({ type: "error", text: "Couldn't create the Excel file (no internet to load the Excel tool?). " + (err?.message || "") });
+    } finally { setBusy(null); }
+  };
+
+  const setActive = async (active) => {
+    const n = chosen.length;
+    if (!active && !window.confirm(`Deactivate ${n} intern account${n > 1 ? "s" : ""}? They can't sign in or tap their card anymore. All their records are kept, and you can reactivate them later.`)) return;
+    setBusy(active ? "on" : "off"); setMsg(null);
+    try {
+      const res = await fetch(`${API}/admin/users/active-batch`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ ids: chosen.map((r) => r.u.id), active }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || "Something went wrong.");
+      setMsg({ type: "success", text: d.message }); setPicked(new Set()); onRefresh && onRefresh();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="ix-card eot">
+      <style>{EOT_CSS}</style>
+      <div className="eot-filters">
+        <div className="ix-field"><label>Program</label>
+          <select className="ix-select" value={f.program} onChange={set("program")}><option value="">All programs</option>{programs.map((p) => <option key={p}>{p}</option>)}</select></div>
+        <div className="ix-field"><label>HTE / placement</label>
+          <select className="ix-select" value={f.placement} onChange={set("placement")}><option value="">All</option>{places.map((p) => <option key={p}>{p}</option>)}</select></div>
+        <div className="ix-field"><label>Semester</label>
+          <select className="ix-select" value={f.semester} onChange={set("semester")}><option value="">Any</option><option>1st Semester</option><option>2nd Semester</option></select></div>
+        <div className="ix-field"><label>Term from</label><input type="date" className="ix-input" value={f.from} onChange={set("from")} /></div>
+        <div className="ix-field"><label>to</label><input type="date" className="ix-input" value={f.to} onChange={set("to")} /></div>
+        <div className="ix-field"><label>Show</label>
+          <select className="ix-select" value={f.status} onChange={set("status")}>
+            <option value="active">Active accounts</option><option value="done">Active, hours completed</option>
+            <option value="notdone">Active, hours not completed</option><option value="inactive">Deactivated</option><option value="all">Everyone</option>
+          </select></div>
+      </div>
+      <p className="eot-hint">Term dates are optional: they keep only interns with attendance in those dates, and the export only has those dates.</p>
+      <Msg msg={msg} />
+      <div className="eot-bar">
+        <b>{chosen.length} of {rows.length} selected</b>
+        <span className="eot-acts">
+          <button type="button" className="ix-b ghost sm" disabled={!chosen.length || !!busy} onClick={exportXlsx}><Icon name="download" size={14} /> {busy === "export" ? "Exporting..." : "Export to Excel"}</button>
+          {f.status === "inactive"
+            ? <button type="button" className="ix-b primary sm" disabled={!chosen.length || !!busy} onClick={() => setActive(true)}>{busy === "on" ? "..." : "Reactivate"}</button>
+            : <button type="button" className="ix-b danger sm" disabled={!chosen.length || !!busy} onClick={() => setActive(false)}>{busy === "off" ? "..." : "Deactivate"}</button>}
+        </span>
+      </div>
+      <Table
+        headers={[<input key="all" type="checkbox" aria-label="Select all" checked={allOn} onChange={toggleAll} />, "Intern", "Program", "HTE", "Hours", "Days", "Status"]}
+        empty="No interns match these filters."
+        rows={rows.map(({ u, days, hours, required, done, active }) => [
+          <input type="checkbox" aria-label={`Select ${u.name}`} checked={picked.has(u.id)} onChange={() => toggle(u.id)} />,
+          <span><b>{u.name}</b><small className="eot-sub">{u.student_id || ""}</small></span>,
+          u.program || "—",
+          u.placement || "—",
+          <span className={done ? "eot-done" : ""}>{hours}h / {required}h</span>,
+          days.length,
+          <Badge label={active ? (done ? "Completed" : "Active") : "Deactivated"} type={active ? (done ? "approved" : "pending") : "rejected"} />,
+        ])}
+      />
+    </div>
+  );
+}
+const EOT_CSS = `
+  .ix-page .ix-content .eot { padding: 16px 18px !important; }
+  .ix-page .eot-filters { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 1100px) { .ix-page .eot-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { .ix-page .eot-filters { grid-template-columns: 1fr 1fr; } }
+  .ix-page .eot-hint { margin: 8px 0 10px; font-size: 11.5px; color: #94a3b8; }
+  .ix-page .eot-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0; }
+  .ix-page .eot-bar b { font-size: 13px; }
+  .ix-page .eot-acts { margin-left: auto; display: inline-flex; gap: 8px; flex-wrap: wrap; }
+  .ix-page .eot-sub { display: block; font-size: 11px; color: #94a3b8; }
+  .ix-page .eot-done { color: #15803d; font-weight: 700; }
+  .ix-page .eot input[type="checkbox"] { width: 16px; height: 16px; accent-color: #e8582a; cursor: pointer; }
+`;
+
+/* ───────────────────────── Backups (Accounts → Backups) ─────────────────────────
+   One file with every table (JSON inside a .zip), made on the server. Also: php artisan mytrack:backup */
+function Backups() {
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const load = () => fetch(`${API}/admin/backups`, { headers: { Accept: "application/json" } })
+    .then((r) => r.json()).then((d) => setList(Array.isArray(d?.backups) ? d.backups : [])).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+
+  const make = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch(`${API}/admin/backups`, { method: "POST", headers: { Accept: "application/json" } });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || "The backup failed.");
+      setMsg({ type: "success", text: d.message }); load();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setBusy(false); }
+  };
+  const download = async (b) => {
+    setMsg(null);
+    try {
+      const res = await fetch(`${API}/admin/backups/${encodeURIComponent(b.name)}`, { headers: { Accept: "application/zip" } });
+      if (!res.ok) throw new Error("Couldn't download the backup.");
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = b.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } catch (err) { setMsg({ type: "error", text: err.message }); }
+  };
+  const size = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+  const when = (v) => new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+
+  return (
+    <div className="ix-card eot">
+      <style>{EOT_CSS}</style>
+      <div className="eot-bar" style={{ paddingTop: 0 }}>
+        <div>
+          <b>Database backups</b>
+          <p className="eot-hint" style={{ margin: "4px 0 0" }}>Every table in one file. The server keeps the last 12 backups; download them and keep a copy on Google Drive or a USB drive.</p>
+        </div>
+        <span className="eot-acts"><button type="button" className="ix-b primary sm" disabled={busy} onClick={make}>{busy ? "Backing up..." : "Back up now"}</button></span>
+      </div>
+      <Msg msg={msg} />
+      {!list ? <Spinner /> : (
+        <Table
+          headers={["Backup", "Made", "Size", ""]}
+          empty="No backups yet. Click “Back up now”."
+          rows={list.map((b) => [<b>{b.name}</b>, when(b.created_at), size(b.size),
+            <button type="button" className="ix-b ghost sm" onClick={() => download(b)}><Icon name="download" size={14} /> Download</button>])}
+        />
+      )}
+    </div>
+  );
+}
 
 /* ───────────────────────── Activity log (Accounts → Activity Log) ───────────────────────── */
 function ActivityLog() {

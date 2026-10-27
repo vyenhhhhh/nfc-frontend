@@ -128,7 +128,7 @@ export function TodayPeople({ records, limit = 9 }) {
     return p;
   }).sort((a, b) => (b.open - a.open) || (new Date(a.first) - new Date(b.first)));
 
-  if (!people.length) return <DashEmpty title="No activity today yet." sub="Interns who tap in will show up here." />;
+  if (!people.length) return <DashEmpty title="No activity today yet." sub="Interns who time in will show up here." />;
   return (
     <ul className="dbx-rows">
       {people.slice(0, limit).map((p) => (

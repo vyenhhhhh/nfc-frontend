@@ -12,9 +12,11 @@ import Shell, {
 } from "../components/DashKit.jsx";
 import NfcCards from "../components/NfcCards.jsx";
 import {
-  HomeCalendar, Records, DTR, Reports, AdminProfile, adminCss, adminMatch, Calendar,
+  HomeCalendar, Records, DTR, AdminProfile, adminCss, adminMatch, Calendar,
 } from "./AdminDashboard.jsx";
 import { internCss, cardUnify, preStatusOf } from "./InternDashboard.jsx";
+import QuarterlyReport from "../components/QuarterlyReport.jsx";
+import Evaluations from "../components/Evaluations.jsx";
 import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
@@ -50,13 +52,14 @@ const GROUPS = {
     tabs: [
       { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of all interns." },
       { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete attendance log of every intern." },
+      { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Supervisors' evaluations of the interns. You can also upload a signed paper form a supervisor handed in." },
     ],
   },
   "/coordinator/reports": {
     title: "Reports",
     tabs: [
       { key: "dtr",     label: "Generate DTR",        icon: "file",  sub: "Print an intern's Daily Time Record (CS Form 48)." },
-      { key: "summary", label: "Consolidated Report", icon: "chart", sub: "Monthly attendance summary for all interns." },
+      { key: "quarterly", label: "Quarterly Report", icon: "file", sub: "Unit Performance Review Report: the deployment tables fill in by themselves; type the rest, then print or save as PDF." },
     ],
   },
 };
@@ -169,9 +172,10 @@ export default function OjtCoordinatorDashboard() {
             />
           )}
           {tab.key === "records" && <Records records={records} loading={loading} />}
+          {tab.key === "evaluation" && <Evaluations interns={interns} user={user} />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} />}
-          {tab.key === "summary" && <Reports interns={interns} records={records} />}
+          {tab.key === "quarterly" && <QuarterlyReport user={user} />}
         </GroupPage>
       )}
 
@@ -245,7 +249,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, records, interns, loa
     <DashLayout
       title={`${greeting()}, ${first}`}
       sub={dateLabel}
-      status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody checked in yet", tone: checkedIn > 0 ? "live" : "" }}
+      status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody timed in yet", tone: checkedIn > 0 ? "live" : "" }}
       actions={[
         { icon: "users", label: "Interns", run: () => go("/coordinator/interns") },
         { icon: "file", label: "DTR", run: () => go("/coordinator/reports?tab=dtr") },

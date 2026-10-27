@@ -2,6 +2,7 @@
 // Coordinator page: review NFC card requests and see the request history.
 // CardRequests (exported) is the admin's "Card Requests" page: approved cards to print in the printing app.
 import { useState, useEffect, useRef } from "react";
+import CardAlerts from "./CardAlerts.jsx";
 import logo from "../assets/logo.png";          // CCIS logo (right side of the ID)
 import csuLogo from "../assets/csu-logo.png";   // CSU seal (left side of the ID)
 import campus from "../assets/campus.jpg";      // faded background of the ID
@@ -59,6 +60,16 @@ export default function NfcCards({ user, interns, onRefresh, preOf }) {
   const closed = requests.filter((r) => r.status === "issued" || r.status === "rejected");
   const pendingCount = requests.filter((r) => r.status === "pending").length;
 
+  // open copied-card alerts (one-time card codes), shown as a count on the tab
+  const [alerts, setAlerts] = useState(0);
+  useEffect(() => {
+    const load = () => fetch(`${API}/card-flags`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => setAlerts((d?.flags || []).filter((f) => !f.resolved_at).length)).catch(() => {});
+    load();
+    const iv = setInterval(load, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
   return (
     <>
       <style>{nfcCss}</style>
@@ -69,6 +80,9 @@ export default function NfcCards({ user, interns, onRefresh, preOf }) {
         </button>
         <button className={tab === "history" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("history")}>
           History <span className="ix-pill-count">{closed.length}</span>
+        </button>
+        <button className={tab === "alerts" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("alerts")}>
+          Card Alerts {alerts > 0 && <span className="ix-pill-count">{alerts}</span>}
         </button>
       </div>
 
@@ -83,6 +97,7 @@ export default function NfcCards({ user, interns, onRefresh, preOf }) {
         />
       )}
       {tab === "history" && <History requests={closed} loading={loading} />}
+      {tab === "alerts" && <CardAlerts />}
     </>
   );
 }
@@ -238,7 +253,7 @@ const defaultValid = () => {                       // end of the school year: Ju
   const d = new Date(); const y = d.getMonth() >= 5 ? d.getFullYear() + 1 : d.getFullYear();
   return `${y}-06-30`;
 };
-const loadCardSettings = () => {
+export const loadCardSettings = () => {
   try { return { valid: defaultValid(), coordinator: "", signature: "", contact: "", ...JSON.parse(localStorage.getItem(CARD_KEY) || "{}") }; }
   catch { return { valid: defaultValid(), coordinator: "", signature: "", contact: "" }; }
 };
@@ -267,7 +282,7 @@ const courseOf = (program) => {
   return { course: m?.[1]?.toUpperCase() || "—", year: n ? `${n}${sfx} year` : "—" };
 };
 
-function CardFace({ u, settings = {} }) {
+export function CardFace({ u, settings = {} }) {
   const src = photoUrl(u.photo);
   const name = cardName(u);
   const { course, year } = courseOf(u.program);
@@ -329,7 +344,7 @@ export const CARD_RULES = [
   "Bring this card with you every OJT day.",
   "Report a lost or damaged card to your OJT Coordinator right away.",
 ];
-function CardBack({ u, settings = {} }) {
+export function CardBack({ u, settings = {} }) {
   return (
     <div className="idc idc-back">
       <img src={campus} alt="" className="idc-bg" />
@@ -791,15 +806,8 @@ export function CardRequests({ requests, interns, onChanged }) {
 }
 
 /* ───────────────────────── styles ───────────────────────── */
-const nfcCss = `
-  .nfc-req-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
-  .nfc-pre { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 700; background: #fef3c7; color: #92400e; }
-  .nfc-pre.done { background: #dcf5e6; color: #146c3a; }
-  .nfc-ok { color: #15803d; } .nfc-not { color: #b45309; }
-  .nfc-wait { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; background: #fff7ed; border: 1px solid #fde4cc; color: #9a3412; font-size: 12.5px; line-height: 1.45; }
-  .nfc-wait svg { flex-shrink: 0; margin-top: 1px; }
-  .nfc-review { margin-top: 16px; padding-top: 16px; border-top: 1px solid #f1f5f9; display: flex; flex-direction: column; gap: 14px; }
-
+/* the ID card (front and back): also used on the intern's NFC Card page */
+export const idCardCss = `
   /* ── ID card: CR80 85.6mm x 54mm, landscape ── */
   .idc { position: relative; width: 85.6mm; height: 54mm; border-radius: 3mm; overflow: hidden; flex-shrink: 0;
     background: #fdf8f5; color: #1f2333; font-family: 'Inter', 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column;
@@ -909,6 +917,18 @@ const nfcCss = `
   .idc-sig-pick img { height: 30px; max-width: 110px; object-fit: contain; border: 1px dashed #e2e8f0; border-radius: 6px; padding: 2px 6px; background: #fff; }
   .idc-err { color: #dc2626; font-size: 11.5px; }
 
+`;
+
+const nfcCss = `
+  .nfc-req-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
+  .nfc-pre { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 700; background: #fef3c7; color: #92400e; }
+  .nfc-pre.done { background: #dcf5e6; color: #146c3a; }
+  .nfc-ok { color: #15803d; } .nfc-not { color: #b45309; }
+  .nfc-wait { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; background: #fff7ed; border: 1px solid #fde4cc; color: #9a3412; font-size: 12.5px; line-height: 1.45; }
+  .nfc-wait svg { flex-shrink: 0; margin-top: 1px; }
+  .nfc-review { margin-top: 16px; padding-top: 16px; border-top: 1px solid #f1f5f9; display: flex; flex-direction: column; gap: 14px; }
+
+${idCardCss}
   /* card requests list */
   .idq-help { margin: -4px 0 12px; font-size: 12.5px; color: #64748b; }
   .idq-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }

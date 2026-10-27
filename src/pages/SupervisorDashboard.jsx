@@ -10,9 +10,10 @@ import Shell, {
   InternMonitor, AnnouncementBoard, todayManila, fmtTime, greeting, liveRefresh, fmtMinutes,
 } from "../components/DashKit.jsx";
 import {
-  Records, DTR, Reports, AdminProfile, adminCss, adminMatch, GroupPage, grpCss, HomeCalendar,
+  Records, DTR, AdminProfile, adminCss, adminMatch, GroupPage, grpCss, HomeCalendar,
 } from "./AdminDashboard.jsx";
 import { internCss, cardUnify } from "./InternDashboard.jsx";
+import Evaluations from "../components/Evaluations.jsx";
 import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
@@ -35,13 +36,13 @@ const GROUPS = {
     tabs: [
       { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of your interns." },
       { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete attendance log of your interns." },
+      { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Evaluate your interns in MYTRACK, or upload the signed paper evaluation form." },
     ],
   },
   "/supervisor/reports": {
     title: "Reports",
     tabs: [
       { key: "dtr",     label: "Generate DTR",        icon: "file",  sub: "View, print and certify your interns' Daily Time Records." },
-      { key: "summary", label: "Consolidated Report", icon: "chart", sub: "Monthly attendance summary of your interns." },
     ],
   },
 };
@@ -142,9 +143,9 @@ export default function SupervisorDashboard() {
             />
           )}
           {tab.key === "records" && <Records records={records} loading={loading} />}
+          {tab.key === "evaluation" && <Evaluations interns={interns} user={user} />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} canCertify />}
-          {tab.key === "summary" && <Reports interns={interns} records={records} />}
         </GroupPage>
       )}
       {path === "/supervisor/profile" && <AdminProfile user={user} />}
@@ -167,7 +168,7 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
   const review = [
     { key: "online", icon: "inbox", tone: "blue", title: "Online attendance", sub: "Confirm remote workdays", n: counts.online || 0 },
     { key: "overtime", icon: "clock", tone: "amber", title: "Overtime", sub: "Time after 5:00 PM", n: counts.overtime || 0 },
-    { key: "fix", icon: "pencil", tone: "purple", title: "Time corrections", sub: "Forgot to tap in or out, or a missed day", n: counts.fix || 0 },
+    { key: "fix", icon: "pencil", tone: "purple", title: "Time corrections", sub: "Forgot to time in or out, or a missed day", n: counts.fix || 0 },
     { key: "wfh", icon: "globe", tone: "green", title: "Work arrangement", sub: "Onsite / work from home", n: counts.wfh || 0 },
   ];
   const toReview = review.reduce((s, r) => s + r.n, 0);
@@ -176,7 +177,7 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
     <DashLayout
       title={`${greeting()}, ${first}`}
       sub={dateLabel}
-      status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody checked in yet", tone: checkedIn > 0 ? "live" : "" }}
+      status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody timed in yet", tone: checkedIn > 0 ? "live" : "" }}
       actions={[
         { icon: "users", label: "Monitor", run: () => go("/supervisor/interns") },
         { icon: "file", label: "DTR", run: () => go("/supervisor/reports?tab=dtr") },
@@ -400,7 +401,7 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
           {fixPending.length === 0 ? allGood("No time corrections waiting for you.") : (
             <Inbox
               items={fixPending}
-              row={(c) => ({ name: c.intern_name, photo: c.intern_photo, sub: String(c.reason || "").slice(0, 60), tag: <Badge label={day(c.date)} type="pending" />, meta: c.kind === "day" ? `missed whole day · ${clock(c.requested_in)}–${clock(c.requested_out)}` : c.kind === "in" ? `forgot time in · asks ${clock(c.requested_in)}` : `forgot time out · asks ${clock(c.requested_out)}` })}
+              row={(c) => ({ name: c.intern_name, photo: c.intern_photo, sub: String(c.reason || "").slice(0, 60), tag: <Badge label={day(c.date)} type="pending" />, meta: c.kind === "day" ? `missed whole day · ${clock(c.requested_in)}–${clock(c.requested_out)}` : c.kind === "in" ? `forgot to time in · asks ${clock(c.requested_in)}` : `forgot to time out · asks ${clock(c.requested_out)}` })}
               detail={(c) => (
                 <>
                   <div className="ibx-head"><Avatar name={c.intern_name} photo={c.intern_photo} size={48} />
@@ -414,14 +415,14 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
                     </div>
                   ) : c.kind === "in" ? (
                     <div className="ibx-kv ibx-sec">
-                      <div><small>Forgot to</small><b>Tap in</b></div>
+                      <div><small>Forgot to</small><b>Time in</b></div>
                       <div><small>Recorded tap</small><b>{clock(c.checked_in_at)}</b></div>
                       <div><small>Asks time in</small><b>{clock(c.requested_in)}</b></div>
                       <div><small>Time out</small><b>{clock(c.requested_out)}</b></div>
                     </div>
                   ) : (
                     <div className="ibx-kv ibx-sec">
-                      <div><small>Forgot to</small><b>Tap out</b></div>
+                      <div><small>Forgot to</small><b>Time out</b></div>
                       <div><small>Time in</small><b>{clock(c.checked_in_at)}</b></div>
                       <div><small>Asks time out</small><b>{clock(c.requested_out)}</b></div>
                     </div>
