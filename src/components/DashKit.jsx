@@ -7,10 +7,10 @@ import { currentFit } from "../fit.js";
 import logo from "../assets/logo.png";
 
 import { API, STORAGE } from "../config.js";
-export const REQUIRED_HOURS = 460; // fallback when an intern has no program set
+export const REQUIRED_HOURS = 486; // fallback when an intern has no program set
 
 /* ── Required OJT hours per program (from the OJT coordinator) ── */
-export const PROGRAM_HOURS = { BSIT: 460, BSIS: 460, BSCS: 320 };
+export const PROGRAM_HOURS = { BSIT: 486, BSIS: 486, BSCS: 320 };
 export const PROGRAMS = Object.keys(PROGRAM_HOURS);
 export function programKey(program) {
   const p = String(program || "").toUpperCase();
@@ -91,7 +91,7 @@ export const DURING_REQUIREMENTS = [
 ];
 export const POST_REQUIREMENTS = [
   { key: "certificate_of_completion", label: "Certificate of Completion" },
-  { key: "evaluation_forms", label: "Evaluation Forms" },
+  { key: "evaluation_forms", label: "Evaluation Forms", hint: "The signed evaluation from your HTE supervisor (scan or clear photo)" },
   { key: "narrative_report", label: "Narrative Report", hint: "Use the prescribed format, written in 3rd person" },
   { key: "dtr", label: "Daily Time Record (DTR)", hint: "Signed copy" },
   { key: "system_output", label: "System Output Presentation", hint: "Every intern presents the system output they made" },
@@ -1063,86 +1063,167 @@ function InternProfile({ u, records, today, onClose, onViewRecords, canViewFiles
     </div>
   );
 
+  // hours per weekday of this week (Mon-Fri)
+  const week = (() => {
+    const base = new Date(today + "T00:00:00");
+    const dow = (base.getDay() + 6) % 7;                 // 0 = Monday
+    return ["Mon", "Tue", "Wed", "Thu", "Fri"].map((lbl, i) => {
+      const d = new Date(base); d.setDate(base.getDate() - dow + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const h = calcHours(recs.filter((r) => r.date === key));
+      return { lbl, key, h, future: key > today, isToday: key === today };
+    });
+  })();
+  const weekMax = Math.max(8, ...week.map((w) => w.h));
+  const weekTotal = Math.round(week.reduce((s, w) => s + w.h, 0) * 10) / 10;
+
   return (
-    <section className="imp-panel ipv" aria-label={`Profile of ${u.name}`}>
-      {/* header */}
-      <div className="ipv-head">
-        <Avatar name={u.name} photo={u.photo} size={84} status={isIn ? "on" : "off"} />
-        <div className="ipv-head-main">
-          <div className="ipv-name-row">
-            <h2>{u.name}</h2>
+    <section className="ipa" aria-label={`Profile of ${u.name}`}>
+      <style>{IPA_CSS}</style>
+      {/* header: who they are, today, and how to reach them */}
+      <div className="ipa-head">
+        <Avatar name={u.name} photo={u.photo} size={72} status={isIn ? "on" : "off"} />
+        <div className="ipa-who">
+          <h2>{u.name}</h2>
+          <div className="ipa-facts">
+            <span>{studentId}</span><span>{u.program || "—"}</span><span title={u.placement || ""}>{u.placement || "No placement"}</span>
+            <span className="ipa-dtr"><DtrModeField u={u} /></span>
           </div>
-          {/* the intern's key details, each with its own label */}
-          <dl className="ipv-facts">
-            <div><dt>Student ID</dt><dd>{studentId}</dd></div>
-            <div><dt>Program &amp; year</dt><dd>{u.program || "—"}</dd></div>
-            <div><dt>Placement</dt><dd title={u.placement || ""}>{u.placement || "—"}</dd></div>
-            <div><dt>DTR type</dt><dd><DtrModeField u={u} /></dd></div>
-          </dl>
+          <div className="ipa-today">
+            <span className={isIn ? "ipa-pill in" : tIn ? "ipa-pill done" : "ipa-pill out"}>
+              <i />{isIn ? "On duty" : tIn ? "Timed out" : "Not in yet"}
+            </span>
+            <span className="ipa-pill soft">Time in <b>{tIn ? fmtTime(tIn) : "—"}</b></span>
+            <span className="ipa-pill soft">Time out <b>{isIn ? "Still in" : tOut ? fmtTime(tOut) : "—"}</b></span>
+            <span className="ipa-pill soft">Last record <b>{lastDate ? fmtDate(lastDate) : "—"}</b></span>
+          </div>
+        </div>
+        <div className="ipa-contact">
+          <div><small>Contact</small><b>{u.contact_number || "—"}</b></div>
+          <div><small>Emergency</small><b>{emergencyWho || "Not set"}{u.emergency_contact_number ? ` · ${u.emergency_contact_number}` : ""}</b></div>
         </div>
       </div>
 
-      {/* today */}
-      <div className="ipv-block">
-        <h3 className="ipv-title">Today</h3>
-        <div className="ipv-grid c3">
-          {cell("Time in", tIn ? fmtTime(tIn) : "Not in yet")}
-          {cell("Time out", isIn ? <Badge label="Still in" type="in" /> : tOut ? fmtTime(tOut) : "—")}
-          {cell("Last record", lastDate ? fmtDate(lastDate) : "—")}
-        </div>
-      </div>
-
-      {/* quick contact */}
-      <div className="ipv-block">
-        <h3 className="ipv-title">Contact</h3>
-        <div className="ipv-grid c3">
-          {cell("Contact number", u.contact_number || "—")}
-          {cell("Emergency contact", emergencyWho || "Not set")}
-          {cell("Emergency number", u.emergency_contact_number || "—")}
-        </div>
-      </div>
-
-      {/* attendance summary + progress */}
-      <div className="ipv-block">
-        <div className="ipv-title-row">
-          <h3 className="ipv-title">Attendance summary</h3>
-          {onViewRecords && (
-            <button type="button" className="ix-b ghost sm" onClick={onViewRecords}>
-              <Icon name="list" size={14} /> View all records
-            </button>
+      <div className="ipa-cols">
+        {/* attendance summary + this week */}
+        <div className="ipa-card">
+          <div className="ipa-card-h">
+            <h3>Attendance summary</h3>
+            {onViewRecords && <button type="button" className="ipa-link" onClick={onViewRecords}>View all records ›</button>}
+          </div>
+          <div className="ipa-stats">
+            <div><b>{days}</b><small>Days present</small></div>
+            <div><b>{onsite}</b><small>Onsite taps</small></div>
+            <div><b>{online}</b><small>Online logs</small></div>
+            <div><b>{outputBased ? "—" : total + "h"}</b><small>Hours rendered</small></div>
+          </div>
+          {outputBased ? (
+            <div className="ix-note" style={{ marginTop: 14 }}>
+              <Icon name="info" size={18} />
+              <span>This intern is <strong>output-based</strong>, so progress is measured by submitted MOVs, not hours.</span>
+            </div>
+          ) : (
+            <div className="ipa-prog">
+              <div className="ipa-prog-row"><span>OJT progress</span><span><b>{total}h</b> of {required}h · {left}h left · <b>{pct}%</b></span></div>
+              <div className="ipa-bar"><i style={{ width: `${Math.max(1, pct)}%` }} /></div>
+            </div>
           )}
-        </div>
-        <div className="ipv-grid c4 ipv-stats">
-          <div className="ipv-cell"><strong>{days}</strong><span>Days present</span></div>
-          <div className="ipv-cell"><strong>{onsite}</strong><span>Onsite taps</span></div>
-          <div className="ipv-cell"><strong>{online}</strong><span>Online logs</span></div>
-          <div className="ipv-cell"><strong>{outputBased ? "—" : total + "h"}</strong><span>Hours rendered</span></div>
+          <div className="ipa-card-h ipa-wk-h"><h3>This week</h3><span className="ipa-muted">{weekTotal}h so far</span></div>
+          <div className="ipa-week">
+            {week.map((w) => (
+              <div key={w.key} className={w.isToday ? "ipa-day today" : "ipa-day"} title={`${w.lbl}: ${w.h}h`}>
+                <span className="ipa-day-h">{w.h ? `${w.h}h` : ""}</span>
+                <i className={w.h ? "" : "none"} style={{ height: w.h ? `${Math.max(10, (w.h / weekMax) * 100)}%` : 6 }} />
+                <small>{w.lbl}</small>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {outputBased ? (
-          <div className="ix-note" style={{ marginTop: 14 }}>
-            <Icon name="info" size={18} />
-            <span>This intern is <strong>output-based</strong>, so progress is measured by submitted MOVs, not hours.</span>
-          </div>
-        ) : (
-          <div className="ipv-progress">
-            <div className="ipv-progress-row">
-              <span>OJT progress</span>
-              <span><strong>{total}h</strong> of {required}h · {left}h left</span>
-            </div>
-            <div className="ipv-bar-line">
-              <div className="ipv-bar"><div className="ix-bar-fill" style={{ width: `${Math.max(0, pct)}%` }} /></div>
-              <strong>{pct}%</strong>
-            </div>
-          </div>
-        )}
+        {/* which requirements this intern has (and hasn't) submitted */}
+        <div className="ipa-card ipa-req">
+          <RequirementChecklist internId={u.id} intern={u} canViewFiles={canViewFiles} />
+        </div>
       </div>
-
-      {/* which requirements this intern has (and hasn't) submitted */}
-      <RequirementChecklist internId={u.id} intern={u} canViewFiles={canViewFiles} />
     </section>
   );
 }
+
+const IPA_CSS = `
+.ipa { display: flex; flex-direction: column; gap: 16px; }
+.ipa-head { display: flex; align-items: center; gap: 18px; padding: 18px 22px; background: #fff4ee; border: 1px solid #fbd5c3; border-radius: 16px; }
+.ipa-head .ix-av { border: 3px solid #fff; box-shadow: none !important; }
+.ipa-head .ix-av:has(img) { background: #fff !important; }
+.ipa-head .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.ipa-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ipa-who h2 { margin: 0; font-size: 21px; font-weight: 800; color: #0f172a; line-height: 1.2; letter-spacing: -.2px; }
+.ipa-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; font-size: 13px; color: #64748b; }
+.ipa-facts > span + span::before { content: "·"; margin: 0 8px; color: #cbb5a8; }
+.ipa-dtr .dtr-set select { font: inherit; font-size: 12.5px; padding: 2px 6px; border-radius: 6px; border: 1px solid #f1c7b2; background: #fff; }
+.ipa-today { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.ipa-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 7px; line-height: 1.3; }
+.ipa-pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.ipa-pill.in { background: #e9f8ef; color: #15803d; }
+.ipa-pill.out { background: #fff4e5; color: #b45309; }
+.ipa-pill.done { background: #eef2ff; color: #4338ca; }
+.ipa-pill.soft { background: rgba(255,255,255,.75); color: #64748b; font-weight: 600; }
+.ipa-pill.soft b { color: #0f172a; font-weight: 700; }
+.ipa-contact { display: flex; flex-direction: column; gap: 6px; text-align: right; font-size: 12.5px; max-width: 38%; }
+.ipa-contact div { display: flex; flex-direction: column; line-height: 1.3; }
+.ipa-contact small { color: #94a3b8; font-size: 11.5px; }
+.ipa-contact b { color: #0f172a; font-weight: 700; overflow-wrap: anywhere; }
+.ipa-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.ipa-card { background: #fff; border: 1px solid #e8ebf0; border-radius: 16px; padding: 18px 20px; min-width: 0; }
+/* the summary stays in view while the long requirements list scrolls */
+.ipa-cols > .ipa-card:first-child { position: sticky; top: 12px; }
+.ipa-card-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.ipa-card-h h3, .ipa-req .ipv-title { margin: 0; font-size: 15px; font-weight: 800; color: #0f172a; }
+.ipa-req .ipv-title::before { display: none; }
+.ipa-link { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; font-weight: 700; color: #ea580c; cursor: pointer; }
+.ipa-muted { font-size: 12.5px; color: #64748b; }
+.ipa-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.ipa-stats > div { background: #fff4ee; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ipa-stats b { font-size: 22px; font-weight: 800; color: #ea580c; line-height: 1.1; }
+.ipa-stats small { font-size: 12px; font-weight: 600; color: #7c4a2e; }
+.ipa-prog { margin-top: 16px; }
+.ipa-prog-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: #64748b; margin-bottom: 7px; }
+.ipa-prog-row b { color: #0f172a; }
+.ipa-bar { height: 10px; border-radius: 5px; background: #f3e6df; overflow: hidden; }
+.ipa-bar i { display: block; height: 100%; border-radius: inherit; background: #ea580c; }
+.ipa-wk-h { margin: 20px 0 10px; }
+.ipa-week { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; height: 120px; align-items: end; }
+.ipa-day { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 5px; }
+.ipa-day i { width: 100%; max-width: 70px; border-radius: 8px 8px 4px 4px; background: #86d0a0; display: block; }
+.ipa-day i.none { background: #eef0f4; }
+.ipa-day small { font-size: 12px; color: #64748b; font-weight: 600; }
+.ipa-day.today small { color: #ea580c; }
+.ipa-day-h { font-size: 11.5px; font-weight: 700; color: #15803d; min-height: 15px; }
+/* the requirements list inside its card */
+.ipa-req .ipv-block { padding: 0 !important; margin: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; border-radius: 0 !important; }
+.ipa-req .ipv-title-row { margin: 0 0 12px !important; padding: 0 !important; border: 0 !important; flex-wrap: wrap; }
+.ipa-req .ipv-title-row::after, .ipa-req .ipv-title::after { display: none !important; }
+.ipa-req .rc-sum { margin: 0 0 10px; }
+.ipa-req .rc-filters { margin-bottom: 6px; }
+/* one requirement per line (not small cards) */
+.ipa-req .rc-rows { display: flex !important; flex-direction: column !important; gap: 0 !important; margin: 0; padding: 0; list-style: none; }
+.ipa-req .rc-row { display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; align-items: center !important; gap: 10px !important; padding: 10px 4px !important;
+  border: 0 !important; border-bottom: 1px solid #f1f2f5 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important;
+  min-height: 0 !important; height: auto !important; text-align: left !important; }
+.ipa-req .rc-row:last-child { border-bottom: 0 !important; }
+.ipa-req .rc-row > * { grid-column: auto !important; grid-row: auto !important; margin: 0 !important; }
+.ipa-req .rc-row .rc-ic { flex: none; width: 28px; height: 28px; }
+.ipa-req .rc-row .rc-txt { flex: 1 1 auto !important; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+.ipa-req .rc-row .rc-txt b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ipa-req .rc-row .rc-txt small { -webkit-line-clamp: 1 !important; font-size: 12px; }
+.ipa-req .rc-row > :is(.rc-tag, .rc-view, .rc-undo, .rc-undo-ask) { flex: none !important; justify-self: auto !important; }
+@media (max-width: 1200px) { .ipa-cols { grid-template-columns: 1fr; } .ipa-cols > .ipa-card:first-child { position: static; } }
+@media (max-width: 760px) {
+  .ipa-head { flex-direction: column; align-items: flex-start; padding: 16px; }
+  .ipa-contact { text-align: left; max-width: none; }
+  .ipa-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ipa-card { padding: 14px; }
+}
+`;
 
 /* Read-only details (same look as the Monitor Interns profile). Used in the View window in Manage Accounts. */
 export function UserDetails({ u }) {
@@ -1436,6 +1517,555 @@ export function Inbox({ items, keyOf = (x) => x.id, row, detail, emptyTitle = "N
   );
 }
 
+/* ───────────── Online attendance review (supervisor and OJT coordinator) ─────────────
+   Waiting / Reviewed list on the left, the picked day on the right. Fits the window;
+   only the list (and long task notes) scroll. onReview(item, "approved"|"rejected", remarks) -> Promise<bool> */
+const oaDay = (v) => String(v || "").slice(0, 10);
+const oaDate = (v, long) => {
+  const d = new Date(oaDay(v) + "T00:00:00+08:00");
+  return isNaN(d) ? oaDay(v) : d.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", ...(long ? { year: "numeric" } : {}), timeZone: "Asia/Manila" });
+};
+const oaStamp = (v) => {
+  if (!v) return "—";
+  const s = String(v);
+  const d = new Date(s.includes("T") ? s : s.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? "" : "+08:00"));
+  return isNaN(d) ? "—" : d.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
+};
+/* "Earlier from this intern": fills the free space in the details panel with the intern's other requests.
+   rows: [{ id, when, text, badge }] — click one to open it. */
+export function OaHistory({ name, rows = [], onPick }) {
+  const first = String(name || "this intern").split(" ")[0];
+  return (
+    <div className="oa-hist">
+      <span className="oa-hist-h">Earlier from {first}{rows.length ? ` · ${rows.length}` : ""}</span>
+      {rows.length === 0 ? <small className="oa-hist-none">No other requests from {first} yet.</small> : (
+        <div className="oa-hist-list">
+          {rows.map((r) => (
+            <button key={r.id} type="button" className="oa-hist-row" onClick={() => onPick && onPick(r)}>
+              <span className="oa-hist-when">{r.when}</span>
+              <span className="oa-hist-txt">{r.text}</span>
+              {r.badge}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const OA_STATUS = {
+  pending:  ["Waiting for supervisor", "pending"],
+  endorsed: ["Sent to coordinator", "online"],
+  approved: ["Approved", "approved"],
+  rejected: ["Rejected", "rejected"],
+};
+export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [] , onReview }) {
+  const coord = role !== "supervisor";
+  const [view, setView] = useState("waiting");
+  const [sel, setSel] = useState(null);
+  const [open, setOpen] = useState(false);   // phones: the details replace the list
+  const [q, setQ] = useState("");
+  const [remarks, setRemarks] = useState({});
+  const [busy, setBusy] = useState(null);
+  const sq = q.trim().toLowerCase();
+  const list = (view === "waiting" ? waiting : reviewed).filter((o) => !sq || String(o.intern_name || "").toLowerCase().includes(sq));
+  const cur = list.find((o) => o.id === sel) || list[0] || null;
+  const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
+  const mine = (o) => (coord ? o.status === "endorsed" || o.status === "pending" : o.status === "pending") && view === "waiting";
+  const badge = (o) => {
+    const [label, type] = o.status === "pending" && coord ? ["No supervisor", "pending"] : o.status === "pending" ? ["Waiting for you", "pending"] : (OA_STATUS[o.status] || [o.status, "none"]);
+    return <Badge label={o.status === "endorsed" && coord && view === "waiting" ? "Waiting for you" : label} type={type} />;
+  };
+  const decide = async (o, status) => {
+    setBusy(o.id + status);
+    const ok = await onReview(o, status, remarks[o.id] || "");
+    setBusy(null);
+    if (ok !== false) { setRemarks((r) => ({ ...r, [o.id]: "" })); setSel(null); setOpen(false); }
+  };
+
+  // the 4 steps: intern -> supervisor -> coordinator -> hours counted
+  const steps = (o) => {
+    const st = o.status;
+    const rej = st === "rejected";
+    const hasSup = st === "endorsed" || !!o.endorsed_by || !!o.endorser_name || (st === "pending" && !coord);
+    const noSup = !hasSup;                                   // no supervisor: the coordinator decides alone
+    const supRej = rej && o.rejected_by === "supervisor";
+    const supDone = st === "endorsed" || ((st === "approved" || rej) && hasSup && !supRej);
+    const list = [
+      { t: "Intern sent it", s: "done" },
+      noSup ? { t: "No supervisor", s: "skip" }
+        : { t: coord ? "Supervisor confirmed" : "You confirm", s: supDone ? "done" : supRej ? "bad" : "now", bad: "Rejected" },
+      { t: coord ? "You decide" : "OJT coordinator", s: st === "approved" ? "done" : rej && !supRej ? "bad" : (st === "endorsed" || (noSup && st === "pending")) ? "now" : "", bad: "Rejected" },
+      { t: "Hours counted", s: st === "approved" ? "done" : "" },
+    ];
+    return (
+      <ol className="oa-steps">
+        {list.map((x, i) => (
+          <li key={i} className={x.s}>
+            <i>{x.s === "done" ? <Icon name="check" size={11} /> : x.s === "bad" ? <Icon name="x" size={11} /> : x.s === "skip" ? "–" : i + 1}</i>
+            <span>{x.s === "bad" ? x.bad : x.t}</span>
+          </li>
+        ))}
+      </ol>
+    );
+  };
+
+  const outcome = (o) => {
+    const rm = o.remarks || o.endorse_remarks;
+    const text = o.status === "rejected" ? (coord ? "This day was rejected." : "You rejected this day.")
+      : o.status === "endorsed" ? (coord ? "The supervisor confirmed it. Waiting for your decision." : "You confirmed it. Waiting for the OJT coordinator.")
+      : o.status === "approved" ? "Approved. The 8 hours are counted."
+      : "Waiting for the HTE supervisor to confirm it first.";
+    return (
+      <div className={o.status === "rejected" ? "oa-done bad" : o.status === "approved" ? "oa-done ok" : "oa-done"}>
+        <Icon name={o.status === "rejected" ? "x" : o.status === "approved" ? "check" : "clock"} size={14} />
+        <span>{text}{rm ? <> Remarks: <em>{rm}</em></> : null}{o.reviewed_at ? <small> · {oaStamp(o.reviewed_at)}</small> : null}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className={open && cur ? "oa oa-open" : "oa"}>
+      <style>{OA_CSS}</style>
+      <div className="oa-list">
+        <div className="oa-switch" role="tablist" aria-label="Show">
+          <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
+            Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
+            Reviewed <span className="oa-n">{reviewed.length}</span>
+          </button>
+        </div>
+        {(view === "reviewed" ? reviewed.length : waiting.length) > 6 && (
+          <div className="oa-search">
+            <Icon name="search" size={14} />
+            <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" />
+          </div>
+        )}
+        <div className="oa-items" role="list">
+          {list.length === 0 ? (
+            <div className="oa-none">
+              <span className="oa-none-ic"><Icon name="check" size={18} /></span>
+              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
+              <small>{sq ? "Try another name." : view === "waiting" ? "No online days waiting for you." : "Days you approve or reject show here."}</small>
+            </div>
+          ) : list.map((o) => (
+            <button key={o.id} type="button" role="listitem"
+              className={cur && cur.id === o.id ? "oa-item on" : "oa-item"}
+              onClick={() => { setSel(o.id); setOpen(true); }}>
+              <Avatar name={o.intern_name} photo={o.intern_photo} size={34} />
+              <span className="oa-who"><b>{o.intern_name}</b><small>{oaDate(o.date)} · 8h</small></span>
+              {(view === "reviewed" || (coord && o.status === "pending")) && badge(o)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="oa-detail">
+        {!cur ? (
+          <div className="oa-blank">
+            <span className="oa-none-ic"><Icon name="inbox" size={20} /></span>
+            <b>{view === "waiting" ? "No online days waiting" : "Nothing to show yet"}</b>
+            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the days already checked." : "When an intern works online, their day shows here."}</small>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+            <div className="oa-head">
+              <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
+              <div className="oa-hn"><b>{cur.intern_name}</b><small>Worked online · {oaDate(cur.date, true)}</small></div>
+              {badge(cur)}
+            </div>
+            <div className="oa-kv">
+              <div><small>Date</small><b>{oaDate(cur.date)}</b></div>
+              <div><small>Counts as</small><b>8 hours</b></div>
+              <div><small>Official time</small><b>8:00 AM – 5:00 PM</b></div>
+              <div><small>{coord ? "Supervisor" : "Sent"}</small><b>{coord ? (cur.endorser_name || cur.supervisor_name || (cur.status === "pending" ? "None assigned" : "—")) : oaStamp(cur.submitted_at || cur.created_at)}</b></div>
+            </div>
+            <div className="oa-tasks">
+              <span>What they worked on</span>
+              <p>{cur.description || "—"}</p>
+            </div>
+            {steps(cur)}
+            <OaHistory name={cur.intern_name}
+              rows={[...waiting, ...reviewed].filter((o) => o.id !== cur.id && (o.user_id ? o.user_id === cur.user_id : o.intern_name === cur.intern_name))
+                .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 12)
+                .map((o) => ({ id: o.id, when: oaDate(o.date), text: o.description || "Online day", badge: badge(o), item: o }))}
+              onPick={(r) => { const w = waiting.some((x) => x.id === r.id); setView(w ? "waiting" : "reviewed"); setQ(""); setSel(r.id); }} />
+            {mine(cur) ? (
+              <>
+                {coord && cur.status === "endorsed" && cur.endorse_remarks && (
+                  <div className="oa-done ok"><Icon name="check" size={14} /><span>Supervisor's note: <em>{cur.endorse_remarks}</em></span></div>
+                )}
+                <div className="oa-act">
+                  <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[cur.id] || ""}
+                    onChange={(e) => setRemarks((r) => ({ ...r, [cur.id]: e.target.value }))} />
+                  <button className="ix-b danger" onClick={() => decide(cur, "rejected")} disabled={!!busy}>{busy === cur.id + "rejected" ? "..." : "Reject"}</button>
+                  <button className="ix-b ok" onClick={() => decide(cur, "approved")} disabled={!!busy}>{busy === cur.id + "approved" ? "..." : "Approve"}</button>
+                </div>
+              </>
+            ) : outcome(cur)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export const OA_CSS = `
+/* ── Online attendance review (list + details) ── */
+.ix-page.lay2 .ix-main:has(.oa) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+.ix-page.lay2 .ix-main:has(.oa) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+.ix-page.lay2 .ix-main:has(.oa) > .ix-content > * { flex: none; }
+/* the lists fill the window height (no blank under them) */
+.ix-content > .oa { flex: 1 1 auto !important; min-height: 340px; }
+.ix-page.lay2 .ix-main:has(.oa) .grp-body { flex: 1 1 auto !important; min-height: 0; display: flex; flex-direction: column; }
+.ix-page.lay2 .ix-main:has(.oa) .grp-body > * { flex: none; }
+.ix-page.lay2 .ix-main:has(.oa) .grp-body > .oa { flex: 1 1 auto !important; min-height: 340px; }
+.oa-switch button:focus:not(:focus-visible) { outline: none; box-shadow: none; }
+.oa { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 16px; min-height: 0; }
+.oa-list, .oa-detail { background: #fff; border: 1px solid #e8ebf0; border-radius: 14px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.oa-switch { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid #eef0f4; flex: none; }
+.oa-switch button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: #64748b; cursor: pointer; line-height: 1.2; }
+.oa-switch button:hover { background: #f6f7f9; }
+.oa-switch button.on { background: #fff1ea; color: #c2410c; }
+.oa-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #eef0f4; color: #475569; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.oa-n.hot { background: #ef4444; color: #fff; }
+.oa-items { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px; contain: size; }
+.oa-item { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-left: 3px solid transparent; border-radius: 0 10px 10px 0; background: transparent; text-align: left; font: inherit; cursor: pointer; margin-bottom: 2px; }
+.oa-item:hover { background: #f8f9fb; }
+.oa-item.on { background: #fff4ee; border-left-color: #ea580c; }
+.oa-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.oa-who b { font-size: 13.5px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oa-who small { font-size: 12px; color: #64748b; margin-top: 2px; }
+.oa-item .ix-badge, .oa-head .ix-badge { flex: none; }
+.oa-none, .oa-blank { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px; padding: 26px 14px; line-height: 1.3; }
+.oa-blank { flex: 1; min-height: 300px; }
+.oa-none b, .oa-blank b { font-size: 14px; color: #0f172a; margin-top: 4px; }
+.oa-none small, .oa-blank small { font-size: 12.5px; color: #64748b; max-width: 280px; }
+.oa-none-ic { width: 38px; height: 38px; border-radius: 50%; background: #e9f8ef; color: #16a34a; display: inline-flex; align-items: center; justify-content: center; }
+.oa-blank .oa-none-ic { background: #fff1ea; color: #ea580c; }
+.oa-detail { padding: 18px 20px; gap: 14px; overflow-y: auto; }
+.oa-back { display: none; }
+/* earlier requests of the same intern: takes the free height, scrolls inside if long */
+.oa-hist { flex: 1 1 auto; min-height: 64px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid #eef0f4; padding-top: 10px; overflow: hidden; }
+.oa-hist-h { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; flex: none; }
+.oa-hist-none { font-size: 12.5px; color: #94a3b8; }
+.oa-hist-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.oa-hist-row { display: flex; align-items: center; gap: 12px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; line-height: 1.25; }
+.oa-hist-row:hover { background: #f8f9fb; }
+.oa-hist-when { flex: none; width: 92px; font-size: 12.5px; font-weight: 600; color: #334155; }
+.oa-hist-txt { flex: 1; min-width: 0; font-size: 12.5px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oa-hist-row .ix-badge { flex: none; }
+.oa-detail > .oa-hist + .oa-act, .oa-detail > .oa-hist + .ot-act, .oa-detail > .oa-hist + .oa-done { margin-top: 0; }
+
+/* photos: no orange ring around the picture */
+:is(.oa, .mv2) .ix-av:has(img) { background: transparent !important; box-shadow: none !important; border: 0 !important; padding: 0 !important; }
+:is(.oa, .mv2) .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; border: 0 !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important; }
+/* one even gap between the parts of the details */
+.oa-detail { gap: 12px; }
+.oa-head { display: flex; align-items: center; gap: 12px; flex: none; }
+.oa-head > .oa-hn { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.oa-head b { font-size: 16px; color: #0f172a; }
+.oa-head small { font-size: 12.5px; color: #64748b; margin-top: 3px; }
+.oa-kv { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; flex: none; }
+.oa-kv > div { border: 1px solid #eef0f4; background: #fafbfc; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; line-height: 1.2; min-width: 0; }
+.oa-kv small { font-size: 11.5px; color: #64748b; }
+.oa-kv b { font-size: 14px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oa-tasks { border: 1px solid #eef0f4; border-radius: 10px; padding: 10px 14px; flex: 0 1 auto; min-height: 58px; max-height: 40vh; overflow-y: auto; box-sizing: border-box; }
+/* the buttons / result sit at the bottom of the panel */
+.oa-detail > .oa-act, .oa-detail > .ot-act, .oa-detail > .oa-done:last-child { margin-top: auto; }
+.oa-tasks span { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; }
+.oa-tasks p { margin: 0; font-size: 14px; line-height: 1.55; color: #1e293b; white-space: pre-wrap; }
+.oa-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; flex: none; }
+.oa-steps li { position: relative; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #94a3b8; line-height: 1.2; min-width: 0; }
+.oa-steps li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oa-steps i { flex: none; width: 22px; height: 22px; border-radius: 50%; background: #eef0f4; color: #64748b; font-style: normal; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.oa-steps li.done { color: #15803d; } .oa-steps li.done i { background: #16a34a; color: #fff; }
+.oa-steps li.now { color: #c2410c; font-weight: 600; } .oa-steps li.now i { background: #ea580c; color: #fff; }
+.oa-steps li.bad { color: #b91c1c; font-weight: 600; } .oa-steps li.bad i { background: #ef4444; color: #fff; }
+.oa-act { display: flex; align-items: center; gap: 8px; padding-top: 14px; border-top: 1px solid #eef0f4; flex: none; }
+.oa-act .ix-input { flex: 1; min-width: 0; }
+.oa-act .ix-b { flex: none; }
+.oa-done { display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px; border-radius: 10px; background: #f6f7f9; font-size: 13px; color: #334155; line-height: 1.45; flex: none; }
+.oa-done svg { margin-top: 2px; flex: none; }
+.oa-done.ok { background: #effaf3; color: #166534; } .oa-done.bad { background: #fef2f2; color: #991b1b; }
+.oa-done small { color: #64748b; }
+.oa-steps li.skip { color: #94a3b8; } .oa-steps li.skip i { background: #f1f5f9; color: #94a3b8; }
+.oa-search { display: flex; align-items: center; gap: 8px; margin: 8px 10px 0; padding: 0 10px; height: 34px; border: 1px solid #e5e7eb; border-radius: 9px; color: #94a3b8; flex: none; }
+.oa-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 13px; color: #0f172a; }
+/* shorter windows: tighter spacing so the whole request fits without scrolling */
+@media (max-height: 900px) {
+  .oa-detail { gap: 12px; padding: 16px 18px; }
+  .oa-kv > div { padding: 7px 12px; gap: 2px; }
+  .oa-head b { font-size: 15px; } .oa-head .ix-avatar, .oa-head img { width: 40px !important; height: 40px !important; }
+  .oa-tasks { padding: 8px 12px; } .oa-tasks span { margin-bottom: 3px; }
+  .oa-done { padding: 9px 12px; }
+  .oa-act { padding-top: 10px; }
+}
+@media (max-height: 700px) { .oa-detail { gap: 10px; padding: 14px 16px; } }
+@media (max-width: 1100px) { .oa-kv { grid-template-columns: repeat(2, minmax(0, 1fr)); } .oa-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .ix-page.lay2 .ix-main:has(.oa) { overflow: auto !important; }
+  .oa { grid-template-columns: 1fr; }
+  .oa .oa-detail { display: none; }
+  .oa-items { contain: none; }
+  .oa-detail { overflow: visible; } .oa-tasks { max-height: none; flex: none; }
+  .oa.oa-open .oa-list { display: none; }
+  .oa.oa-open .oa-detail { display: flex; }
+  .oa-back { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; border: 0; background: none; padding: 0; font: inherit; font-size: 13px; font-weight: 600; color: #ea580c; cursor: pointer; }
+  .oa-act { flex-wrap: wrap; } .oa-act .ix-input { flex: 1 1 100%; }
+}
+`;
+
+/* Overtime: waiting / reviewed list on the left, the picked day on the right with a bar of the day
+   (regular hours green, after 5:00 PM orange) and quick credit buttons. */
+const otMins = (v) => {
+  if (!v) return null;
+  const d = new Date(String(v).includes("T") ? v : String(v).replace(" ", "T") + "+08:00");
+  if (isNaN(d)) return null;
+  const t = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Manila" });
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+};
+const otClock = (v) => (v ? new Date(v).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" }) : "—");
+const otStamp = (v) => {
+  if (!v) return "—";
+  const s = String(v);
+  const d = new Date(s.includes("T") ? s : s.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? "" : "+08:00"));
+  return isNaN(d) ? "—" : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" });
+};
+const otDay = (v, long) => {
+  const d = new Date(String(v).slice(0, 10) + "T00:00:00+08:00");
+  return isNaN(d) ? String(v).slice(0, 10) : d.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", ...(long ? { year: "numeric" } : {}), timeZone: "Asia/Manila" });
+};
+
+export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [], all = [], capOf = (o) => o.ot_minutes, onReview }) {
+  const coord = role !== "supervisor";
+  const [minutes, setMinutes] = useState({});
+  const [remarks, setRemarks] = useState({});
+  const [processing, setProcessing] = useState(null);
+  const decide = async (o, status, credit) => {
+    setProcessing(o.id + status);
+    const ok = await onReview(o, status, credit, remarks[o.id] || "");
+    setProcessing(null);
+    if (ok) { setSel(null); setOpen(false); }
+  };
+  const [view, setView] = useState("waiting");
+  const [sel, setSel] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const sq = q.trim().toLowerCase();
+  const list = (view === "waiting" ? waiting : reviewed).filter((o) => !sq || String(o.intern_name || "").toLowerCase().includes(sq));
+  const cur = list.find((o) => o.id === sel) || list[0] || null;
+  const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
+  const mine = cur && view === "waiting";
+
+  // this month's approved overtime of the same intern
+  const monthTotal = cur ? all.filter((o) => o.user_id === cur.user_id && o.ot_status === "approved"
+    && String(o.date).slice(0, 7) === String(cur.date).slice(0, 7)).reduce((n, o) => n + (Number(o.ot_approved_minutes) || 0), 0) : 0;
+
+  // the day bar: 7:00 AM to whichever is later, 7:00 PM or time out
+  const bar = (o) => {
+    const tin = otMins(o.checked_in_at) ?? 480;
+    const tout = otMins(o.checked_out_at) ?? (1020 + (Number(o.ot_minutes) || 0));
+    const from = Math.min(420, tin), to = Math.max(1140, tout + 30), span = to - from;
+    const pct = (m) => `${((m - from) / span) * 100}%`;
+    return (
+      <div className="ot-day">
+        <div className="ot-bar">
+          <i className="reg" style={{ left: pct(tin), width: `calc(${pct(Math.min(tout, 1020))} - ${pct(tin)})` }} />
+          {tout > 1020 && <i className="ot" style={{ left: pct(1020), width: `calc(${pct(tout)} - ${pct(1020)})` }} />}
+          <span className="ot-five" style={{ left: pct(1020) }} />
+        </div>
+        <div className="ot-ticks">
+          <span style={{ left: pct(tin) }}>In {otClock(o.checked_in_at)}</span>
+          <span style={{ left: pct(1020) }} className="mid">5:00 PM</span>
+          <span style={{ left: pct(tout) }} className="end">Out {otClock(o.checked_out_at)}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const steps = (o) => {
+    const st = o.ot_status;
+    const rej = st === "rejected";
+    const supOk = st === "endorsed" || Number(o.ot_endorsed_minutes) > 0;
+    const hasSup = supOk || !!o.supervisor_id || !!o.ot_endorsed_at || !coord;
+    const supRej = rej && hasSup && !supOk;
+    const L = [
+      { t: "Stayed after 5 PM", s: "done" },
+      !hasSup ? { t: "No supervisor", s: "skip" } : { t: coord ? "Supervisor approved" : "You approve", s: supOk ? "done" : supRej ? "bad" : "now" },
+      { t: coord ? "You decide" : "OJT coordinator", s: st === "approved" ? "done" : rej && !supRej ? "bad" : st === "endorsed" || (!hasSup && st === "pending") ? "now" : "" },
+      { t: "Added to hours", s: st === "approved" ? "done" : "" },
+    ];
+    return (
+      <ol className="oa-steps">
+        {L.map((x, i) => (
+          <li key={i} className={x.s}>
+            <i>{x.s === "done" ? <Icon name="check" size={11} /> : x.s === "bad" ? <Icon name="x" size={11} /> : x.s === "skip" ? "–" : i + 1}</i>
+            <span>{x.s === "bad" ? "Rejected" : x.t}</span>
+          </li>
+        ))}
+      </ol>
+    );
+  };
+
+  const otBadge = (o, long) => o.ot_status === "approved" ? <Badge label={long ? "Approved" : `+${fmtMinutes(o.ot_approved_minutes)}`} type="approved" />
+    : o.ot_status === "endorsed" ? <Badge label={long ? "Sent to coordinator" : `${fmtMinutes(o.ot_endorsed_minutes)} sent`} type="online" />
+    : <Badge label="Rejected" type="rejected" />;
+  const capM = cur ? capOf(cur) : 0;
+  const choice = cur ? minutes[cur.id] : undefined;          // undefined/"" = all, a number, or "other"
+  const credit = choice === undefined || choice === "" ? capM : choice === "other" ? "" : Number(choice);
+  const quick = [capM, 60, 30].filter((m, i, a) => m > 0 && m <= capM && a.indexOf(m) === i);
+
+  return (
+    <div className={open && cur ? "oa ot2 oa-open" : "oa ot2"}>
+      <style>{OA_CSS}</style>
+      <style>{OT2_CSS}</style>
+      <div className="oa-list">
+        <div className="oa-switch" role="tablist" aria-label="Show">
+          <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
+            Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
+            Reviewed <span className="oa-n">{reviewed.length}</span>
+          </button>
+        </div>
+        {(view === "waiting" ? waiting : reviewed).length > 6 && (
+          <div className="oa-search"><Icon name="search" size={14} />
+            <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" /></div>
+        )}
+        <div className="oa-items" role="list">
+          {list.length === 0 ? (
+            <div className="oa-none">
+              <span className="oa-none-ic"><Icon name="check" size={18} /></span>
+              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
+              <small>{sq ? "Try another name." : view === "waiting" ? "No overtime waiting for you." : "Overtime you approve or reject shows here."}</small>
+            </div>
+          ) : list.map((o) => (
+            <button key={o.id} type="button" role="listitem" className={cur && cur.id === o.id ? "oa-item on" : "oa-item"}
+              onClick={() => { setSel(o.id); setOpen(true); }}>
+              <Avatar name={o.intern_name} photo={o.intern_photo} size={34} />
+              <span className="oa-who"><b>{o.intern_name}</b><small>{otDay(o.date)} · out {otClock(o.checked_out_at)}</small></span>
+              {view === "waiting" ? <span className="ot-tag">{fmtMinutes(capOf(o))}</span>
+                : otBadge(o)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="oa-detail">
+        {!cur ? (
+          <div className="oa-blank">
+            <span className="oa-none-ic"><Icon name="clock" size={20} /></span>
+            <b>{view === "waiting" ? "No overtime waiting" : "Nothing to show yet"}</b>
+            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the overtime already checked." : "Time after 5:00 PM shows here once the supervisor approves it."}</small>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+            <div className="oa-head">
+              <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
+              <div className="oa-hn"><b>{cur.intern_name}</b><small>Overtime · {otDay(cur.date, true)}</small></div>
+              {view === "waiting" ? (coord && cur.ot_status === "pending" ? <Badge label="No supervisor" type="pending" /> : <Badge label="Waiting for you" type="pending" />)
+                : otBadge(cur, true)}
+            </div>
+            {bar(cur)}
+            <div className="oa-kv">
+              <div><small>After 5:00 PM</small><b>{fmtMinutes(cur.ot_minutes)}</b></div>
+              {coord ? (
+                <div><small>Supervisor approved</small><b>{Number(cur.ot_endorsed_minutes) > 0 ? fmtMinutes(cur.ot_endorsed_minutes) : cur.supervisor_id ? "—" : "No supervisor"}</b></div>
+              ) : (
+                <div><small>{view === "waiting" ? "Time out" : "You approved"}</small><b>{view === "waiting" ? otClock(cur.checked_out_at) : Number(cur.ot_endorsed_minutes) > 0 ? fmtMinutes(cur.ot_endorsed_minutes) : "—"}</b></div>
+              )}
+              <div><small>{view === "waiting" ? "This month so far" : "Credited"}</small><b>{view === "waiting" ? (monthTotal ? fmtMinutes(monthTotal) : "None yet") : cur.ot_status === "approved" ? fmtMinutes(cur.ot_approved_minutes) : cur.ot_status === "endorsed" ? "Not yet" : "—"}</b></div>
+              <div><small>{view === "waiting" ? (coord ? "Supervisor" : "Sent") : "Reviewed"}</small><b>{view === "waiting" ? (coord ? (cur.endorser_name || cur.supervisor_name || "None assigned") : otStamp(cur.created_at || cur.checked_out_at)) : otStamp(cur.ot_reviewed_at || cur.ot_endorsed_at)}</b></div>
+            </div>
+            {coord && cur.ot_endorse_remarks && (
+              <div className="oa-done ok"><Icon name="check" size={14} /><span>Supervisor's note: <em>{cur.ot_endorse_remarks}</em></span></div>
+            )}
+            {steps(cur)}
+            <OaHistory name={cur.intern_name}
+              rows={[...waiting, ...reviewed].filter((o) => o.id !== cur.id && o.user_id === cur.user_id)
+                .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 12)
+                .map((o) => ({ id: o.id, when: otDay(o.date), text: `${fmtMinutes(o.ot_minutes)} after 5 PM · out ${otClock(o.checked_out_at)}`,
+                  badge: waiting.some((x) => x.id === o.id) ? <Badge label="Waiting" type="pending" /> : otBadge(o) }))}
+              onPick={(r) => { const w = waiting.some((x) => x.id === r.id); setView(w ? "waiting" : "reviewed"); setQ(""); setSel(r.id); }} />
+            {mine ? (
+              <div className="ot-act">
+                <div className="ot-credit">
+                  <span className="ot-cl">Credit</span>
+                  {quick.map((m, i) => (
+                    <button key={m} type="button" className={choice !== "other" && credit === m ? "on" : ""}
+                      onClick={() => setMinutes((mm) => ({ ...mm, [cur.id]: i === 0 ? "" : m }))}>
+                      {i === 0 ? `All ${fmtMinutes(m)}` : fmtMinutes(m)}
+                    </button>
+                  ))}
+                  <button type="button" className={choice === "other" || (choice !== undefined && choice !== "" && !quick.includes(Number(choice))) ? "on" : ""}
+                    onClick={() => setMinutes((mm) => ({ ...mm, [cur.id]: "other" }))}>Other</button>
+                  {(choice === "other" || (choice !== undefined && choice !== "" && !quick.includes(Number(choice)))) && (
+                    <input type="number" className="ix-input ot-min" min={1} max={capM} placeholder="minutes" autoFocus
+                      aria-label="Minutes to credit" value={choice === "other" ? "" : choice}
+                      onChange={(e) => setMinutes((mm) => ({ ...mm, [cur.id]: e.target.value === "" ? "other" : e.target.value }))} />
+                  )}
+                  <small className="ot-hint">{coord ? `Up to ${fmtMinutes(capM)}. Added on top of the 8 official hours.` : `Up to ${fmtMinutes(capM)}. The OJT coordinator gives the final decision.`}</small>
+                </div>
+                <div className="oa-act">
+                  <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[cur.id] || ""}
+                    onChange={(e) => setRemarks((r) => ({ ...r, [cur.id]: e.target.value }))} />
+                  <button className="ix-b danger" onClick={() => decide(cur, "rejected", null)} disabled={!!processing}>
+                    {processing === cur.id + "rejected" ? "..." : "Reject"}</button>
+                  <button className="ix-b ok" onClick={() => decide(cur, "approved", credit)} disabled={!!processing || !credit}>
+                    {processing === cur.id + "approved" ? "..." : `Approve${credit ? " " + fmtMinutes(credit) : ""}`}</button>
+                </div>
+              </div>
+            ) : (
+              <div className={cur.ot_status === "rejected" ? "oa-done bad" : cur.ot_status === "endorsed" ? "oa-done" : "oa-done ok"}>
+                <Icon name={cur.ot_status === "rejected" ? "x" : cur.ot_status === "endorsed" ? "clock" : "check"} size={14} />
+                <span>{cur.ot_status === "rejected" ? "Rejected. No overtime added." : cur.ot_status === "endorsed" ? `You approved ${fmtMinutes(cur.ot_endorsed_minutes)}. Waiting for the OJT coordinator.` : `Approved. ${fmtMinutes(cur.ot_approved_minutes)} added to that day.`}
+                  {(cur.ot_remarks || cur.ot_endorse_remarks) ? <> Remarks: <em>{cur.ot_remarks || cur.ot_endorse_remarks}</em></> : null}
+                  {cur.reviewer_name ? <small> · {cur.reviewer_name}</small> : null}</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const OT2_CSS = `
+.ix-page.lay2 .ix-main:has(.ot2) .grp-body { flex: 1 1 auto !important; min-height: 0; display: flex; flex-direction: column; }
+.ix-page.lay2 .ix-main:has(.ot2) .grp-body > * { flex: none; }
+.ot-tag { flex: none; font-size: 11.5px; font-weight: 700; color: #b45309; background: #fff4e5; padding: 3px 8px; border-radius: 6px; }
+.ot-day { flex: none; padding: 20px 2px 0; }
+.ot-bar { position: relative; height: 16px; border-radius: 8px; background: #eef0f4; }
+.ot-bar i { position: absolute; top: 0; bottom: 0; }
+.ot-bar i.reg { background: #86d0a0; border-radius: 8px 0 0 8px; }
+.ot-bar i.ot { background: #f59e0b; border-radius: 0 8px 8px 0; }
+.ot-five { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: #334155; border-radius: 1px; }
+.ot-ticks { position: relative; height: 18px; margin-top: 6px; font-size: 11.5px; color: #64748b; }
+.ot-ticks span { position: absolute; top: 0; white-space: nowrap; transform: translateX(0); }
+.ot-ticks span.mid { top: -46px; transform: translateX(-50%); font-weight: 600; color: #334155; }
+.ot-ticks span.end { transform: translateX(-100%); color: #b45309; font-weight: 600; }
+.ot-act { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px solid #eef0f4; flex: none; }
+.ot-act .oa-act { padding-top: 0; border-top: 0; }
+.ot-credit { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ot-cl { font-size: 12.5px; font-weight: 600; color: #475569; margin-right: 4px; }
+.ot-credit > button { border: 1px solid #e2e8f0; background: #fff; font: inherit; font-size: 12.5px; font-weight: 600; color: #334155; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+.ot-credit > button:hover { border-color: #fdba74; }
+.ot-credit > button.on { border-color: #ea580c; background: #fff4ee; color: #c2410c; }
+.ot-credit .ot-min { width: 100px; padding: 6px 10px; }
+.ot-hint { font-size: 12px; color: #94a3b8; margin-left: 6px; }
+@media (max-width: 760px) {
+  .ix-page.lay2 .ix-main:has(.ot2) .grp-body, .ix-page.lay2 .ix-main:has(.ot2) .grp-body > .oa { flex: none !important; }
+  .ot-hint { flex-basis: 100%; margin-left: 0; }
+}
+`;
+
+
+
 /* Monitor Interns: a compact list on the left, the selected intern's details on the right
    (like an inbox). On phones the list shows first; tapping an intern opens the details. */
 export function InternMonitor({ interns, records, loading, onRefresh, recordsPath = null, canViewFiles = false }) {
@@ -1680,78 +2310,135 @@ export function AnnouncementManager({ user }) {
     } finally { setBusy(null); }
   };
 
-  const msgCell = (t, b) => (
-    <div className="ann-cell">
-      <strong>{t}</strong>
-      {b && <span>{b}</span>}
-    </div>
-  );
+  const [compose, setCompose] = useState(false);   // the "New announcement" panel
+  const [q, setQ] = useState("");
+  const [openId, setOpenId] = useState(null);      // the announcement opened (full text)
+  const list = (view === "posted" ? items : removed)
+    .filter((a) => !q.trim() || `${a.title} ${a.body}`.toLowerCase().includes(q.trim().toLowerCase()))
+    .sort((x, y) => String((view === "removed" ? y.removed_at : y.created_at) || "").localeCompare(String((view === "removed" ? x.removed_at : x.created_at) || "")));   // newest first
+  const postAndClose = async (e) => { await post(e); };
+  useEffect(() => { if (msg?.type === "success" && compose) setCompose(false); /* eslint-disable-next-line */ }, [msg]);
 
   return (
     <>
       <PageHeader title="Announcements" sub="Post updates for all interns. They get a notification right away." />
       <Msg msg={msg} />
-      <div className="mon-bar">
-        <button type="button" className={view === "posted" ? "mon-chip on" : "mon-chip"} onClick={() => setView("posted")}>Posted · {items.length}</button>
-        <button type="button" className={view === "removed" ? "mon-chip on" : "mon-chip"} onClick={() => setView("removed")}>Removed · {removed.length}</button>
+      <div className="an-bar">
+        <div className="an-tabs">
+          <button type="button" className={view === "posted" ? "mon-chip on" : "mon-chip"} onClick={() => setView("posted")}>Posted · {items.length}</button>
+          <button type="button" className={view === "removed" ? "mon-chip on" : "mon-chip"} onClick={() => setView("removed")}>Removed · {removed.length}</button>
+        </div>
+        <label className="an-search"><Icon name="search" size={15} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search announcements" aria-label="Search announcements" /></label>
+        <button type="button" className="ix-b primary an-new" onClick={() => { setMsg(null); setCompose(true); }}>
+          <Icon name="plus" size={15} /> New announcement</button>
       </div>
+
       {loading ? <Spinner /> : (
-        <Inbox
-          key={view}
-          items={view === "posted" ? [{ id: "__new" }, ...items] : removed}
-          keyOf={(a) => a.id}
-          emptyTitle="No removed announcements" emptySub="Announcements you remove are kept here."
-          row={(a) => a.id === "__new"
-            ? { icon: "plus", name: "New announcement", sub: "Write and post an update", tag: null, meta: "" }
-            : { icon: "bell", tone: view === "removed" ? "rejected" : "", name: a.title, sub: a.body,
-                tag: <small className="ann-date">{fmtDay(view === "removed" ? a.removed_at : a.created_at)}</small>, meta: a.author || "OJT office" }}
-          detail={(a) => a.id === "__new" ? (
-            <form onSubmit={post} className="ann-compose">
-              <div className="ibx-head"><span className="ibx-ic big"><Icon name="send" size={20} /></span>
-                <div><b>New announcement</b><small>Every intern gets a notification right away.</small></div></div>
-              <div className="ix-field">
-                <label htmlFor="ann-title">Title</label>
-                <input id="ann-title" type="text" required maxLength={150} value={title}
-                  placeholder="e.g. Orientation moved to Friday" onChange={(e) => setTitle(e.target.value)} />
-              </div>
-              <div className="ix-field ann-body-field">
-                <label htmlFor="ann-body">Message</label>
-                <textarea id="ann-body" rows={9} required maxLength={2000} value={body}
-                  placeholder="Write the details interns need to know..." onChange={(e) => setBody(e.target.value)} />
-              </div>
-              <div className="ibx-act">
-                <small className="ann-count">{body.length}/2000</small>
-                <span style={{ flex: 1 }} />
-                <button type="submit" className="ix-b primary" disabled={saving}>
-                  <Icon name="send" size={15} /> {saving ? "Posting..." : "Post announcement"}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="ibx-head"><span className={`ibx-ic big ${view === "removed" ? "rejected" : ""}`}><Icon name="bell" size={20} /></span>
-                <div><b>{a.title}</b><small>{view === "removed"
-                  ? `Posted by ${a.author || "OJT office"} · ${fmtDay(a.posted_at)} · removed by ${a.removed_by_name || "—"} · ${fmtDay(a.removed_at)}`
-                  : `Posted by ${a.author || "OJT office"} · ${fmtDay(a.created_at)}`}</small></div></div>
-              <div className="ibx-sec"><span>Message</span><p>{a.body}</p></div>
-              <div className="ibx-act">
-                <span className="ann-count">{view === "removed" ? "Interns can't see this anymore." : "Interns see this on their dashboard."}</span>
-                <span style={{ flex: 1 }} />
-                {view === "posted" ? (
-                  <button type="button" className="ix-b danger" disabled={busy === `p${a.id}`} onClick={() => remove(a)}>
-                    <Icon name="trash" size={14} /> {busy === `p${a.id}` ? "..." : "Remove"}</button>
-                ) : (
-                  <button type="button" className="ix-b danger" disabled={busy === `h${a.id}`} onClick={() => purge(a)}>
-                    <Icon name="trash" size={14} /> {busy === `h${a.id}` ? "..." : "Delete for good"}</button>
-                )}
-              </div>
-            </>
-          )}
-        />
+        <div className="ix-card flush an-feed">
+          {list.length === 0 ? (
+            <div className="an-empty"><Icon name="bell" size={22} />
+              <b>{q ? "Nothing matches your search." : view === "posted" ? "No announcements yet." : "No removed announcements."}</b>
+              <small>{view === "posted" && !q ? "Click “New announcement” to post one. Every intern gets a notification." : view === "removed" ? "Announcements you remove are kept here." : ""}</small>
+            </div>
+          ) : list.map((a) => {
+            const isOpen = openId === a.id;
+            const long = String(a.body || "").length > 220;
+            return (
+              <article key={a.id} className={`an-item${view === "removed" ? " gone" : ""}`}>
+                <span className="an-ic"><Icon name="bell" size={16} /></span>
+                <div className="an-main">
+                  <div className="an-top">
+                    <b>{a.title}</b>
+                    <small>{fmtDay(view === "removed" ? a.removed_at : a.created_at)}</small>
+                  </div>
+                  <p className={isOpen ? "open" : ""}>{a.body}</p>
+                  <div className="an-meta">
+                    <span>{view === "removed"
+                      ? `Posted by ${a.author || "OJT office"} · removed by ${a.removed_by_name || "—"}`
+                      : `Posted by ${a.author || "OJT office"} · to all interns`}</span>
+                    {long && <button type="button" className="an-link" onClick={() => setOpenId(isOpen ? null : a.id)}>{isOpen ? "Show less" : "Read more"}</button>}
+                    <span style={{ flex: 1 }} />
+                    {view === "posted" ? (
+                      <button type="button" className="an-link danger" disabled={busy === `p${a.id}`} onClick={() => remove(a)}>
+                        <Icon name="trash" size={13} /> {busy === `p${a.id}` ? "..." : "Remove"}</button>
+                    ) : (
+                      <button type="button" className="an-link danger" disabled={busy === `h${a.id}`} onClick={() => purge(a)}>
+                        <Icon name="trash" size={13} /> {busy === `h${a.id}` ? "..." : "Delete for good"}</button>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
       )}
+
+      {compose && (
+        <Drawer inPage title="New announcement" kicker="Announcement" icon="send" onClose={() => setCompose(false)}
+          footer={(close) => (<>
+            <button type="button" className="ix-b ghost" onClick={close} disabled={saving}>Cancel</button>
+            <button type="submit" form="ann-form" className="ix-b primary" disabled={saving}><Icon name="send" size={15} /> {saving ? "Posting..." : "Post"}</button>
+          </>)}>
+          <form id="ann-form" onSubmit={postAndClose} className="ix-form an-form">
+            {msg?.type === "error" && <Msg msg={msg} />}
+            <div className="ix-field">
+              <label htmlFor="ann-title">Title</label>
+              <input id="ann-title" type="text" required maxLength={150} value={title} autoFocus
+                placeholder="e.g. Orientation moved to Friday" onChange={(e) => setTitle(e.target.value)} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="ann-body">Message <span className="ix-muted">· {body.length}/2000</span></label>
+              <textarea id="ann-body" rows={7} required maxLength={2000} value={body}
+                placeholder="Write the details interns need to know..." onChange={(e) => setBody(e.target.value)} />
+            </div>
+            <div className="an-preview">
+              <small>Preview: how interns see it</small>
+              <b>{title.trim() || "Your title"}</b>
+              <p>{body.trim() || "Your message shows here."}</p>
+            </div>
+            <small className="an-note">Every intern gets a notification and sees it on their dashboard.</small>
+          </form>
+        </Drawer>
+      )}
+      <style>{AN_CSS}</style>
     </>
   );
 }
+
+const AN_CSS = `
+.ix-page .an-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.ix-page .an-tabs { display: flex; gap: 6px; }
+.ix-page .an-search { margin-left: auto; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid #e3e5ea; border-radius: 10px; background: #fff; color: #9ca3af; width: 260px; box-sizing: border-box; }
+.ix-page .an-search input { border: 0 !important; outline: none; background: transparent !important; font: inherit; font-size: 13px; color: #111827; width: 100%; padding: 0 !important; height: auto !important; box-shadow: none !important; }
+.ix-page .an-new { height: 36px !important; }
+.ix-page .ix-card.an-feed { margin: 0 !important; padding: 0 !important; overflow: hidden; }
+.ix-page .an-item { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 14px; padding: 16px 18px; border-bottom: 1px solid #f1f2f4; }
+.ix-page .an-item:last-child { border-bottom: 0; }
+.ix-page .an-item.gone { opacity: .7; }
+.ix-page .an-ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: #fff3ec; color: #e8582a; }
+.ix-page .an-item.gone .an-ic { background: #f3f4f6; color: #9ca3af; }
+.ix-page .an-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ix-page .an-top { display: flex; align-items: baseline; gap: 10px; }
+.ix-page .an-top b { font-size: 14.5px; font-weight: 600; color: #111827; flex: 1; min-width: 0; }
+.ix-page .an-top small { font-size: 12px; color: #9ca3af; white-space: nowrap; }
+.ix-page .an-main p { margin: 0; font-size: 13px; line-height: 1.55; color: #4b5563; white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ix-page .an-main p.open { display: block; -webkit-line-clamp: unset; }
+.ix-page .an-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: #8b919b; }
+.ix-page .an-link { display: inline-flex; align-items: center; gap: 4px; padding: 0 !important; height: auto !important; min-height: 0 !important; border: 0; background: none;
+  font: inherit; font-size: 12px; font-weight: 600; color: #c2410c; cursor: pointer; }
+.ix-page .an-link.danger { color: #b91c1c; }
+.ix-page .an-link:hover { text-decoration: underline; }
+.ix-page .an-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 56px 16px; text-align: center; color: #9ca3af; }
+.ix-page .an-empty b { color: #374151; font-size: 14px; } .ix-page .an-empty small { font-size: 12.5px; }
+.ix-page .an-form { display: flex; flex-direction: column; gap: 14px; }
+.ix-page .an-preview { padding: 12px 14px; border-radius: 12px; background: #fafafb; border: 1px solid #f1f2f4; display: flex; flex-direction: column; gap: 3px; }
+.ix-page .an-preview small { font-size: 11px; color: #8b919b; }
+.ix-page .an-preview b { font-size: 13.5px; color: #111827; } .ix-page .an-preview p { margin: 0; font-size: 12.5px; color: #4b5563; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow: auto; }
+.ix-page .an-note { font-size: 12px; color: #6b7280; }
+@media (max-width: 700px) { .ix-page .an-search { width: 100%; margin-left: 0; order: 3; } .ix-page .an-new { margin-left: auto; } }
+`;
 
 /* ───────────────────────── Shell (navbar + sidebar) ───────────────────────── */
 const ROLE_LABEL = {
@@ -2480,9 +3167,9 @@ export const lay3 = `
   .ix-page.lay2 .ix-side .ix-side-subitem.on::before { background: var(--l3-o) !important; }
   .ix-page.lay2 .ix-side .ix-side-sep { background: var(--l3-line) !important; margin: 10px 24px !important; }
   .ix-page.lay2 .ix-side .ix-side-section { color: #8b919b !important; font-size: 11px !important; font-weight: 600 !important; letter-spacing: .08em !important; padding-left: 26px !important; }
-  .ix-page.lay2 .ix-side .ix-side-badge { background: #fff !important; color: var(--l3-ink) !important; border: 1px solid var(--l3-line); font-weight: 700; }
-  .ix-page.lay2 .ix-side .ix-side-badge.sm { background: var(--l3-o) !important; color: #fff !important; border: 0; }
-  .ix-page.lay2 .ix-side:not(.open) .ix-side-badge { background: var(--l3-o) !important; color: #fff !important; border: 0; }
+  /* waiting counts in the sidebar: red with a white number */
+  .ix-page.lay2 .ix-side .ix-side-badge, .ix-page.lay2 .ix-side .ix-side-badge.sm, .ix-page.lay2 .ix-side:not(.open) .ix-side-badge {
+    background: #ef4444 !important; color: #fff !important; border: 0 !important; font-weight: 700; box-shadow: 0 1px 2px rgba(239,68,68,.35); }
   .ix-page.lay2 .ix-sb-bottom { border-top: 1px solid var(--l3-line) !important; margin: 0 12px 12px; padding: 10px 6px 0 14px !important; background: transparent !important; }
   .ix-page.lay2 .ix-sb-foot { color: #8b919b !important; }
   .ix-page.lay2 .ix-sb-collapse { background: #fff !important; border: 1px solid var(--l3-line) !important; color: var(--l3-mut) !important; }
@@ -2569,18 +3256,38 @@ export const lay3 = `
     .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .adm-duty-empty { flex: 1 1 auto !important; min-height: 0 !important; height: auto !important; padding: 18px 12px !important; display: flex !important; flex-direction: column; align-items: center; justify-content: center !important; }
     .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .ann-list { flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important; }
     /* the announcements card never makes its row taller: it takes the row's height and scrolls inside */
-    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:nth-child(2):last-child { height: 0 !important; min-height: 100% !important; overflow: hidden !important; }
     /* a roomier calendar again */
     .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-grid { grid-auto-rows: 29px !important; row-gap: 2px !important; }
     .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-day { min-height: 29px !important; height: 29px !important; font-size: 12.5px !important; }
-    /* right column: one stack across both rows, a tall calendar on top and announcements below it.
-       Its bottom still lines up with the other columns, and it never makes the page taller. */
-    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side { display: flex !important; flex-direction: column !important; gap: 12px !important;
-      grid-column: 3 !important; grid-row: 1 / 3 !important; height: 0 !important; min-height: 100% !important; overflow: visible !important; }
-    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .ix-card.adm-cal { flex: 0 0 auto !important; }
-    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:nth-child(2):last-child { flex: 1 1 0 !important; height: auto !important; min-height: 150px !important; }
-    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-grid { grid-auto-rows: 40px !important; row-gap: 4px !important; }
-    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-day { min-height: 40px !important; height: 40px !important; font-size: 13.5px !important; }
+    /* two shared rows across all three columns: every card in a row ends on the same line.
+       Rows grow with their content (nothing is cut off); a column with one card spans both rows. */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right { grid-template-rows: auto auto !important; align-items: stretch !important; }
+    /* the dashboard fills the window when there is room (full screen: no empty space at the bottom),
+       and grows past it (the page scrolls) when the cards need more height */
+    .ix-page.lay2 .ix-main:has(.dbx-grid.has-left.has-right) { display: flex !important; flex-direction: column !important; overflow-y: auto !important; }
+    .ix-page.lay2 .ix-main:has(.dbx-grid.has-left.has-right) > .ix-content { flex: 1 0 auto !important; display: flex !important; flex-direction: column !important; }
+    .ix-page.lay2 .ix-content > .dbx:has(> .dbx-grid.has-left.has-right) { flex: 1 0 auto !important; display: flex !important; flex-direction: column !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right { flex: 1 0 auto !important; align-content: stretch !important; }
+    /* the announcements box is never shorter than its text */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .adm-duty-empty { min-height: fit-content !important; height: auto !important; overflow: visible !important; flex: 1 0 auto !important;
+      display: flex !important; flex-direction: column; align-items: center; justify-content: center !important; text-align: center; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child { min-height: fit-content !important; height: auto !important; overflow: visible !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col { display: contents !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-left > * { grid-column: 1 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-mid > * { grid-column: 2 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > * { grid-column: 3 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col > :first-child { grid-row: 1 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col > :nth-child(2) { grid-row: 2 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col > :only-child { grid-row: 1 / 3 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col > * { margin: 0 !important; min-height: 0; height: auto !important; display: flex; flex-direction: column; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .ix-card.adm-cal { flex: none !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child { height: auto !important; min-height: 0 !important; overflow: visible !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .ann-list { flex: 1 1 auto !important; overflow: visible !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .adm-duty-empty { flex: 1 1 auto !important; }
+    /* an empty list fills its card (centered message) */
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right .dbx-card > :is(.dbx-empty, .ix-empty, [class*="empty"]):last-child { flex: 1 1 auto; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-grid { grid-auto-rows: 32px !important; row-gap: 3px !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-day { min-height: 32px !important; height: 32px !important; font-size: 13px !important; }
   }
 
   /* phones: no panel frame (the screen is the panel); the menu button comes back */
@@ -3324,7 +4031,7 @@ export const uiUnify = `
     .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-day { min-height: 33px !important; height: 33px !important; font-size: 13px !important; }
   }
   @media (min-width: 1251px) and (min-height: 960px) {
-    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-grid { grid-auto-rows: 40px !important; row-gap: 4px !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-grid { grid-auto-rows: 32px !important; row-gap: 3px !important; }
     .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side .adm-cal-day { min-height: 40px !important; height: 40px !important; }
     /* calendar and announcements share the column; the calendar never gets smaller than the announcements */
     /* the calendar keeps its own size; the announcements take whatever is left (they never get cut) */

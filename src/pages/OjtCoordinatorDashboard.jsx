@@ -7,7 +7,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   navWithTabs,
   Spinner, PageHeader, Badge, Table, Section, Msg, Avatar, Icon, Inbox, Empty,
-  InternMonitor, AnnouncementManager, AnnouncementBoard, todayManila, fmtTime, greeting,
+  InternMonitor, AnnouncementManager, AnnouncementBoard, OnlineReview, OvertimeBoard, OA_CSS, calcHours, requiredHoursFor, todayManila, fmtTime, greeting,
   PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, SCHEDULE, fmtMinutes, Modal, liveRefresh,
 } from "../components/DashKit.jsx";
 import NfcCards from "../components/NfcCards.jsx";
@@ -52,7 +52,8 @@ const GROUPS = {
     tabs: [
       { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of all interns." },
       { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete attendance log of every intern." },
-      { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Supervisors' evaluations of the interns. You can also upload a signed paper form a supervisor handed in." },
+      // Evaluation tab hidden for now (waiting for the OJT coordinator's answer on who submits the evaluation form):
+      // { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Upload the signed paper evaluation form of each intern." },
     ],
   },
   "/coordinator/reports": {
@@ -189,7 +190,7 @@ export default function OjtCoordinatorDashboard() {
       )}
       {path === "/coordinator/announcements" && <AnnouncementManager user={user} />}
       {path === "/coordinator/calendar" && <Calendar />}
-      {path === "/coordinator/supervisors" && <AssignSupervisors interns={interns} supervisors={supervisors} onRefresh={fetchAll} />}
+      {path === "/coordinator/supervisors" && <AssignSupervisors interns={interns} supervisors={supervisors} records={records} online={pending} overtime={overtime} onRefresh={fetchAll} />}
       {path === "/coordinator/profile" && <AdminProfile user={user} />}
     </Shell>
   );
@@ -289,14 +290,17 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, records, interns, loa
 
 /* ───────────────────────── Assign HTE supervisors ─────────────────────────
    From the OJT coordinator: she assigns each intern's supervisor. Interns without one show first. */
-function AssignSupervisors({ interns, supervisors, onRefresh }) {
+function AssignSupervisors({ interns, supervisors, records = [], online = [], overtime = [], onRefresh }) {
   const [q, setQ] = useState("");
-  const [choice, setChoice] = useState({});         // intern id -> picked supervisor id (before saving)
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
   const [sel, setSel] = useState(null);             // "none" (interns without a supervisor) or a supervisor id
-  const [showDetail, setShowDetail] = useState(false);
+  const [open, setOpen] = useState(false);          // phones: the details replace the list
+  const [moving, setMoving] = useState(null);       // intern id whose "Move" picker is open
+  const [movePick, setMovePick] = useState("");
+  const [adding, setAdding] = useState(false);
   const [addPick, setAddPick] = useState("");
+  const today = todayManila();
 
   const noSup = interns.filter((i) => !i.supervisor_id);
   const sq = q.trim().toLowerCase();
@@ -311,14 +315,17 @@ function AssignSupervisors({ interns, supervisors, onRefresh }) {
   };
   const supById = (sid) => supervisors.find((x) => String(x.id) === String(sid));
   const mismatchOf = (sid) => interns.filter((i) => String(i.supervisor_id) === String(sid) && sameHte(i, supById(sid)) === false).length;
-  const matchBadge = (i, sv) => {
-    const m = sameHte(i, sv);
-    return m === true ? <Badge label="Same HTE" type="approved" /> : m === false ? <Badge label="Different HTE" type="pending" /> : null;
-  };
 
-  const save = async (intern, sid) => {
-    const picked = sid !== undefined ? sid : choice[intern.id];
-    if (picked === undefined) return;
+  // live facts about an intern
+  const recsOf = (id) => records.filter((r) => r.user_id === id);
+  const onDuty = (id) => records.some((r) => r.user_id === id && r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+  const tappedToday = (id) => records.some((r) => r.user_id === id && r.date === today);
+  // requests still waiting for this supervisor (online days + overtime)
+  const waitingFor = (sid) => online.filter((o) => o.status === "pending" && String(o.supervisor_id) === String(sid)).length
+    + overtime.filter((o) => o.ot_status === "pending" && String(o.supervisor_id) === String(sid)).length;
+
+  const save = async (intern, picked) => {
+    if (!intern) return;
     setBusy(intern.id); setMsg(null);
     try {
       const res = await fetch(`${API}/coordinator/interns/${intern.id}/supervisor`, {
@@ -329,8 +336,7 @@ function AssignSupervisors({ interns, supervisors, onRefresh }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || "Something went wrong.");
       setMsg({ type: "success", text: data.message });
-      setChoice((c) => { const n = { ...c }; delete n[intern.id]; return n; });
-      setAddPick("");
+      setMoving(null); setMovePick(""); setAddPick(""); setAdding(false);
       onRefresh();
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
@@ -339,28 +345,46 @@ function AssignSupervisors({ interns, supervisors, onRefresh }) {
     }
   };
 
-  // one intern with a supervisor picker (supervisors from the intern's own HTE first, marked ✓)
-  const pickRow = (i) => {
-    const current = i.supervisor_id ? String(i.supervisor_id) : "";
-    const picked = choice[i.id] !== undefined ? choice[i.id] : current;
-    const changed = choice[i.id] !== undefined && choice[i.id] !== current;
+  // supervisors for a picker: the intern's own HTE first (marked ✓)
+  const supOptions = (i) => [...supervisors]
+    .sort((a, b) => (sameHte(i, b) === true) - (sameHte(i, a) === true) || (a.name || "").localeCompare(b.name || ""))
+    .map((x) => (
+      <option key={x.id} value={String(x.id)}>
+        {sameHte(i, x) === true ? "✓ " : ""}{x.name}{x.placement ? ` — ${x.placement}` : ""} ({countOf(x.id)})
+      </option>
+    ));
+
+  // one intern: status, hours and a "Move" (or "Assign") link that opens a small picker under the row
+  const internRow = (i, label = "Move") => {
+    const hrs = calcHours(recsOf(i.id));
+    const req = requiredHoursFor(i.program);
+    const duty = onDuty(i.id);
+    const diff = i.supervisor_id && sameHte(i, supById(i.supervisor_id)) === false;
+    const isMoving = moving === i.id;
     return (
-      <li key={i.id} className="as-row">
-        <Avatar name={i.name} photo={i.photo} size={30} />
-        <span className="as-who"><strong>{i.name}</strong><small>{[i.student_id, i.placement || "No placement"].filter(Boolean).join(" · ")}</small></span>
-        <select className="ix-select" value={picked} aria-label={`Supervisor of ${i.name}`}
-          onChange={(e) => setChoice((c) => ({ ...c, [i.id]: e.target.value }))}>
-          <option value="">— No supervisor —</option>
-          {[...supervisors].sort((a, b) => (sameHte(i, b) === true) - (sameHte(i, a) === true) || (a.name || "").localeCompare(b.name || "")).map((x) => (
-            <option key={x.id} value={String(x.id)}>
-              {sameHte(i, x) === true ? "✓ " : ""}{x.name}{x.placement ? ` — ${x.placement}` : ""} ({countOf(x.id)})
-            </option>
-          ))}
-        </select>
-        <span className="as-badge">{picked ? matchBadge(i, supById(picked)) : <Badge label="Not assigned" type="pending" />}</span>
-        <button type="button" className="ix-b primary sm" disabled={!changed || busy !== null} onClick={() => save(i)}>
-          {busy === i.id ? "Saving..." : "Save"}
-        </button>
+      <li key={i.id} className={isMoving ? "sv2-row moving" : "sv2-row"}>
+        <div className="sv2-main">
+          <Avatar name={i.name} photo={i.photo} size={36} />
+          <span className="sv2-who"><b>{i.name}</b>
+            <small>{[i.student_id, i.program, !i.supervisor_id || diff ? (i.placement || "No placement") : null].filter(Boolean).join(" · ")}</small></span>
+          {diff && <span className="sv2-tag warn" title="The intern's placement is not this supervisor's HTE">Different HTE</span>}
+          <span className={duty ? "sv2-tag in" : tappedToday(i.id) ? "sv2-tag done" : "sv2-tag out"}>{duty ? "On duty" : tappedToday(i.id) ? "Timed out" : "Not in yet"}</span>
+          <span className="sv2-hrs"><b>{hrs}h</b> / {req}h</span>
+          <button type="button" className="sv2-move" onClick={() => { setMoving(isMoving ? null : i.id); setMovePick(i.supervisor_id ? String(i.supervisor_id) : ""); }}>
+            {isMoving ? "Cancel" : `${label} ›`}
+          </button>
+        </div>
+        {isMoving && (
+          <div className="sv2-pick">
+            <span>{i.supervisor_id ? "Move to" : "Assign to"}</span>
+            <select className="ix-select" value={movePick} onChange={(e) => setMovePick(e.target.value)} aria-label={`Supervisor of ${i.name}`}>
+              <option value="">— No supervisor —</option>
+              {supOptions(i)}
+            </select>
+            <button type="button" className="ix-b primary sm" disabled={busy !== null || movePick === (i.supervisor_id ? String(i.supervisor_id) : "")}
+              onClick={() => save(i, movePick)}>{busy === i.id ? "Saving..." : "Save"}</button>
+          </div>
+        )}
       </li>
     );
   };
@@ -371,7 +395,7 @@ function AssignSupervisors({ interns, supervisors, onRefresh }) {
   const curKey = sel ?? (sq && supsShown.length === 1 ? String(supsShown[0].id) : null);
   const cur = curKey && curKey !== "none" ? supById(curKey) : null;
   const filt = (list) => list.filter((i) => !sq || `${i.name} ${i.email} ${i.student_id || ""} ${i.placement || ""}`.toLowerCase().includes(sq));
-  const open = (k) => { setSel(k); setShowDetail(true); setAddPick(""); };
+  const pick = (k) => { setSel(k); setOpen(true); setMoving(null); setAdding(false); setAddPick(""); };
 
   return (
     <>
@@ -382,89 +406,159 @@ function AssignSupervisors({ interns, supervisors, onRefresh }) {
           <Icon name="warn" size={18} /> There are no supervisor accounts yet. Ask the admin to create them under Accounts.
         </div>
       )}
-      <div className={showDetail ? "mon show-detail" : "mon"}>
-        <div className="mon-bar">
-          <div className="ix-search mon-search">
-            <Icon name="search" size={15} />
-            <input type="text" placeholder="Search supervisor, HTE or intern..." value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <span className="mon-chip on">{supervisors.length} supervisors</span>
-          <span className={noSup.length ? "mon-chip as-warn" : "mon-chip"}>{noSup.length} without a supervisor</span>
-        </div>
-
-        <div className="mon-split ibx-split">
-          <div className="mon-list" role="list">
-            <button type="button" role="listitem" className={curKey === "none" ? "mon-item on" : "mon-item"} onClick={() => open("none")}>
-              <span className="as-none-ic"><Icon name="warn" size={16} /></span>
-              <span className="mon-who"><b>Without a supervisor</b><small>They can't send time corrections or work arrangement requests</small></span>
-              <span className="mon-right"><span className={noSup.length ? "as-sup-n warn" : "as-sup-n none"}>{noSup.length}</span></span>
+      <div className={open && curKey ? "oa sv2 oa-open" : "oa sv2"}>
+        <style>{OA_CSS}</style>
+        <style>{SV2_CSS}</style>
+        {/* supervisors */}
+        <div className="oa-list">
+          <div className="oa-search sv2-search"><Icon name="search" size={14} />
+            <input type="search" placeholder="Search supervisor, HTE or intern" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" /></div>
+          <div className="oa-items" role="list">
+            <button type="button" role="listitem" className={curKey === "none" ? "oa-item on sv2-none" : "oa-item sv2-none"} onClick={() => pick("none")}>
+              <span className={noSup.length ? "sv2-warn-ic hot" : "sv2-warn-ic"}><Icon name={noSup.length ? "warn" : "check"} size={16} /></span>
+              <span className="oa-who"><b>Without a supervisor</b><small>{noSup.length ? "Can't send corrections or WFH requests" : "Every intern has a supervisor"}</small></span>
+              <span className={noSup.length ? "oa-n hot" : "oa-n"}>{noSup.length}</span>
             </button>
             {supsShown.map((x) => {
               const n = countOf(x.id); const bad = mismatchOf(x.id);
               return (
-                <button key={x.id} type="button" role="listitem" className={curKey === String(x.id) ? "mon-item on" : "mon-item"} onClick={() => open(String(x.id))}>
+                <button key={x.id} type="button" role="listitem" className={curKey === String(x.id) ? "oa-item on" : "oa-item"} onClick={() => pick(String(x.id))}>
                   <Avatar name={x.name} photo={x.photo} size={34} />
-                  <span className="mon-who"><b>{x.name}</b><small className={x.placement ? "" : "as-nohte"}>{x.placement || "HTE not set"}</small></span>
-                  <span className="mon-right">
-                    <span className={n ? "as-sup-n" : "as-sup-n none"}>{n} intern{n === 1 ? "" : "s"}</span>
-                    {bad > 0 && <small className="as-bad">{bad} different HTE</small>}
-                  </span>
+                  <span className="oa-who"><b>{x.name}</b><small className={x.placement ? "" : "sv2-nohte"}>{x.placement || "HTE not set"}{bad ? ` · ${bad} different HTE` : ""}</small></span>
+                  <span className="sv2-count">{n} intern{n === 1 ? "" : "s"}</span>
                 </button>
               );
             })}
+            {supsShown.length === 0 && supervisors.length > 0 && <div className="oa-none"><b>No match</b><small>Try another name or HTE.</small></div>}
           </div>
+        </div>
 
-          <div className="mon-detail">
-            <button type="button" className="mon-back" onClick={() => setShowDetail(false)}><Icon name="menu" size={14} /> Back to the list</button>
-            {curKey === "none" ? (
-              <div className="ibx-d">
-                <div className="ibx-head"><span className="as-none-ic big"><Icon name="warn" size={20} /></span>
-                  <div><b>Interns without a supervisor ({noSup.length})</b><small>Pick a supervisor for each one and click Save. Supervisors from the intern's own HTE are listed first (✓).</small></div></div>
-                {noSup.length === 0 ? <div className="ibx-note">Every intern has a supervisor.</div> : (
-                  <ul className="as-rows">{filt(noSup).map(pickRow)}</ul>
-                )}
+        {/* details */}
+        <div className="oa-detail sv2-detail">
+          {!curKey ? (
+            <div className="oa-blank">
+              <span className="oa-none-ic"><Icon name="users" size={20} /></span>
+              <b>Pick a supervisor</b>
+              <small>Their interns show here, and you can add or move interns.</small>
+            </div>
+          ) : curKey === "none" ? (
+            <>
+              <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+              <div className="oa-head">
+                <span className={noSup.length ? "sv2-warn-ic big hot" : "sv2-warn-ic big"}><Icon name={noSup.length ? "warn" : "check"} size={20} /></span>
+                <div className="oa-hn"><b>Interns without a supervisor</b><small>Click Assign to pick one. Supervisors from the intern's own HTE are listed first (✓).</small></div>
+                <span className={noSup.length ? "oa-n hot" : "oa-n"}>{noSup.length}</span>
               </div>
-            ) : cur ? (() => {
-              const mine = interns.filter((i) => String(i.supervisor_id) === String(cur.id));
-              const others = interns.filter((i) => String(i.supervisor_id) !== String(cur.id))
-                .sort((a, b) => (sameHte(b, cur) === true) - (sameHte(a, cur) === true) || (a.name || "").localeCompare(b.name || ""));
-              return (
-                <div className="ibx-d" key={cur.id}>
-                  <div className="ibx-head"><Avatar name={cur.name} photo={cur.photo} size={48} />
-                    <div><b>{cur.name}</b><small>{cur.email}{cur.contact_number ? ` · ${cur.contact_number}` : ""}</small></div></div>
-                  <div className="ibx-kv ibx-sec">
-                    <div><small>HTE (company / office)</small><b className={cur.placement ? "" : "as-nohte"}>{cur.placement || "Not set"}</b></div>
-                    <div><small>Employee ID</small><b>{cur.student_id || "—"}</b></div>
-                    <div><small>Interns</small><b>{mine.length}</b></div>
-                  </div>
-                  {!cur.placement && <div className="nfc-wait"><Icon name="warn" size={16} /><span>Ask the admin to add this supervisor's HTE in Accounts so interns can be matched.</span></div>}
-                  <div className="ibx-sec">
-                    <span>Interns under this supervisor ({mine.length})</span>
-                    {mine.length === 0 ? <p className="ix-muted">No interns assigned yet.</p> : <ul className="as-rows">{filt(mine).map(pickRow)}</ul>}
-                  </div>
-                  <div className="ibx-act">
-                    <select className="ix-select" value={addPick} onChange={(e) => setAddPick(e.target.value)} aria-label="Intern to add">
-                      <option value="">Add an intern to {cur.name.split(" ")[0]}…</option>
-                      {others.map((i) => (
-                        <option key={i.id} value={String(i.id)}>
-                          {sameHte(i, cur) === true ? "✓ " : ""}{i.name}{i.placement ? ` — ${i.placement}` : ""}{i.supervisor_id ? ` (now: ${supById(i.supervisor_id)?.name || "another"})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <button type="button" className="ix-b primary" disabled={!addPick || busy !== null}
-                      onClick={() => save(interns.find((i) => String(i.id) === addPick), String(cur.id))}>
-                      <Icon name="plus" size={14} /> {busy && String(busy) === addPick ? "Saving..." : "Assign"}
-                    </button>
+              {noSup.length === 0 ? <div className="oa-done ok"><Icon name="check" size={14} /><span>Every intern has a supervisor.</span></div>
+                : <ul className="sv2-list">{filt(noSup).map((i) => internRow(i, "Assign"))}</ul>}
+            </>
+          ) : cur ? (() => {
+            const mine = interns.filter((i) => String(i.supervisor_id) === String(cur.id));
+            const others = interns.filter((i) => String(i.supervisor_id) !== String(cur.id))
+              .sort((a, b) => (sameHte(b, cur) === true) - (sameHte(a, cur) === true) || (a.name || "").localeCompare(b.name || ""));
+            const duty = mine.filter((i) => onDuty(i.id)).length;
+            const waiting = waitingFor(cur.id);
+            return (
+              <>
+                <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+                <div className="sv2-head">
+                  <Avatar name={cur.name} photo={cur.photo} size={56} />
+                  <div className="sv2-hn"><b>{cur.name}</b>
+                    <small>{[cur.placement || "HTE not set", cur.student_id, cur.email, cur.contact_number].filter(Boolean).join(" · ")}</small></div>
+                  <div className="sv2-stats">
+                    <div><b>{mine.length}</b><small>intern{mine.length === 1 ? "" : "s"}</small></div>
+                    <div className="in"><b>{duty}</b><small>on duty now</small></div>
+                    <div className={waiting ? "wait" : ""}><b>{waiting}</b><small>waiting for them</small></div>
                   </div>
                 </div>
-              );
-            })() : <div className="mon-empty"><Empty icon="search" title="Search or select a supervisor" sub="Their interns show here, and you can assign more." /></div>}
-          </div>
+                {!cur.placement && <div className="oa-done"><Icon name="warn" size={14} /><span>Ask the admin to add this supervisor's HTE in Accounts so interns can be matched.</span></div>}
+                <div className="sv2-sec">
+                  <div className="sv2-sec-h">
+                    <h3>Interns under this supervisor</h3>
+                    <button type="button" className="sv2-add" onClick={() => { setAdding((v) => !v); setAddPick(""); }}>{adding ? "Cancel" : "+ Add intern"}</button>
+                  </div>
+                  {adding && (
+                    <div className="sv2-pick add">
+                      <select className="ix-select" value={addPick} onChange={(e) => setAddPick(e.target.value)} aria-label="Intern to add">
+                        <option value="">Choose an intern…</option>
+                        {others.map((i) => (
+                          <option key={i.id} value={String(i.id)}>
+                            {sameHte(i, cur) === true ? "✓ " : ""}{i.name}{i.placement ? ` — ${i.placement}` : ""}{i.supervisor_id ? ` (now: ${supById(i.supervisor_id)?.name || "another"})` : " (no supervisor)"}
+                          </option>
+                        ))}
+                      </select>
+                      <button type="button" className="ix-b primary sm" disabled={!addPick || busy !== null}
+                        onClick={() => save(interns.find((i) => String(i.id) === addPick), String(cur.id))}>
+                        {busy && String(busy) === addPick ? "Saving..." : "Assign"}
+                      </button>
+                    </div>
+                  )}
+                  {mine.length === 0 ? <p className="sv2-empty">No interns assigned yet. Click "+ Add intern" to assign one.</p>
+                    : <ul className="sv2-list">{filt(mine).map((i) => internRow(i))}</ul>}
+                </div>
+              </>
+            );
+          })() : <div className="oa-blank"><b>Supervisor not found</b></div>}
         </div>
       </div>
     </>
   );
 }
+
+const SV2_CSS = `
+.sv2-search { margin: 10px 10px 4px !important; }
+.sv2-none { margin-bottom: 4px; }
+.sv2-warn-ic { flex: none; width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: #e9f8ef; color: #16a34a; }
+.sv2-warn-ic.hot { background: #fff4e5; color: #d97706; }
+.sv2-warn-ic.big { width: 46px; height: 46px; }
+.sv2-count { flex: none; font-size: 11.5px; font-weight: 700; color: #475569; background: #f1f5f9; padding: 3px 9px; border-radius: 7px; }
+.sv2-nohte { color: #b45309 !important; }
+.sv2-detail { gap: 16px !important; }
+.sv2-head { display: flex; align-items: center; gap: 14px; flex: none; flex-wrap: wrap; }
+.sv2-head .ix-av:has(img) { background: transparent !important; }
+.sv2-hn { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 3px; line-height: 1.25; }
+.sv2-hn b { font-size: 18px; color: #0f172a; }
+.sv2-hn small { font-size: 12.5px; color: #64748b; }
+.sv2-stats { display: flex; gap: 8px; }
+.sv2-stats > div { min-width: 82px; text-align: center; padding: 9px 12px; border-radius: 12px; background: #fff4ee; display: flex; flex-direction: column; line-height: 1.15; }
+.sv2-stats b { font-size: 21px; font-weight: 800; color: #ea580c; }
+.sv2-stats small { font-size: 11.5px; font-weight: 600; color: #7c4a2e; margin-top: 2px; }
+.sv2-stats > .in { background: #e9f8ef; } .sv2-stats > .in b { color: #15803d; } .sv2-stats > .in small { color: #166534; }
+.sv2-stats > .wait { background: #fff4e5; } .sv2-stats > .wait b { color: #b45309; } .sv2-stats > .wait small { color: #92400e; }
+.sv2-sec { border: 1px solid #eef0f4; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; min-height: 0; flex: 0 1 auto; overflow: hidden; }
+.sv2-sec-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; flex: none; }
+.sv2-sec-h h3 { margin: 0; font-size: 14.5px; font-weight: 800; color: #0f172a; }
+.sv2-add { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; font-weight: 700; color: #ea580c; cursor: pointer; }
+.sv2-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; }
+.oa-detail > .sv2-list { flex: 0 1 auto; }
+.sv2-row { border-bottom: 1px solid #f1f2f5; }
+.sv2-row:last-child { border-bottom: 0; }
+.sv2-row.moving { background: #fffaf7; border-radius: 10px; }
+.sv2-main { display: flex; align-items: center; gap: 12px; padding: 10px 6px; }
+.sv2-main .ix-av:has(img) { background: transparent !important; }
+.sv2-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.sv2-who b { font-size: 13.5px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv2-who small { font-size: 12px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv2-tag { flex: none; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 7px; }
+.sv2-tag.in { background: #e9f8ef; color: #15803d; }
+.sv2-tag.out { background: #fff4e5; color: #b45309; }
+.sv2-tag.done { background: #eef2ff; color: #4338ca; }
+.sv2-tag.warn { background: #fef2f2; color: #b91c1c; }
+.sv2-hrs { flex: none; width: 104px; text-align: right; font-size: 12.5px; color: #64748b; }
+.sv2-hrs b { color: #0f172a; }
+.sv2-move { flex: none; border: 0; background: none; padding: 4px 2px; font: inherit; font-size: 12.5px; font-weight: 700; color: #64748b; cursor: pointer; min-width: 58px; text-align: right; }
+.sv2-move:hover { color: #ea580c; }
+.sv2-pick { display: flex; align-items: center; gap: 8px; padding: 0 6px 12px 54px; }
+.sv2-pick span { font-size: 12.5px; font-weight: 600; color: #475569; flex: none; }
+.sv2-pick .ix-select { flex: 1; min-width: 0; }
+.sv2-pick.add { padding: 4px 0 10px; }
+.sv2-empty { margin: 6px 0 2px; font-size: 13px; color: #94a3b8; }
+@media (max-width: 1100px) { .sv2-hrs { display: none; } }
+@media (max-width: 760px) {
+  .sv2-stats { width: 100%; } .sv2-stats > div { flex: 1; min-width: 0; }
+  .sv2-main { flex-wrap: wrap; } .sv2-pick { padding-left: 6px; flex-wrap: wrap; }
+}
+`;
 
 /* ───────────────────────── shared bits for the review pages ───────────────────────── */
 const fmtDate = (v) => {
@@ -515,14 +609,9 @@ function HistoryToolbar({ q, setQ, status, setStatus, count, children }) {
 const HISTORY_URL = `${API}/supervisor/history`;
 
 function Pending({ pending, waiting = [], interns, user, onRefresh }) {
-  const [tab, setTab] = useState("pending");
-  const [remarks, setRemarks] = useState({});
-  const [processing, setProcessing] = useState(null);
   const [msg, setMsg] = useState(null);
   const [history, setHistory] = useState([]);
   const [histState, setHistState] = useState("loading"); // loading | ok | error
-  const [hStatus, setHStatus] = useState("all");
-  const [q, setQ] = useState("");
 
   const reviewedOnly = (list) => list.filter((s) => s.status === "approved" || s.status === "rejected");
   const sortNewest = (list) =>
@@ -562,103 +651,42 @@ function Pending({ pending, waiting = [], interns, user, onRefresh }) {
   // reload when the intern list arrives or the pending queue changes (after approve / reject)
   useEffect(() => { loadHistory(); /* eslint-disable-next-line */ }, [interns.length, pending.length]);
 
-  const handleValidate = async (id, action) => {
-    setProcessing(id + action); setMsg(null);
+  const handleValidate = async (sub, action, rm) => {
+    setMsg(null);
     try {
       // the endpoint still calls the reviewer "supervisor_id"; it is the coordinator's id here
       const res = await fetch(`${API}/supervisor/validate`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ submission_id: id, supervisor_id: user.id, action, remarks: remarks[id] || "" }),
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ submission_id: sub.id, supervisor_id: user.id, action, remarks: rm || "" }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "Something went wrong.");
       setMsg({ type: "success", text: data.message });
       onRefresh();
-    } catch (err) { setMsg({ type: "error", text: err.message }); }
-    finally { setProcessing(null); }
+      return true;
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+      return false;
+    }
   };
-
-  const shown = history
-    .filter((h) => hStatus === "all" || h.status === hStatus)
-    .filter((h) => (h.intern_name || "").toLowerCase().includes(q.trim().toLowerCase()));
 
   return (
     <>
       <PageHeader title="Online Attendance" sub="Review intern online attendance submissions." live />
       <Msg msg={msg} />
-      <ReviewTabs tab={tab} setTab={setTab} pendingCount={pending.length} historyCount={history.length} />
       {/* items still with the HTE supervisor are not shown: they come here only after the supervisor approves */}
-
-      {tab === "pending" ? (
-        pending.length === 0 ? (
-          <div className="ix-card ix-allgood">
-            <div className="ix-empty-icon"><Icon name="check" size={30} /></div>
-            <div className="ix-empty-title" style={{ fontSize: 17 }}>All caught up!</div>
-            <div className="ix-empty-sub">No pending submissions to review.</div>
-          </div>
-        ) : (
-          <Inbox
-            items={pending}
-            row={(sub) => ({ name: sub.intern_name, photo: sub.intern_photo, sub: String(sub.description || "").slice(0, 60),
-              tag: <Badge label={String(sub.date).slice(0, 10)} type="pending" />, meta: sub.status === "endorsed" ? "Supervisor confirmed" : "No supervisor" })}
-            detail={(sub) => (
-              <>
-                <div className="ibx-head"><Avatar name={sub.intern_name} photo={sub.intern_photo} size={48} />
-                  <div><b>{sub.intern_name}</b><small>{sub.intern_email}</small></div></div>
-                <div className="ibx-kv ibx-sec"><div><small>Date of work</small><b>{String(sub.date).slice(0, 10)}</b></div>
-                  <div><small>Submitted</small><b>{fmtDate(sub.created_at)}</b></div></div>
-                <div className="ibx-sec"><span>Tasks done</span><p>{sub.description}</p></div>
-                {sub.status === "endorsed" ? (
-                  <div className="ibx-note"><Icon name="check" size={13} /> {sub.endorser_name || "Supervisor"} confirmed this workday
-                    {sub.endorse_remarks ? ` · “${sub.endorse_remarks}”` : ""}</div>
-                ) : <div className="ibx-note none">No supervisor assigned — you decide directly.</div>}
-                <div className="ibx-act">
-                  <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[sub.id] || ""}
-                    onChange={(e) => setRemarks((r) => ({ ...r, [sub.id]: e.target.value }))} />
-                  <button className="ix-b danger" onClick={() => handleValidate(sub.id, "rejected")} disabled={!!processing}>
-                    {processing === sub.id + "rejected" ? "..." : "Reject"}</button>
-                  <button className="ix-b ok" onClick={() => handleValidate(sub.id, "approved")} disabled={!!processing}>
-                    {processing === sub.id + "approved" ? "..." : "Approve"}</button>
-                </div>
-              </>
-            )}
-          />
-        )
-      ) : histState === "error" ? (
-        <div className="ix-alert">
-          <Icon name="warn" size={18} /> Couldn't load the history. Check that the server is running.
+      {histState === "error" && (
+        <div className="ix-alert" style={{ marginBottom: 12 }}>
+          <Icon name="warn" size={18} /> Couldn't load the reviewed days. Check that the server is running.
         </div>
-      ) : (
-        <>
-          <HistoryToolbar q={q} setQ={setQ} status={hStatus} setStatus={setHStatus} count={shown.length} />
-          <div className="ix-card flush">
-            {histState === "loading" ? <Spinner /> : (
-              <Table
-                headers={["Intern", "Date of work", "Tasks", "Result", "Remarks", "Reviewed"]}
-                rows={shown.map((h) => [
-                  <div className="ix-actions">
-                    <Avatar name={h.intern_name} photo={h.intern_photo} size={30} />
-                    <strong>{h.intern_name}</strong>
-                  </div>,
-                  String(h.date).slice(0, 10),
-                  <div className="rv-cell-text" title={h.description}>{h.description}</div>,
-                  <span className={`os-status ${h.status}`}>{cap(h.status)}</span>,
-                  <span className="os-remarks">{h.remarks || "—"}</span>,
-                  fmtDate(h.reviewed_at || h.updated_at),
-                ])}
-                empty="No reviewed submissions yet."
-              />
-            )}
-          </div>
-        </>
       )}
+      <OnlineReview role="coordinator" waiting={pending} reviewed={history} onReview={handleValidate} />
     </>
   );
 }
 
 /* ───────────────────────── MOV submissions review ───────────────────────── */
 function MovReview({ movs, user, interns = [], onRefresh }) {
-  const [tab, setTab] = useState("pending");
   const [processing, setProcessing] = useState(null);
   const [remarks, setRemarks] = useState({});
   const [msg, setMsg] = useState(null);
@@ -772,77 +800,285 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
       {showDue === "due" && <DeadlinesPanel onClose={() => setShowDue(false)} />}
       {showDue === "reports" && <ReportsPanel interns={interns} onClose={() => setShowDue(false)} />}
       {!showDue && <>
-      <Msg msg={msg} />
-      <ReviewTabs tab={tab} setTab={setTab} pendingCount={pendingAll.length} historyCount={historyAll.length} />
-
-      {tab === "pending" ? (
-        <>
-          <div className="ix-toolbar">{phaseSelect}</div>
-          {pendingList.length === 0 ? (
-            <div className="ix-card ix-allgood">
-              <div className="ix-empty-icon"><Icon name="check" size={30} /></div>
-              <div className="ix-empty-title" style={{ fontSize: 17 }}>All caught up!</div>
-              <div className="ix-empty-sub">No MOV submissions waiting for review.</div>
-            </div>
-          ) : (
-            <Inbox
-              items={pendingList}
-              row={(m) => ({ name: m.intern_name, photo: m.intern_photo, sub: m.title, tag: phaseBadge(m), meta: reqLabel(m) })}
-              detail={(m) => (
-                <>
-                  <div className="ibx-head"><Avatar name={m.intern_name} photo={m.intern_photo} size={48} />
-                    <div><b>{m.intern_name}</b><small>{m.intern_email}</small></div></div>
-                  <div className="ibx-tags">{phaseBadge(m)}<Badge label={reqLabel(m)} type="none" /></div>
-                  <div className="ibx-sec"><span>Document</span><p><b>{m.title}</b></p>
-                    <div style={{ marginTop: 8 }}>{fileLink(m)}</div></div>
-                  <div className="ibx-kv ibx-sec"><div><small>Submitted</small><b>{fmtDate(m.created_at)}</b></div></div>
-                  <div className="ibx-act">
-                    <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[m.id] || ""}
-                      onChange={(e) => setRemarks((r) => ({ ...r, [m.id]: e.target.value }))} />
-                    <button className="ix-b danger" onClick={() => handleReview(m.id, "rejected")} disabled={!!processing}>
-                      {processing === m.id + "rejected" ? "..." : "Reject"}</button>
-                    <button className="ix-b ok" onClick={() => handleReview(m.id, "approved")} disabled={!!processing}>
-                      {processing === m.id + "approved" ? "..." : "Approve"}</button>
-                  </div>
-                </>
-              )}
-            />
-          )}
-        </>
-      ) : (
-        <>
-          <HistoryToolbar q={q} setQ={setQ} status={hStatus} setStatus={setHStatus} count={historyList.length}>
-            {phaseSelect}
-          </HistoryToolbar>
-          <div className="ix-card flush">
-            <Table
-              headers={["Intern", "Document", "Phase", "File", "Result", "Remarks", "Reviewed", ""]}
-              rows={historyList.map((m) => [
-                <div className="ix-actions">
-                  <Avatar name={m.intern_name} photo={m.intern_photo} size={30} />
-                  <strong>{m.intern_name}</strong>
-                </div>,
-                <div className="rv-cell-text" title={m.title}>
-                  <strong>{m.title}</strong>
-                  <small>{reqLabel(m)}</small>
-                </div>,
-                phaseBadge(m),
-                fileLink(m),
-                <span className={`os-status ${m.status}`}>{cap(m.status)}</span>,
-                <span className="os-remarks">{m.remarks || "—"}</span>,
-                fmtDate(m.reviewed_at || m.updated_at),
-                undoCell(m),
-              ])}
-              empty="No reviewed documents yet."
-            />
-          </div>
-        </>
-      )}
+        <Msg msg={msg} />
+        <MovBoard movs={movs} interns={interns} reqLabel={reqLabel} remarks={remarks} setRemarks={setRemarks}
+          processing={processing} onReview={handleReview} undoCell={undoCell} />
       </>}
     </>
   );
 }
 
+/* MOV review: interns on the left (waiting first), the picked intern's requirement checklist in the
+   middle, and the picked document's preview on the right with Approve / Reject. */
+const MV_PHASES = [["pre", "Pre", PRE_REQUIREMENTS], ["during", "During", DURING_REQUIREMENTS], ["post", "Post", POST_REQUIREMENTS]];
+const MV_TOTAL = MV_PHASES.reduce((n, [, , l]) => n + l.length, 0);
+const mvTime = (m) => String(m.created_at || "");
+const mvExt = (m) => String(m.original_name || m.file_path || "").split(".").pop().toLowerCase();
+const MV_CHIP = { approved: ["Approved", "ok"], pending: ["Waiting", "wait"], rejected: ["Rejected", "bad"], missing: ["Missing", "miss"] };
+
+function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, onReview, undoCell }) {
+  // opens on "Waiting" when something waits, otherwise on "All interns"
+  const [view, setView] = useState(() => (movs.some((m) => m.status === "pending") ? "waiting" : "all"));
+  const [picked, setPicked] = useState(false);      // the coordinator chose a view themselves
+  const anyWaiting = movs.some((m) => m.status === "pending");
+  useEffect(() => { if (!picked) setView(anyWaiting ? "waiting" : "all"); }, [anyWaiting, picked]);
+  const [q, setQ] = useState("");
+  const [who, setWho] = useState(null);
+  const [docId, setDocId] = useState(null);
+  const [phase, setPhase] = useState("all");
+  const [open, setOpen] = useState(false);         // phones: details replace the list
+
+  // every intern with their documents (also interns who sent documents but are not in the list)
+  const people = (() => {
+    const map = new Map();
+    interns.forEach((u) => map.set(u.id, { id: u.id, name: u.name, photo: u.photo, docs: [] }));
+    movs.forEach((m) => {
+      if (!map.has(m.user_id)) map.set(m.user_id, { id: m.user_id, name: m.intern_name, photo: m.intern_photo, docs: [] });
+      map.get(m.user_id).docs.push(m);
+    });
+    return [...map.values()].map((p) => {
+      const latest = {};
+      [...p.docs].sort((a, b) => mvTime(a).localeCompare(mvTime(b))).forEach((m) => { if (m.requirement) latest[m.requirement] = m; });
+      const done = MV_PHASES.reduce((n, [, , l]) => n + l.filter((r) => latest[r.key]?.status === "approved").length, 0);
+      const waiting = p.docs.filter((m) => m.status === "pending");
+      const oldest = waiting.map(mvTime).sort()[0] || "";
+      return { ...p, latest, done, waiting, oldest };
+    });
+  })();
+  const sq = q.trim().toLowerCase();
+  const shown = people
+    .filter((p) => view === "all" || p.waiting.length)
+    .filter((p) => !sq || String(p.name || "").toLowerCase().includes(sq))
+    .sort((a, b) => view === "waiting" ? a.oldest.localeCompare(b.oldest) : String(a.name).localeCompare(String(b.name)));
+  const waitingPeople = people.filter((p) => p.waiting.length).length;
+  const cur = shown.find((p) => p.id === who) || null;   // nothing opens until you pick an intern
+
+  // the checklist rows of the picked intern
+  const rows = [];
+  if (cur) {
+    MV_PHASES.forEach(([key, label, list]) => {
+      if (phase !== "all" && phase !== key) return;
+      rows.push({ head: key === "pre" ? "Pre-internship" : key === "during" ? "During internship" : "Post-internship" });
+      list.forEach((r) => {
+        if (r.repeat) {
+          const subs = cur.docs.filter((m) => m.requirement === r.key || (m.report_id && !m.requirement)).sort((a, b) => mvTime(b).localeCompare(mvTime(a)));
+          const ok = subs.filter((m) => m.status === "approved").length;
+          rows.push({ key: r.key, label: r.label, st: subs.some((m) => m.status === "pending") ? "pending" : subs.length ? (ok ? "approved" : subs[0].status) : "missing",
+            note: subs.length ? `${ok} approved${subs.length > ok ? ` · ${subs.length - ok} other` : ""}` : "", doc: subs.find((m) => m.status === "pending") || subs[0] });
+          subs.forEach((m) => rows.push({ key: "s" + m.id, label: m.report_title || m.title || "Report", note: fmtDate(m.created_at), st: m.status, doc: m, sub: true }));
+        } else {
+          const m = cur.latest[r.key];
+          rows.push({ key: r.key, label: r.label, st: m ? m.status : "missing", doc: m });
+        }
+      });
+    });
+    const others = cur.docs.filter((m) => !m.report_id && (!m.requirement || m.requirement === "others"));
+    if (others.length && (phase === "all")) {
+      rows.push({ head: "Other documents" });
+      others.forEach((m) => rows.push({ key: "o" + m.id, label: m.title || "Document", st: m.status, doc: m }));
+    }
+  }
+  const docs = cur ? cur.docs : [];
+  const doc = docs.find((m) => m.id === docId) || cur?.waiting.slice().sort((a, b) => mvTime(a).localeCompare(mvTime(b)))[0] || null;
+  const pickWho = (id) => { setWho(id); setDocId(null); setOpen(true); };
+  const fileUrl = doc ? `${STORAGE}${doc.file_path}` : "";
+
+  const ext = doc ? mvExt(doc) : "";
+
+  return (
+    <div className={`mv2${open && cur ? " mv2-open" : ""}${!cur ? " mv2-empty" : ""}`}>
+      <style>{OA_CSS}</style>
+      <style>{MV2_CSS}</style>
+      {/* interns */}
+      <div className="mv2-list">
+        <div className="oa-switch" role="tablist" aria-label="Show">
+          <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => { setPicked(true); setView("waiting"); setWho(null); setDocId(null); }}>
+            Waiting <span className={waitingPeople ? "oa-n hot" : "oa-n"}>{waitingPeople}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={view === "all"} className={view === "all" ? "on" : ""} onClick={() => { setPicked(true); setView("all"); setWho(null); setDocId(null); }}>
+            All interns <span className="oa-n">{people.length}</span>
+          </button>
+        </div>
+        <div className="oa-search">
+          <Icon name="search" size={14} />
+          <input type="search" placeholder="Search intern" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search intern" />
+        </div>
+        <div className="mv2-people" role="list">
+          {shown.length === 0 ? (
+            <div className="oa-none">
+              <span className="oa-none-ic"><Icon name="check" size={18} /></span>
+              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "No interns yet"}</b>
+              <small>{sq ? "Try another name." : view === "waiting" ? "No documents waiting for review." : "Interns show here once added."}</small>
+            </div>
+          ) : shown.map((p) => (
+            <button key={p.id} type="button" role="listitem" className={cur && cur.id === p.id ? "oa-item on" : "oa-item"} onClick={() => pickWho(p.id)}>
+              <Avatar name={p.name} photo={p.photo} size={34} />
+              <span className="oa-who"><b>{p.name}</b>
+                <small className="mv2-mini"><i style={{ width: `${Math.round((p.done / MV_TOTAL) * 100)}%` }} /></small>
+                <small>{p.done} of {MV_TOTAL} approved</small></span>
+              {p.waiting.length > 0 ? <span className="oa-n hot">{p.waiting.length}</span> : p.done === MV_TOTAL ? <Badge label="Complete" type="approved" /> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* checklist + preview */}
+      <div className="mv2-main">
+        {!cur ? (
+          <div className="oa-blank">
+            <span className="oa-none-ic"><Icon name="users" size={20} /></span>
+            <b>{shown.length ? "Pick an intern" : view === "waiting" ? "No documents waiting" : "No interns yet"}</b>
+            <small>{shown.length ? "Choose an intern on the left to see their requirements and documents."
+              : view === "waiting" ? "Open \"All interns\" to see each intern's requirements." : "Interns show here once added."}</small>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+            <div className="mv2-head">
+              <Avatar name={cur.name} photo={cur.photo} size={42} />
+              <div className="mv2-hn"><b>{cur.name}</b>
+                <span className="mv2-bar"><i style={{ width: `${Math.round((cur.done / MV_TOTAL) * 100)}%` }} /></span>
+                <small>{cur.done} of {MV_TOTAL} requirements approved{cur.waiting.length ? ` · ${cur.waiting.length} waiting for you` : ""}</small></div>
+              <div className="mv2-ph" role="tablist" aria-label="Phase">
+                {[["all", "All"], ["pre", "Pre"], ["during", "During"], ["post", "Post"]].map(([k, l]) => (
+                  <button key={k} type="button" className={phase === k ? "on" : ""} onClick={() => setPhase(k)}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="mv2-body">
+              <div className="mv2-check">
+                {rows.map((r, i) => r.head ? <div key={"h" + i} className="mv2-sec">{r.head}</div> : (
+                  <button key={r.key} type="button" disabled={!r.doc}
+                    className={`mv2-row${r.sub ? " sub" : ""}${doc && r.doc && r.doc.id === doc.id && !(!r.sub && rows.some((x) => x.sub && x.doc?.id === doc.id)) ? " on" : ""}`}
+                    onClick={() => r.doc && setDocId(r.doc.id)}>
+                    <span className={`mv2-chip ${MV_CHIP[r.st]?.[1] || "miss"}`}>{MV_CHIP[r.st]?.[0] || r.st}</span>
+                    <span className="mv2-lbl">{r.label}{r.note ? <small>{r.note}</small> : null}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="mv2-prev">
+                {!doc ? (
+                  <div className="oa-blank">
+                    <span className="oa-none-ic"><Icon name="file" size={20} /></span>
+                    <b>Pick a document</b>
+                    <small>Click a sent requirement on the left to see it here.</small>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mv2-doc">
+                      {ext === "pdf" ? <iframe key={doc.id} title={doc.original_name || "Document"} src={`${fileUrl}#toolbar=0&navpanes=0&view=FitH`} scrolling="no" />
+                        : ["png", "jpg", "jpeg", "gif", "webp"].includes(ext) ? <img src={fileUrl} alt={doc.original_name || "Document"} />
+                        : <div className="mv2-nofile"><Icon name="file" size={26} /><b>{doc.original_name || "File"}</b><small>This file type can't be shown here.</small></div>}
+                    </div>
+                    <div className="mv2-info">
+                      <div className="mv2-it"><b>{reqLabel(doc) === "Others" ? doc.title : reqLabel(doc)}</b>
+                        <small>{doc.title && reqLabel(doc) !== "Others" && doc.title.trim().toLowerCase() !== reqLabel(doc).toLowerCase() ? `${doc.title} · ` : ""}Sent {fmtDate(doc.created_at)}</small></div>
+                      <a className="ix-b ghost sm mv2-open" href={fileUrl} target="_blank" rel="noopener noreferrer"><Icon name="eye" size={13} /> Open</a>
+                    </div>
+                    {doc.status === "pending" ? (
+                      <div className="oa-act">
+                        <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[doc.id] || ""}
+                          onChange={(e) => setRemarks((r) => ({ ...r, [doc.id]: e.target.value }))} />
+                        <button className="ix-b danger" onClick={() => onReview(doc.id, "rejected")} disabled={!!processing}>
+                          {processing === doc.id + "rejected" ? "..." : "Reject"}</button>
+                        <button className="ix-b ok" onClick={() => onReview(doc.id, "approved")} disabled={!!processing}>
+                          {processing === doc.id + "approved" ? "..." : "Approve"}</button>
+                      </div>
+                    ) : (
+                      <div className={doc.status === "rejected" ? "oa-done bad" : "oa-done ok"}>
+                        <Icon name={doc.status === "rejected" ? "x" : "check"} size={14} />
+                        <span>{doc.status === "rejected" ? "Rejected" : "Approved"}{doc.reviewed_at ? ` · ${fmtDate(doc.reviewed_at)}` : ""}{doc.remarks ? <> · <em>{doc.remarks}</em></> : null}</span>
+                        <span style={{ marginLeft: "auto" }}>{undoCell(doc)}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const MV2_CSS = `
+.ix-page.lay2 .ix-main:has(.mv2) > .ix-content { align-self: stretch; width: 100%; box-sizing: border-box; }
+/* nothing picked yet: both boxes fill the window, same height */
+.ix-page.lay2 .ix-main:has(.mv2.mv2-empty) { display: flex !important; flex-direction: column !important; }
+.ix-page.lay2 .ix-main:has(.mv2.mv2-empty) > .ix-content { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; }
+.ix-page.lay2 .ix-main:has(.mv2.mv2-empty) > .ix-content > * { flex: none; }
+.ix-page.lay2 .ix-main:has(.mv2.mv2-empty) .grp-body { flex: 1 1 auto !important; display: flex; flex-direction: column; }
+.ix-page.lay2 .ix-main:has(.mv2.mv2-empty) .grp-body > * { flex: none; }
+.ix-page.lay2 .ix-main:has(.mv2.mv2-empty) .grp-body > .mv2 { flex: 1 1 auto; min-height: 380px; }
+.mv2.mv2-empty { align-items: stretch; }
+.mv2.mv2-empty .mv2-list { position: static; max-height: none; }
+.mv2.mv2-empty .mv2-main > .oa-blank { min-height: 0; }
+.mv2 { display: grid; grid-template-columns: minmax(240px, 290px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.mv2-list, .mv2-main { background: #fff; border: 1px solid #e8ebf0; border-radius: 14px; display: flex; flex-direction: column; }
+.mv2-list { position: sticky; top: 12px; max-height: calc(100vh - 150px); min-height: 300px; overflow: hidden; }
+.mv2-people { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px; }
+.mv2-mini { display: block; height: 4px; border-radius: 2px; background: #eef0f4; margin: 5px 0 1px; overflow: hidden; max-width: 140px; }
+.mv2-mini i, .mv2-bar i { display: block; height: 100%; background: #ea580c; border-radius: inherit; }
+.mv2-main { padding: 16px 18px; gap: 12px; min-height: 300px; }
+.mv2-head { display: flex; align-items: center; gap: 12px; flex: none; flex-wrap: wrap; }
+.mv2-hn { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 5px; line-height: 1.2; }
+.mv2-hn b { font-size: 16px; color: #0f172a; }
+.mv2-hn small { font-size: 12.5px; color: #64748b; }
+.mv2-bar { display: block; height: 6px; border-radius: 3px; background: #eef0f4; overflow: hidden; max-width: 360px; }
+.mv2-ph { display: inline-flex; gap: 2px; padding: 3px; background: #f3f4f6; border-radius: 9px; }
+.mv2-ph button { border: 0; background: transparent; font: inherit; font-size: 12.5px; font-weight: 600; color: #64748b; padding: 5px 11px; border-radius: 7px; cursor: pointer; }
+.mv2-ph button.on { background: #fff; color: #c2410c; box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+.mv2-body { display: grid; grid-template-columns: minmax(270px, 380px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.mv2-check { border: 1px solid #eef0f4; border-radius: 12px; padding: 4px 6px 8px; }
+.mv2-sec { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; padding: 10px 6px 4px; }
+.mv2-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; line-height: 1.25; }
+.mv2-row:hover:not(:disabled) { background: #f8f9fb; }
+.mv2-row:disabled { cursor: default; }
+.mv2-row.on { background: #fff4ee; box-shadow: inset 3px 0 0 #ea580c; }
+.mv2-row.sub { padding-left: 22px; }
+.mv2-row.sub .mv2-lbl { font-size: 12.5px; color: #475569; }
+.mv2-lbl { flex: 1; min-width: 0; font-size: 13px; color: #0f172a; display: flex; flex-direction: column; }
+.mv2-lbl small { font-size: 11.5px; color: #64748b; margin-top: 2px; }
+.mv2-chip { flex: none; width: 66px; text-align: center; font-size: 11px; font-weight: 700; padding: 3px 0; border-radius: 6px; }
+.mv2-chip.ok { background: #e9f8ef; color: #15803d; }
+.mv2-chip.wait { background: #fff4e5; color: #b45309; }
+.mv2-chip.bad { background: #fef2f2; color: #b91c1c; }
+.mv2-chip.miss { background: #f3f4f6; color: #94a3b8; }
+/* the preview stays in view while the checklist scrolls with the page */
+.mv2-prev { position: sticky; top: 12px; height: min(calc(100vh - 160px), 760px); min-height: 380px; display: flex; flex-direction: column; gap: 10px; }
+.mv2-doc { flex: 1 1 auto; min-height: 180px; min-width: 0; border: 1px solid #eef0f4; border-radius: 12px; overflow: hidden; background: #f6f7f9; display: flex; position: relative; }
+/* the PDF fills the box at page width: no sideways scrolling, no toolbar */
+.mv2-doc iframe { position: absolute; inset: 0; display: block; width: 100%; height: 100%; min-width: 0; max-width: 100%; border: 0; background: #fff; overflow: hidden; }
+.mv2-doc img { margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
+.mv2-nofile { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #64748b; text-align: center; padding: 20px; }
+.mv2-nofile b { color: #0f172a; font-size: 13.5px; word-break: break-all; }
+.mv2-nofile small { font-size: 12.5px; }
+.mv2-info { display: flex; align-items: center; gap: 10px; flex: none; }
+.mv2-it { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.mv2-it b { font-size: 14px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv2-it small { font-size: 12px; color: #64748b; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv2-prev .oa-act { padding-top: 0; border-top: 0; }
+.ix-page a.mv2-open, .ix-page a.mv2-open:hover { text-decoration: none !important; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.mv2-prev .oa-done { align-items: center; }
+.mv2-main > .oa-blank { flex: 1; min-height: 360px; }
+@media (max-width: 1250px) {
+  .mv2-body { grid-template-columns: 1fr; }
+  .mv2-prev { position: static; height: 520px; order: -1; }
+}
+@media (max-width: 760px) {
+  .ix-main:has(.mv2) .dl-bar, .ix-main:has(.mv2) .dl-bar > span { flex-wrap: wrap; }
+  .mv2 { grid-template-columns: 1fr; }
+  .mv2-list { position: static; max-height: none; }
+  .mv2 .mv2-main { display: none; }
+  .mv2.mv2-open .mv2-list { display: none; }
+  .mv2.mv2-open .mv2-main { display: flex; }
+  .mv2-people { max-height: none; }
+  .mv2-body { display: flex; flex-direction: column; }
+  .mv2-prev { height: 440px; }
+  .mv2-prev .oa-act { flex-wrap: wrap; } .mv2-prev .oa-act .ix-input { flex: 1 1 100%; }
+}
+`;
 
 /* ───────────────────────── Overtime review ─────────────────────────
    Time after 5:00 PM counts only when approved. The coordinator can credit all or part of it.
@@ -877,126 +1113,40 @@ function WaitingList({ items, what }) {
 }
 
 function OvertimeReview({ overtime, onRefresh }) {
-  const [tab, setTab] = useState("pending");
-  const [minutes, setMinutes] = useState({});
-  const [remarks, setRemarks] = useState({});
-  const [processing, setProcessing] = useState(null);
   const [msg, setMsg] = useState(null);
-  const [hStatus, setHStatus] = useState("all");
-  const [q, setQ] = useState("");
-
   const pendingList = overtime.filter(otForMe);
-  const waitingList = overtime.filter(otWaiting);
   const historyAll = overtime.filter((o) => o.ot_status === "approved" || o.ot_status === "rejected");
   const capOf = (o) => (o.ot_status === "endorsed" && o.ot_endorsed_minutes ? o.ot_endorsed_minutes : o.ot_minutes);
-  const historyList = historyAll
-    .filter((o) => hStatus === "all" || o.ot_status === hStatus)
-    .filter((o) => (o.intern_name || "").toLowerCase().includes(q.trim().toLowerCase()));
 
-  const review = async (o, status) => {
+  const review = async (o, status, credit, rm) => {
     const cap = capOf(o);
-    const credit = minutes[o.id] === undefined || minutes[o.id] === "" ? cap : Number(minutes[o.id]);
     if (status === "approved" && (!credit || credit < 1 || credit > cap)) {
       setMsg({ type: "error", text: `Credit between 1 and ${cap} minutes.` });
-      return;
+      return false;
     }
-    setProcessing(o.id + status); setMsg(null);
+    setMsg(null);
     try {
       const res = await fetch(`${API}/coordinator/overtime/${o.id}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ status, minutes: status === "approved" ? credit : null, remarks: remarks[o.id] || "" }),
+        body: JSON.stringify({ status, minutes: status === "approved" ? credit : null, remarks: rm || "" }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || "Something went wrong.");
       setMsg({ type: "success", text: data.message });
       onRefresh();
+      return true;
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
-    } finally {
-      setProcessing(null);
+      return false;
     }
   };
 
   return (
     <>
       <PageHeader title="Overtime" sub="Time after 5:00 PM only counts when you approve it." live />
-      <div className="ix-note" style={{ marginTop: 0, marginBottom: 16 }}>
-        <Icon name="info" size={18} />
-        <span>
-          Official hours give at most <strong>{SCHEDULE.dailyCap} hours</strong> a day. Any time after 5:00 PM shows
-          here, and only the minutes you approve are added on top of that day's hours.
-        </span>
-      </div>
       <Msg msg={msg} />
-      <ReviewTabs tab={tab} setTab={setTab} pendingCount={pendingList.length} historyCount={historyAll.length} />
-      {/* overtime still with the HTE supervisor is not shown: it comes here only after the supervisor approves */}
-
-      {tab === "pending" ? (
-        pendingList.length === 0 ? (
-          <div className="ix-card ix-allgood">
-            <div className="ix-empty-icon"><Icon name="check" size={30} /></div>
-            <div className="ix-empty-title" style={{ fontSize: 17 }}>All caught up!</div>
-            <div className="ix-empty-sub">No overtime waiting for review.</div>
-          </div>
-        ) : (
-          <Inbox
-            items={pendingList}
-            row={(o) => ({ name: o.intern_name, photo: o.intern_photo, sub: `${String(o.date).slice(0, 10)} · out ${clock(o.checked_out_at)}`,
-              tag: <Badge label={fmtMinutes(o.ot_minutes)} type="pending" />, meta: o.ot_status === "endorsed" ? "Supervisor approved" : "No supervisor" })}
-            detail={(o) => (
-              <>
-                <div className="ibx-head"><Avatar name={o.intern_name} photo={o.intern_photo} size={48} />
-                  <div><b>{o.intern_name}</b><small>{o.intern_email}</small></div></div>
-                <div className="ibx-kv ibx-sec">
-                  <div><small>Date</small><b>{String(o.date).slice(0, 10)}</b></div>
-                  <div><small>Time in</small><b>{clock(o.checked_in_at)}</b></div>
-                  <div><small>Time out</small><b>{clock(o.checked_out_at)}</b></div>
-                  <div><small>Overtime</small><b>{fmtMinutes(o.ot_minutes)}</b></div>
-                </div>
-                {o.ot_status === "endorsed" ? (
-                  <div className="ibx-note"><Icon name="check" size={13} /> {o.endorser_name || "Supervisor"} approved {fmtMinutes(o.ot_endorsed_minutes)}
-                    {o.ot_endorse_remarks ? ` · “${o.ot_endorse_remarks}”` : ""}</div>
-                ) : <div className="ibx-note none">No supervisor assigned — you decide directly.</div>}
-                <div className="ibx-act">
-                  <input type="number" className="ix-input ot-min" min={1} max={capOf(o)} placeholder={`${capOf(o)} min`}
-                    aria-label="Minutes to credit" value={minutes[o.id] ?? ""}
-                    onChange={(e) => setMinutes((mm) => ({ ...mm, [o.id]: e.target.value }))} />
-                  <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[o.id] || ""}
-                    onChange={(e) => setRemarks((r) => ({ ...r, [o.id]: e.target.value }))} />
-                  <button className="ix-b danger" onClick={() => review(o, "rejected")} disabled={!!processing}>
-                    {processing === o.id + "rejected" ? "..." : "Reject"}</button>
-                  <button className="ix-b ok" onClick={() => review(o, "approved")} disabled={!!processing}>
-                    {processing === o.id + "approved" ? "..." : "Approve"}</button>
-                </div>
-              </>
-            )}
-          />
-        )
-      ) : (
-        <>
-          <HistoryToolbar q={q} setQ={setQ} status={hStatus} setStatus={setHStatus} count={historyList.length} />
-          <div className="ix-card flush">
-            <Table
-              headers={["Intern", "Date", "Time out", "Overtime", "Result", "Credited", "Remarks", "Reviewed"]}
-              rows={historyList.map((o) => [
-                <div className="ix-actions">
-                  <Avatar name={o.intern_name} photo={o.intern_photo} size={30} />
-                  <strong>{o.intern_name}</strong>
-                </div>,
-                String(o.date).slice(0, 10),
-                clock(o.checked_out_at),
-                fmtMinutes(o.ot_minutes),
-                <span className={`os-status ${o.ot_status}`}>{cap(o.ot_status)}</span>,
-                o.ot_status === "approved" ? fmtMinutes(o.ot_approved_minutes) : "—",
-                <span className="os-remarks">{o.ot_remarks || "—"}</span>,
-                fmtDate(o.ot_reviewed_at),
-              ])}
-              empty="No reviewed overtime yet."
-            />
-          </div>
-        </>
-      )}
+      <OvertimeBoard role="coordinator" waiting={pendingList} reviewed={historyAll} all={overtime} capOf={capOf} onReview={review} />
     </>
   );
 }

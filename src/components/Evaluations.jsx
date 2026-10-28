@@ -8,6 +8,7 @@ import { useState, useEffect } from "react";
 import { Icon, Msg, Spinner, Badge, Avatar, esc } from "./DashKit.jsx";
 import { API, STORAGE } from "../config.js";
 
+const RATING_ON = false;
 const REC = { hire: "Would hire / absorb this intern", recommend: "Recommended for employment", none: "No recommendation" };
 
 export default function Evaluations({ interns = [], user }) {
@@ -63,7 +64,7 @@ export default function Evaluations({ interns = [], user }) {
         </div>
         <div className="ix-card ev-main">
           {!cur ? (
-            <div className="ev-empty big"><Icon name="file" size={26} /><b>Choose an intern</b><span>Fill in the evaluation in MYTRACK, or upload the signed paper form.</span></div>
+            <div className="ev-empty big"><Icon name="file" size={26} /><b>Choose an intern</b><span>{RATING_ON ? "Fill in the evaluation in MYTRACK, or upload the signed paper form." : "Upload the signed paper evaluation form for this intern."}</span></div>
           ) : (
             <EvalPanel key={cur.id} intern={cur} existing={byIntern[cur.id]} crit={crit} user={user}
               onDone={(text) => { setMsg({ type: "success", text }); load(); }} onError={(text) => setMsg({ type: "error", text })} />
@@ -75,8 +76,10 @@ export default function Evaluations({ interns = [], user }) {
 }
 
 function EvalPanel({ intern, existing, crit, user, onDone, onError }) {
-  const canSystem = user?.role === "supervisor" || user?.role === "admin" || user?.role === "ojt_coordinator";
-  const [mode, setMode] = useState(existing ? "view" : "choose");
+  // Rating interns inside the system is outside the study's scope for now: only the signed paper form is uploaded.
+  // Set RATING_ON to true to bring the 1-5 rating back.
+  const canSystem = RATING_ON && (user?.role === "supervisor" || user?.role === "admin" || user?.role === "ojt_coordinator");
+  const [mode, setMode] = useState(existing ? "view" : canSystem ? "choose" : "paper");
   const [r, setR] = useState(() => existing?.ratings || {});
   const [f, setF] = useState({ strengths: existing?.strengths || "", improvements: existing?.improvements || "", comments: existing?.comments || "", recommendation: existing?.recommendation || "" });
   const [file, setFile] = useState(null);
@@ -153,7 +156,7 @@ function EvalPanel({ intern, existing, crit, user, onDone, onError }) {
           )}
           <div className="ev-acts">
             {existing.mode === "system" && <button type="button" className="ix-b ghost sm" onClick={print}><Icon name="print" size={14} /> Print</button>}
-            <button type="button" className="ix-b ghost sm" disabled={busy} onClick={() => setMode("choose")}>Replace</button>
+            <button type="button" className="ix-b ghost sm" disabled={busy} onClick={() => setMode(canSystem ? "choose" : "paper")}>Replace</button>
             <button type="button" className="ix-b danger sm" disabled={busy} onClick={remove}>Remove</button>
           </div>
         </>
@@ -217,7 +220,7 @@ function EvalPanel({ intern, existing, crit, user, onDone, onError }) {
           </label>
           <label className="ev-fields one">Note (optional)<textarea className="ix-input" rows={2} value={f.comments} onChange={(e) => setF((x) => ({ ...x, comments: e.target.value }))} /></label>
           <div className="ev-acts">
-            <button type="button" className="ix-b ghost sm" onClick={() => setMode(existing ? "view" : "choose")}>Back</button>
+            {(existing || canSystem) && <button type="button" className="ix-b ghost sm" onClick={() => setMode(existing ? "view" : "choose")}>Back</button>}
             <button type="button" className="ix-b primary sm" disabled={!file || busy || file.size > 10 * 1024 * 1024} onClick={() => submit("paper")}>{busy ? "Uploading..." : "Upload form"}</button>
           </div>
         </>

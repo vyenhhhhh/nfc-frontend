@@ -282,7 +282,7 @@ function MyRequests({ user, records }) {
               <div><small>Waiting</small><strong className="w">{thisMonth.filter((r) => groupOf(r) === "waiting").length}</strong></div>
               <div><small>Approved</small><strong className="a">{thisMonth.filter((r) => groupOf(r) === "approved").length}</strong></div>
               <div><small>Rejected</small><strong className="r">{thisMonth.filter((r) => groupOf(r) === "rejected").length}</strong></div>
-              <div><small>OT credited</small><strong>{fmtMinutes(otCredited)}</strong></div>
+              <div><small>OT</small><strong>{fmtMinutes(otCredited)}</strong></div>
             </div>
           </div>
           <div className="ix-card rq-box">
@@ -1020,7 +1020,15 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
             <span><b>{totalHours}h</b> of {required}h · {programKey(program) || "OJT"}</span>
             <strong>{pct.toFixed(0)}%</strong>
           </div>
-          <div className="at-sum-bar"><i style={{ width: pct + "%" }} />{[25, 50, 75].map((m) => <em key={m} style={{ left: m + "%" }} />)}</div>
+          {/* progress with the 25 / 50 / 75 / 100% marks */}
+          <div className="at-ms">
+            <div className="at-sum-bar"><i style={{ width: Math.min(pct, 100) + "%" }} /></div>
+            {[25, 50, 75, 100].map((m) => (
+              <span key={m} className={`at-ms-pt ${pct >= m ? "done" : m === nextMilestone ? "next" : ""}`} style={{ left: m + "%" }}>
+                <i>{pct >= m ? "✓" : ""}</i><b>{m}%</b>
+              </span>
+            ))}
+          </div>
           <small>{nextMilestone ? `${hrsToMilestone}h to your ${nextMilestone}% mark · ${left}h left` : "All required hours rendered. Great work!"}</small>
         </div>
         {stats.filter((x) => x.label !== "Total hours").map((x) => (
@@ -2309,19 +2317,24 @@ export function CertifyBar({ intern, from, to, canCertify = false, hasDays = tru
 }
 
 /* Holidays / non-working days from the admin's Calendar: { "2026-11-01": "All Saints' Day", ... } */
-export function useHolidays() {
+// only the days with no OJT for this intern: school events and HTE working days don't count.
+// forId: (staff) whose days off, e.g. the intern whose DTR is shown; interns get their own.
+export function useHolidays(forId = null) {
   const [holidays, setHolidays] = useState({});
   useEffect(() => {
-    fetch(`${API}/calendar`, { headers: { Accept: "application/json" } })
+    fetch(`${API}/calendar${forId ? `?for=${forId}` : ""}`, { headers: { Accept: "application/json" } })
       .then((r) => r.json())
       .then((list) => {
         if (!Array.isArray(list)) return;
         const map = {};
-        list.forEach((e) => { map[String(e.date).slice(0, 10)] = e.title || "Holiday"; });
+        list.forEach((e) => {
+          if (e.off === false) return;
+          map[String(e.date).slice(0, 10)] = e.title || "Holiday";
+        });
         setHolidays(map);
       })
       .catch(() => {});
-  }, []);
+  }, [forId]);
   return holidays;
 }
 
@@ -3413,6 +3426,17 @@ export const internCss = `
 .ix-page .at-sum-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: linear-gradient(90deg, #f2864f, #e8582a); }
 .ix-page .at-sum-bar em { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ix-surface, #fff); }
 .ix-page .at-sum-prog small { font-size: 11.5px; color: #8a7a71; }
+/* the 25 / 50 / 75 / 100% marks on the progress bar */
+.ix-page .at-ms { position: relative; margin: 10px 14px 26px 0; }
+.ix-page .at-ms .at-sum-bar { margin: 0; overflow: visible; }
+.ix-page .at-ms-pt { position: absolute; top: 4px; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.ix-page .at-ms-pt i { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid #f3c7b2; box-sizing: border-box;
+  display: grid; place-items: center; font-style: normal; font-size: 9px; font-weight: 800; color: #fff; line-height: 1; }
+.ix-page .at-ms-pt b { position: absolute; top: 19px; font-size: 10.5px; font-weight: 600; color: #a99d96; white-space: nowrap; line-height: 1.2; }
+.ix-page .at-ms-pt.done i { background: #e8582a; border-color: #e8582a; }
+.ix-page .at-ms-pt.done b { color: #c2410c; }
+.ix-page .at-ms-pt.next i { border-color: #e8582a; box-shadow: 0 0 0 3px rgba(232,88,42,.18); }
+.ix-page .at-ms-pt.next b { color: #111827; }
 .ix-page .at-sum-num { display: flex; flex-direction: column; justify-content: center; }
 .ix-page .at-sum-num small { font-size: 11px; color: #8a7a71; } .ix-page .at-sum-num b { font-size: 18px; color: #111827; line-height: 1.2; }
 .ix-page .at-sum-num em { font-style: normal; font-size: 11px; color: #a99d96; }
@@ -3712,20 +3736,51 @@ export const internCss = `
   .ix-page .rq-side .rq-new { grid-template-columns: 1fr 1fr; gap: 6px; }
   .ix-page .rq-side .rq-new button { min-height: clamp(34px, 4.6vh, 44px); padding: 6px 9px !important; font-size: 12px; line-height: 1.25; gap: 7px; }
   .ix-page .rq-side .rq-how { gap: clamp(2px, .6vh, 6px); font-size: 12px; line-height: 1.45; }
-  .ix-page .rq-side > .rq-how-box { overflow: hidden !important; }
-  .ix-page .rq-side > .rq-how-box .rq-how2 { flex: 1 1 auto; gap: clamp(6px, 1vh, 10px); min-height: 0; }
-  .ix-page .rq-side > .rq-how-box .rq-how2 li { flex: 1 1 0; min-height: 0; max-height: 120px; }
+  .ix-page .rq-side > .rq-how-box { overflow: visible !important; flex: 1 0 auto !important; }
+  .ix-page .rq-cols > .rq-side { overflow-y: auto !important; }
+  .ix-page .rq-how2 li > div { min-width: 0; }
+  .ix-page .rq-how2 :is(strong, small) { line-height: 1.35 !important; margin: 0 !important; }
+  .ix-page .rq-side > .rq-how-box .rq-how2 { flex: 1 1 auto; gap: 8px; min-height: 0; justify-content: space-evenly; }
+  .ix-page .rq-side > .rq-how-box .rq-how2 li { flex: 0 0 auto; min-height: 0; }
   .ix-page .rq-side > .rq-how-box .rq-how2 li { padding: clamp(6px, 1.2vh, 12px); border-radius: 12px; background: #fafafb; border: 1px solid #f1f2f4; align-items: center; }
   .ix-page .rq-side > .rq-how-box .rq-legend { margin-top: auto; }
 }
 /* short windows: keep the steps, drop the small lines and the color guide */
-@media (min-width: 1101px) and (max-height: 820px) { .ix-page .rq-how2 small, .ix-page .rq-side .rq-legend { display: none; } }
+@media (min-width: 1101px) and (max-height: 820px) { .ix-page .rq-how2 small { display: none; } }
 @media (min-width: 1101px) and (max-height: 640px) { .ix-page .rq-side .rq-how-box { display: none; } }
 /* the side column ends exactly where the requests table ends: the approval guide takes the space left */
 @media (min-width: 1101px) and (min-height: 560px) {
   .ix-page .rq-cols > .rq-side { display: flex; flex-direction: column; }
   .ix-page .rq-side > .rq-box { flex: none; }
   .ix-page .rq-side > .rq-how-box { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+}
+/* side column always fits (no scrollbar): the numbers sit in one row, the approval steps
+   shrink to the space left, and the color guide is always shown at the bottom */
+@media (min-width: 1101px) and (min-height: 560px) {
+  .ix-page .rq-cols > .rq-side { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+  .ix-page .rq-side > .rq-box { flex: none !important; }
+  .ix-page .rq-side .rq-nums { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 6px !important; }
+  .ix-page .rq-side .rq-nums small { font-size: 11px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3 !important; }
+  .ix-page .rq-side .rq-nums strong { font-size: 18px !important; line-height: 1.2 !important; }
+  .ix-page .rq-side > .rq-how-box { flex: 1 1 0 !important; min-height: 0 !important; overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+  .ix-page .rq-side > .rq-how-box .rq-how2 { flex: 1 1 0 !important; min-height: 0 !important; overflow: hidden; justify-content: flex-start !important; gap: 8px !important; }
+  .ix-page .rq-side > .rq-how-box .rq-how2 li { flex: 0 0 auto !important; min-height: 0; padding: 8px 10px !important; }
+  .ix-page .rq-side .rq-how2 small { display: -webkit-box !important; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .ix-page .rq-side > .rq-how-box .rq-legend { flex: none !important; margin-top: 10px !important; padding-top: 10px !important; display: block !important; }
+  .ix-page .rq-side .rq-legend > div { gap: 10px !important; font-size: 11.5px !important; }
+}
+/* not full screen: compact steps (title only, no tile) and a one-line color guide, so all three steps
+   and the guide always fit */
+@media (min-width: 1101px) and (max-height: 1000px) {
+  .ix-page .rq-side .rq-how2 small { display: none !important; }
+  .ix-page .rq-side .rq-how2 { gap: 2px !important; }
+  .ix-page .rq-side .rq-how2 li { padding: 5px 0 !important; background: none !important; border: 0 !important; grid-template-columns: 24px 1fr !important; }
+  .ix-page .rq-side .rq-how2 li > span { width: 24px !important; height: 24px !important; font-size: 11px !important; }
+  .ix-page .rq-side .rq-how2 strong { font-size: 12.5px !important; line-height: 1.3 !important; }
+  .ix-page .rq-side .rq-legend { margin-top: 8px !important; padding-top: 8px !important; display: flex !important; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ix-page .rq-side .rq-legend > small { margin: 0 !important; line-height: 1.3 !important; }
+  .ix-page .rq-side .rq-legend > div { line-height: 1.3 !important; }
+  .ix-page .rq-side .rq-box > b { margin-bottom: 6px !important; line-height: 1.3 !important; }
 }
 @media (max-width: 1100px) { .ix-page .rq-cols { grid-template-columns: 1fr; } .ix-page .rq-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } }
 @media (max-width: 760px) {

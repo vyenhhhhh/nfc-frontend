@@ -159,6 +159,7 @@ const supervisorRoutes = [
   "/supervisor/records",
   "/supervisor/dtr",
   "/supervisor/reports",
+  "/supervisor/calendar",
   "/supervisor/profile",
 ];
 

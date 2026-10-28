@@ -7,10 +7,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   navWithTabs,
   Spinner, Badge, Table, Section, Avatar, Icon, PageHeader, Msg, Inbox,
-  InternMonitor, AnnouncementBoard, todayManila, fmtTime, greeting, liveRefresh, fmtMinutes,
+  InternMonitor, AnnouncementBoard, OnlineReview, OvertimeBoard, OaHistory, OA_CSS, todayManila, fmtTime, greeting, liveRefresh, fmtMinutes,
 } from "../components/DashKit.jsx";
 import {
-  Records, DTR, AdminProfile, adminCss, adminMatch, GroupPage, grpCss, HomeCalendar,
+  Records, DTR, AdminProfile, adminCss, adminMatch, GroupPage, grpCss, HomeCalendar, Calendar,
 } from "./AdminDashboard.jsx";
 import { internCss, cardUnify } from "./InternDashboard.jsx";
 import Evaluations from "../components/Evaluations.jsx";
@@ -24,6 +24,7 @@ const NAV = [
   { path: "/supervisor/approvals", label: "Approvals",  icon: "inbox" },
   { path: "/supervisor/interns",   label: "Interns",    icon: "users" },
   { path: "/supervisor/reports",   label: "Reports",    icon: "chart" },
+  { path: "/supervisor/calendar",  label: "HTE Calendar", icon: "calendar" },
   { path: "/supervisor/profile",   label: "My Profile", icon: "user" },
 ];
 
@@ -36,7 +37,8 @@ const GROUPS = {
     tabs: [
       { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of your interns." },
       { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete attendance log of your interns." },
-      { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Evaluate your interns in MYTRACK, or upload the signed paper evaluation form." },
+      // Evaluation tab hidden for now (waiting for the OJT coordinator's answer on who submits the evaluation form):
+      // { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Upload the signed paper evaluation form of each intern." },
     ],
   },
   "/supervisor/reports": {
@@ -148,6 +150,7 @@ export default function SupervisorDashboard() {
           {tab.key === "dtr" && <DTR interns={interns} records={records} canCertify />}
         </GroupPage>
       )}
+      {path === "/supervisor/calendar" && <Calendar mode="supervisor" />}
       {path === "/supervisor/profile" && <AdminProfile user={user} />}
     </Shell>
   );
@@ -233,7 +236,6 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
   const asked = new URLSearchParams(qs).get("tab");
   const [tab, setTab] = useState(["online", "overtime", "fix", "wfh"].includes(asked) ? asked : "online");
   useEffect(() => { if (["online", "overtime", "fix", "wfh"].includes(asked)) setTab(asked); }, [asked]);
-  const [minutes, setMinutes] = useState({});
   const [remarks, setRemarks] = useState({});
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -242,8 +244,6 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
   const fixPending = corrections.filter(fixIsMine);
   const wfhPending = wfhReqs.filter((w) => w.status === "pending");
   const onPending = online.filter((o) => o.status === "pending");
-  const reviewOnline = (o, status) =>
-    send(`/supervisor/online/${o.id}/review`, { status, remarks: remarks["n" + o.id] || "" }, "n" + o.id + status);
 
   const send = async (url, body, key) => {
     setBusy(key); setMsg(null);
@@ -257,20 +257,21 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
       if (!res.ok) throw new Error(data.message || "Something went wrong.");
       setMsg({ type: "success", text: data.message });
       onRefresh();
+      return true;
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+      return false;
     } finally {
       setBusy(null);
     }
   };
 
-  const reviewOt = (o, status) => {
-    const m = minutes[o.id] === undefined || minutes[o.id] === "" ? o.ot_minutes : Number(minutes[o.id]);
+  const reviewOt = (o, status, m, rm) => {
     if (status === "approved" && (!m || m < 1 || m > o.ot_minutes)) {
       setMsg({ type: "error", text: `Approve between 1 and ${o.ot_minutes} minutes.` });
-      return;
+      return Promise.resolve(false);
     }
-    send(`/supervisor/overtime/${o.id}/review`, { status, minutes: status === "approved" ? m : null, remarks: remarks["o" + o.id] || "" }, "o" + o.id + status);
+    return send(`/supervisor/overtime/${o.id}/review`, { status, minutes: status === "approved" ? m : null, remarks: rm || "" }, "o" + o.id + status);
   };
   const reviewFix = (c, status) =>
     send(`/supervisor/time-corrections/${c.id}/review`, { status, remarks: remarks["c" + c.id] || "" }, "c" + c.id + status);
@@ -327,162 +328,378 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
       <Msg msg={msg} />
 
       {tab === "online" ? (
-        <>
-          {onPending.length === 0 ? allGood("No online workdays waiting for you.") : (
-            <Inbox
-              items={onPending}
-              row={(o) => ({ name: o.intern_name, photo: o.intern_photo, sub: String(o.description || "").slice(0, 60), tag: <Badge label={day(o.date)} type="pending" />, meta: "Worked from home" })}
-              detail={(o) => (
-                <>
-                  <div className="ibx-head"><Avatar name={o.intern_name} photo={o.intern_photo} size={48} />
-                    <div><b>{o.intern_name}</b><small>{day(o.date)} · worked from home</small></div></div>
-                  <div className="ibx-sec"><span>Tasks done</span><p>{o.description}</p></div>
-                  <div className="ibx-act">{remarkInput("n" + o.id)}{buttons(() => reviewOnline(o, "rejected"), () => reviewOnline(o, "approved"), "n" + o.id)}</div>
-                </>
-              )}
-            />
-          )}
-          <Section icon="inbox" title="Reviewed online workdays" count={online.length - onPending.length}>
-            <Table
-              headers={["Intern", "Date", "Tasks", "Status"]}
-              rows={online.filter((o) => o.status !== "pending").map((o) => [
-                <strong>{o.intern_name}</strong>,
-                day(o.date),
-                <span className="sv-reason" title={o.description}>{o.description}</span>,
-                statusBadge(o.status),
-              ])}
-              empty="Nothing reviewed yet."
-            />
-          </Section>
-        </>
+        <OnlineReview role="supervisor" waiting={online.filter((o) => o.status === "pending")} reviewed={online.filter((o) => o.status !== "pending")}
+          onReview={(o, status, rm) => send(`/supervisor/online/${o.id}/review`, { status, remarks: rm || "" }, "n" + o.id + status)} />
       ) : tab === "overtime" ? (
-        <>
-          {otPending.length === 0 ? allGood("No overtime waiting for you.") : (
-            <Inbox
-              items={otPending}
-              row={(o) => ({ name: o.intern_name, photo: o.intern_photo, sub: `${day(o.date)} · out ${clock(o.checked_out_at)}`, tag: <Badge label={fmtMinutes(o.ot_minutes)} type="pending" />, meta: "after 5:00 PM" })}
-              detail={(o) => (
-                <>
-                  <div className="ibx-head"><Avatar name={o.intern_name} photo={o.intern_photo} size={48} />
-                    <div><b>{o.intern_name}</b><small>{day(o.date)}</small></div></div>
-                  <div className="ibx-kv ibx-sec">
-                    <div><small>Time in</small><b>{clock(o.checked_in_at)}</b></div>
-                    <div><small>Time out</small><b>{clock(o.checked_out_at)}</b></div>
-                    <div><small>After 5:00 PM</small><b>{fmtMinutes(o.ot_minutes)}</b></div>
-                  </div>
-                  <div className="ibx-act">
-                    <input type="number" className="ix-input ot-min" min={1} max={o.ot_minutes} placeholder={`${o.ot_minutes} min`}
-                      aria-label="Minutes to approve" value={minutes[o.id] ?? ""}
-                      onChange={(e) => setMinutes((m) => ({ ...m, [o.id]: e.target.value }))} />
-                    {remarkInput("o" + o.id)}
-                    {buttons(() => reviewOt(o, "rejected"), () => reviewOt(o, "approved"), "o" + o.id)}
-                  </div>
-                </>
-              )}
-            />
-          )}
-          <Section icon="clock" title="Reviewed overtime" count={overtime.length - otPending.length}>
-            <Table
-              headers={["Intern", "Date", "Overtime", "You approved", "Status", "Final credit"]}
-              rows={overtime.filter((o) => o.ot_status !== "pending").map((o) => [
-                <strong>{o.intern_name}</strong>,
-                day(o.date),
-                fmtMinutes(o.ot_minutes),
-                o.ot_endorsed_minutes ? fmtMinutes(o.ot_endorsed_minutes) : "—",
-                statusBadge(o.ot_status),
-                o.ot_status === "approved" ? fmtMinutes(o.ot_approved_minutes) : "—",
-              ])}
-              empty="Nothing reviewed yet."
-            />
-          </Section>
-        </>
+        <OvertimeBoard role="supervisor" waiting={otPending} reviewed={overtime.filter((o) => o.ot_status !== "pending")} all={overtime}
+          capOf={(o) => o.ot_minutes} onReview={reviewOt} />
       ) : tab === "fix" ? (
-        <>
-          {fixPending.length === 0 ? allGood("No time corrections waiting for you.") : (
-            <Inbox
-              items={fixPending}
-              row={(c) => ({ name: c.intern_name, photo: c.intern_photo, sub: String(c.reason || "").slice(0, 60), tag: <Badge label={day(c.date)} type="pending" />, meta: c.kind === "day" ? `missed whole day · ${clock(c.requested_in)}–${clock(c.requested_out)}` : c.kind === "in" ? `forgot to time in · asks ${clock(c.requested_in)}` : `forgot to time out · asks ${clock(c.requested_out)}` })}
-              detail={(c) => (
-                <>
-                  <div className="ibx-head"><Avatar name={c.intern_name} photo={c.intern_photo} size={48} />
-                    <div><b>{c.intern_name}</b><small>{day(c.date)}</small></div></div>
-                  {c.kind === "day" ? (
-                    <div className="ibx-kv ibx-sec">
-                      <div><small>Missed</small><b>The whole day</b></div>
-                      <div><small>Recorded taps</small><b>None</b></div>
-                      <div><small>Asks time in</small><b>{clock(c.requested_in)}</b></div>
-                      <div><small>Asks time out</small><b>{clock(c.requested_out)}</b></div>
-                    </div>
-                  ) : c.kind === "in" ? (
-                    <div className="ibx-kv ibx-sec">
-                      <div><small>Forgot to</small><b>Time in</b></div>
-                      <div><small>Recorded tap</small><b>{clock(c.checked_in_at)}</b></div>
-                      <div><small>Asks time in</small><b>{clock(c.requested_in)}</b></div>
-                      <div><small>Time out</small><b>{clock(c.requested_out)}</b></div>
-                    </div>
-                  ) : (
-                    <div className="ibx-kv ibx-sec">
-                      <div><small>Forgot to</small><b>Time out</b></div>
-                      <div><small>Time in</small><b>{clock(c.checked_in_at)}</b></div>
-                      <div><small>Asks time out</small><b>{clock(c.requested_out)}</b></div>
-                    </div>
-                  )}
-                  <div className="ibx-sec"><span>Reason</span><p>{c.reason}</p></div>
-                  <div className="ibx-act">{remarkInput("c" + c.id)}{buttons(() => reviewFix(c, "rejected"), () => reviewFix(c, "approved"), "c" + c.id)}</div>
-                </>
-              )}
-            />
-          )}
-          <Section icon="pencil" title="Reviewed time corrections" count={corrections.length - fixPending.length}>
-            <Table
-              headers={["Intern", "Date", "Requested", "Reason", "Status"]}
-              rows={corrections.filter((c) => !fixIsMine(c)).map((c) => [
-                <strong>{c.intern_name}</strong>,
-                day(c.date),
-                c.kind === "in" || c.kind === "day" ? `${c.kind === "day" ? "Whole day · " : ""}In ${clock(c.requested_in)} · Out ${clock(c.requested_out)}` : `Out ${clock(c.requested_out)}`,
-                <span className="sv-reason" title={c.reason}>{c.reason}</span>,
-                statusBadge(c.status),
-              ])}
-              empty="Nothing reviewed yet."
-            />
-          </Section>
-        </>
+        <FixBoard waiting={fixPending} reviewed={corrections.filter((c) => !fixIsMine(c))}
+          onReview={(c, status, rm) => send(`/supervisor/time-corrections/${c.id}/review`, { status, remarks: rm || "" }, "c" + c.id + status)} />
       ) : (
-        <>
-          {wfhPending.length === 0 ? allGood("No work arrangement requests waiting for you.") : (
-            <Inbox
-              items={wfhPending}
-              row={(w) => ({ name: w.intern_name, photo: w.intern_photo, sub: `${modeLabel(w.current_mode)} → ${modeLabel(w.requested_mode)}`, tag: <Badge label={modeLabel(w.requested_mode)} type="pending" />, meta: w.file_path ? "Letter attached" : "" })}
-              detail={(w) => (
-                <>
-                  <div className="ibx-head"><Avatar name={w.intern_name} photo={w.intern_photo} size={48} />
-                    <div><b>{w.intern_name}</b><small>{modeLabel(w.current_mode)} → {modeLabel(w.requested_mode)}</small></div></div>
-                  <div className="ibx-sec"><span>Reason</span><p>{w.reason}</p></div>
-                  <div className="ibx-sec"><span>Proof</span>{proof(w)}</div>
-                  <div className="ibx-act">{remarkInput("w" + w.id)}{buttons(() => reviewWfh(w, "rejected"), () => reviewWfh(w, "approved"), "w" + w.id)}</div>
-                </>
-              )}
-            />
-          )}
-          <Section icon="globe" title="Reviewed work arrangement requests" count={wfhReqs.length - wfhPending.length}>
-            <Table
-              headers={["Intern", "Request", "Reason", "Proof", "Status", "Remarks"]}
-              rows={wfhReqs.filter((w) => w.status !== "pending").map((w) => [
-                <strong>{w.intern_name}</strong>,
-                modeLabel(w.requested_mode),
-                <span className="sv-reason" title={w.reason}>{w.reason}</span>,
-                proof(w),
-                statusBadge(w.status),
-                w.remarks || "—",
-              ])}
-              empty="Nothing reviewed yet."
-            />
-          </Section>
-        </>
+        <WfhBoard waiting={wfhPending} reviewed={wfhReqs.filter((w) => w.status !== "pending")}
+          onReview={(w, status, rm) => send(`/supervisor/work-mode-requests/${w.id}/review`, { status, remarks: rm || "" }, "w" + w.id + status)} />
       )}
     </>
   );
 }
+
+/* Time corrections: waiting / reviewed list on the left, the picked request on the right with what
+   was recorded next to what the intern asks for. The supervisor's decision is final. */
+const fxDay = (v, long) => {
+  const d = new Date(String(v).slice(0, 10) + "T00:00:00+08:00");
+  return isNaN(d) ? String(v).slice(0, 10) : d.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", ...(long ? { year: "numeric" } : {}), timeZone: "Asia/Manila" });
+};
+const fxWhen = (v) => {
+  if (!v) return "—";
+  const s = String(v);
+  const d = new Date(s.includes("T") ? s : s.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? "" : "+08:00"));
+  return isNaN(d) ? "—" : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" });
+};
+// a "2026-10-21 17:00:00" or "17:00:00" request time -> minutes of the day
+const fxMin = (v) => {
+  if (!v) return null;
+  const s = String(v);
+  if (s.includes("T") || /[+-]\d\d:?\d\d$/.test(s)) {
+    const d = new Date(s);
+    if (isNaN(d)) return null;
+    const [h, m] = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Manila" }).split(":").map(Number);
+    return h * 60 + m;
+  }
+  const m = s.match(/(\d{1,2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+const fxClock = (v) => {
+  const m = fxMin(v);
+  if (m == null) return "—";
+  const h = Math.floor(m / 60), mm = m % 60;
+  return `${((h + 11) % 12) + 1}:${String(mm).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+};
+const FX_KIND = { out: "Forgot to time out", in: "Forgot to time in", day: "Missed the whole day" };
+
+function FixBoard({ waiting = [], reviewed = [], onReview }) {
+  const [view, setView] = useState("waiting");
+  const [sel, setSel] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [remarks, setRemarks] = useState({});
+  const [busy, setBusy] = useState(null);
+  const sq = q.trim().toLowerCase();
+  const list = (view === "waiting" ? waiting : reviewed).filter((c) => !sq || String(c.intern_name || "").toLowerCase().includes(sq));
+  const cur = list.find((c) => c.id === sel) || list[0] || null;
+  const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
+  const kind = (c) => (c.kind === "in" || c.kind === "day" ? c.kind : "out");
+  const decide = async (c, status) => {
+    setBusy(c.id + status);
+    const ok = await onReview(c, status, remarks[c.id] || "");
+    setBusy(null);
+    if (ok) { setSel(null); setOpen(false); }
+  };
+
+  // recorded vs asked, as two "In → Out" pairs
+  const pairs = (c) => {
+    const k = kind(c);
+    if (k === "day") return { rec: ["No tap", "No tap"], ask: [fxClock(c.requested_in), fxClock(c.requested_out)], hl: [true, true] };
+    if (k === "in") return { rec: ["No tap", fxClock(c.checked_in_at)], ask: [fxClock(c.requested_in), fxClock(c.requested_out || c.checked_in_at)], hl: [true, false] };
+    return { rec: [fxClock(c.checked_in_at), "No tap"], ask: [fxClock(c.checked_in_at), fxClock(c.requested_out)], hl: [false, true] };
+  };
+  const span = (c) => {
+    const k = kind(c);
+    const a = fxMin(k === "out" ? c.checked_in_at : c.requested_in);
+    const b = fxMin(k === "in" ? (c.requested_out || c.checked_in_at) : c.requested_out);
+    if (a == null || b == null || b <= a) return "—";
+    const m = b - a;
+    return `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
+  };
+  const badge = (c, long) => c.status === "approved" ? <Badge label="Approved" type="approved" />
+    : c.status === "rejected" ? <Badge label="Rejected" type="rejected" />
+    : <Badge label={long ? "Waiting for you" : "Waiting"} type="pending" />;
+
+  return (
+    <div className={open && cur ? "oa fx2 oa-open" : "oa fx2"}>
+      <style>{OA_CSS}</style>
+      <style>{FX_CSS}</style>
+      <div className="oa-list">
+        <div className="oa-switch" role="tablist" aria-label="Show">
+          <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
+            Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
+            Reviewed <span className="oa-n">{reviewed.length}</span>
+          </button>
+        </div>
+        {(view === "waiting" ? waiting : reviewed).length > 6 && (
+          <div className="oa-search"><Icon name="search" size={14} />
+            <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" /></div>
+        )}
+        <div className="oa-items" role="list">
+          {list.length === 0 ? (
+            <div className="oa-none">
+              <span className="oa-none-ic"><Icon name="check" size={18} /></span>
+              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
+              <small>{sq ? "Try another name." : view === "waiting" ? "No time corrections waiting for you." : "Corrections you approve or reject show here."}</small>
+            </div>
+          ) : list.map((c) => (
+            <button key={c.id} type="button" role="listitem" className={cur && cur.id === c.id ? "oa-item on" : "oa-item"}
+              onClick={() => { setSel(c.id); setOpen(true); }}>
+              <Avatar name={c.intern_name} photo={c.intern_photo} size={34} />
+              <span className="oa-who"><b>{c.intern_name}</b><small>{fxDay(c.date)} · {FX_KIND[kind(c)].replace("Forgot to ", "no ").replace("Missed the whole day", "whole day")}</small></span>
+              {view === "reviewed" && badge(c)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="oa-detail">
+        {!cur ? (
+          <div className="oa-blank">
+            <span className="oa-none-ic"><Icon name="pencil" size={20} /></span>
+            <b>{view === "waiting" ? "No corrections waiting" : "Nothing to show yet"}</b>
+            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the corrections already checked." : "When an intern forgets to time in or out, their request shows here."}</small>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+            <div className="oa-head">
+              <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
+              <div className="oa-hn"><b>{cur.intern_name}</b><small>{FX_KIND[kind(cur)]} · {fxDay(cur.date, true)}</small></div>
+              {badge(cur, true)}
+            </div>
+            {(() => {
+              const p = pairs(cur);
+              return (
+                <div className="fx-cmp">
+                  <div className="fx-side">
+                    <span className="fx-lbl">Recorded</span>
+                    <div className="fx-pair"><div><small>Time in</small><b className={p.rec[0] === "No tap" ? "none" : ""}>{p.rec[0]}</b></div>
+                      <Icon name="menu" size={0} /><div><small>Time out</small><b className={p.rec[1] === "No tap" ? "none" : ""}>{p.rec[1]}</b></div></div>
+                  </div>
+                  <div className="fx-side ask">
+                    <span className="fx-lbl">Asks for</span>
+                    <div className="fx-pair"><div><small>Time in</small><b className={p.hl[0] ? "new" : ""}>{p.ask[0]}</b></div>
+                      <div><small>Time out</small><b className={p.hl[1] ? "new" : ""}>{p.ask[1]}</b></div></div>
+                  </div>
+                </div>
+              );
+            })()}
+            <div className="oa-kv fx-kv">
+              <div><small>Time between</small><b>{span(cur)}</b></div>
+              <div><small>{view === "waiting" ? "Sent" : "Reviewed"}</small><b>{fxWhen(view === "waiting" ? cur.created_at : (cur.reviewed_at || cur.updated_at))}</b></div>
+            </div>
+            <div className="oa-tasks">
+              <span>Reason</span>
+              <p>{cur.reason || "—"}</p>
+            </div>
+            <ol className="oa-steps fx-steps">
+              <li className="done"><i><Icon name="check" size={11} /></i><span>Intern asked</span></li>
+              <li className={cur.status === "approved" ? "done" : cur.status === "rejected" ? "bad" : "now"}>
+                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : cur.status === "rejected" ? <Icon name="x" size={11} /> : 2}</i>
+                <span>{cur.status === "rejected" ? "Rejected" : "You decide"}</span></li>
+              <li className={cur.status === "approved" ? "done" : ""}>
+                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : 3}</i><span>Fixed in records</span></li>
+            </ol>
+            <OaHistory name={cur.intern_name}
+              rows={[...waiting, ...reviewed].filter((c) => c.id !== cur.id && (c.user_id ? c.user_id === cur.user_id : c.intern_name === cur.intern_name))
+                .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 12)
+                .map((c) => ({ id: c.id, when: fxDay(c.date), text: `${FX_KIND[kind(c)]} · ${c.reason || ""}`, badge: badge(c) }))}
+              onPick={(r) => { const w = waiting.some((x) => x.id === r.id); setView(w ? "waiting" : "reviewed"); setQ(""); setSel(r.id); }} />
+            {view === "waiting" ? (
+              <div className="oa-act">
+                <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[cur.id] || ""}
+                  onChange={(e) => setRemarks((r) => ({ ...r, [cur.id]: e.target.value }))} />
+                <button className="ix-b danger" onClick={() => decide(cur, "rejected")} disabled={!!busy}>{busy === cur.id + "rejected" ? "..." : "Reject"}</button>
+                <button className="ix-b ok" onClick={() => decide(cur, "approved")} disabled={!!busy}>{busy === cur.id + "approved" ? "..." : "Approve"}</button>
+              </div>
+            ) : (
+              <div className={cur.status === "rejected" ? "oa-done bad" : "oa-done ok"}>
+                <Icon name={cur.status === "rejected" ? "x" : "check"} size={14} />
+                <span>{cur.status === "rejected" ? "Rejected. The record stays as it was." : "Approved. The record was fixed."}
+                  {cur.remarks ? <> Remarks: <em>{cur.remarks}</em></> : null}
+                  {cur.reviewer_name ? <small> · {cur.reviewer_name}</small> : null}</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const FX_CSS = `
+.fx-cmp { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; flex: none; }
+.fx-side { border: 1px solid #eef0f4; background: #fafbfc; border-radius: 12px; padding: 9px 12px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.fx-side.ask { border-color: #bbe5c8; background: #f3fbf6; }
+.fx-lbl { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; }
+.fx-side.ask .fx-lbl { color: #15803d; }
+.fx-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fx-pair svg { display: none; }
+.fx-pair > div { display: flex; flex-direction: column; gap: 3px; line-height: 1.2; min-width: 0; }
+.fx-pair small { font-size: 11.5px; color: #64748b; }
+.fx-pair b { font-size: 15px; color: #0f172a; white-space: nowrap; }
+.fx-pair b.none { color: #b91c1c; font-weight: 600; font-size: 13.5px; }
+.fx-pair b.new { color: #15803d; }
+.fx-arrow { align-self: center; font-size: 20px; color: #94a3b8; }
+.fx-kv { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 12px !important; }
+.fx-steps { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 12px !important; padding: 2px 0 !important; }
+@media (max-width: 760px) {
+  .fx-cmp { grid-template-columns: 1fr; }
+  .fx-kv { grid-template-columns: 1fr 1fr !important; }
+}
+`;
+
+/* Work arrangement: waiting / reviewed list on the left, the picked request on the right
+   ("from -> to", reason, HTE letter). The supervisor's decision is final. */
+function WfhBoard({ waiting = [], reviewed = [], onReview }) {
+  const [view, setView] = useState("waiting");
+  const [sel, setSel] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [remarks, setRemarks] = useState({});
+  const [busy, setBusy] = useState(null);
+  const sq = q.trim().toLowerCase();
+  const list = (view === "waiting" ? waiting : reviewed).filter((w) => !sq || String(w.intern_name || "").toLowerCase().includes(sq));
+  const cur = list.find((w) => w.id === sel) || list[0] || null;
+  const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
+  const to = (w) => (w.requested_mode === "offsite" ? "offsite" : "onsite");
+  const from = (w) => (to(w) === "offsite" ? "onsite" : "offsite");
+  const short = (m) => (m === "offsite" ? "WFH" : "Onsite");
+  const decide = async (w, status) => {
+    setBusy(w.id + status);
+    const ok = await onReview(w, status, remarks[w.id] || "");
+    setBusy(null);
+    if (ok) { setSel(null); setOpen(false); }
+  };
+  const badge = (w, long) => w.status === "approved" ? <Badge label="Approved" type="approved" />
+    : w.status === "rejected" ? <Badge label="Rejected" type="rejected" />
+    : <Badge label={long ? "Waiting for you" : "Waiting"} type="pending" />;
+  const range = (w) => w.start_date ? `${fxDay(w.start_date)}${w.end_date && w.end_date !== w.start_date ? ` – ${fxDay(w.end_date)}` : ""}` : null;
+
+  return (
+    <div className={open && cur ? "oa wf2 oa-open" : "oa wf2"}>
+      <style>{OA_CSS}</style>
+      <style>{FX_CSS}</style>
+      <style>{WF_CSS}</style>
+      <div className="oa-list">
+        <div className="oa-switch" role="tablist" aria-label="Show">
+          <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
+            Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
+            Reviewed <span className="oa-n">{reviewed.length}</span>
+          </button>
+        </div>
+        {(view === "waiting" ? waiting : reviewed).length > 6 && (
+          <div className="oa-search"><Icon name="search" size={14} />
+            <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" /></div>
+        )}
+        <div className="oa-items" role="list">
+          {list.length === 0 ? (
+            <div className="oa-none">
+              <span className="oa-none-ic"><Icon name="check" size={18} /></span>
+              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
+              <small>{sq ? "Try another name." : view === "waiting" ? "No work arrangement requests waiting for you." : "Requests you approve or reject show here."}</small>
+            </div>
+          ) : list.map((w) => (
+            <button key={w.id} type="button" role="listitem" className={cur && cur.id === w.id ? "oa-item on" : "oa-item"}
+              onClick={() => { setSel(w.id); setOpen(true); }}>
+              <Avatar name={w.intern_name} photo={w.intern_photo} size={34} />
+              <span className="oa-who"><b>{w.intern_name}</b><small>{short(from(w))} → {short(to(w))}{w.created_at ? ` · ${fxWhen(w.created_at).replace(/, \d{4}$/, "")}` : ""}</small></span>
+              {view === "reviewed" && badge(w)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="oa-detail">
+        {!cur ? (
+          <div className="oa-blank">
+            <span className="oa-none-ic"><Icon name="globe" size={20} /></span>
+            <b>{view === "waiting" ? "No requests waiting" : "Nothing to show yet"}</b>
+            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the requests already checked." : "When an intern asks to work from home or go back onsite, it shows here."}</small>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+            <div className="oa-head">
+              <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
+              <div className="oa-hn"><b>{cur.intern_name}</b><small>Work arrangement{cur.placement ? ` · ${cur.placement}` : ""}</small></div>
+              {badge(cur, true)}
+            </div>
+            <div className="fx-cmp">
+              <div className="fx-side">
+                <span className="fx-lbl">{cur.status === "approved" ? "Was" : "Now"}</span>
+                <span className={`wf-mode ${from(cur)}`}><Icon name={from(cur) === "offsite" ? "home" : "briefcase"} size={16} /> {modeLabel(from(cur))}</span>
+              </div>
+              <div className="fx-side ask">
+                <span className="fx-lbl">{cur.status === "approved" ? "Now" : "Asks for"}</span>
+                <span className={`wf-mode ${to(cur)}`}><Icon name={to(cur) === "offsite" ? "home" : "briefcase"} size={16} /> {modeLabel(to(cur))}</span>
+              </div>
+            </div>
+            <div className="oa-kv fx-kv">
+              <div><small>{range(cur) ? "Dates" : "Sent"}</small><b>{range(cur) || fxWhen(cur.created_at)}</b></div>
+              <div><small>{view === "waiting" ? (range(cur) ? "Sent" : "Proof") : "Reviewed"}</small>
+                <b>{view === "waiting" ? (range(cur) ? fxWhen(cur.created_at) : (cur.file_path ? "HTE letter" : cur.in_moa ? "In the MOA" : "None")) : fxWhen(cur.reviewed_at || cur.updated_at)}</b></div>
+            </div>
+            <div className="oa-tasks">
+              <span>Reason</span>
+              <p>{cur.reason || "—"}</p>
+            </div>
+            <div className="wf-proof">
+              <span className="fx-lbl">Proof</span>
+              {cur.file_path ? (
+                <a className="wf-file" href={`${STORAGE}${cur.file_path}`} target="_blank" rel="noopener noreferrer">
+                  <Icon name="file" size={15} /> <span>{cur.original_name || "HTE letter"}</span> <em>Open</em>
+                </a>
+              ) : cur.in_moa ? <span className="wf-note ok"><Icon name="check" size={13} /> Work from home is stated in the MOA / Student Contract</span>
+                : <span className="wf-note">{to(cur) === "onsite" ? "No letter needed (going back onsite)" : "No letter attached"}</span>}
+            </div>
+            <ol className="oa-steps fx-steps">
+              <li className="done"><i><Icon name="check" size={11} /></i><span>Intern asked</span></li>
+              <li className={cur.status === "approved" ? "done" : cur.status === "rejected" ? "bad" : "now"}>
+                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : cur.status === "rejected" ? <Icon name="x" size={11} /> : 2}</i>
+                <span>{cur.status === "rejected" ? "Rejected" : "You decide"}</span></li>
+              <li className={cur.status === "approved" ? "done" : ""}>
+                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : 3}</i><span>Arrangement changed</span></li>
+            </ol>
+            <OaHistory name={cur.intern_name}
+              rows={[...waiting, ...reviewed].filter((w) => w.id !== cur.id && (w.user_id ? w.user_id === cur.user_id : w.intern_name === cur.intern_name))
+                .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).slice(0, 12)
+                .map((w) => ({ id: w.id, when: fxWhen(w.created_at), text: `${short(from(w))} → ${short(to(w))} · ${w.reason || ""}`, badge: badge(w) }))}
+              onPick={(r) => { const wt = waiting.some((x) => x.id === r.id); setView(wt ? "waiting" : "reviewed"); setQ(""); setSel(r.id); }} />
+            {view === "waiting" ? (
+              <div className="oa-act">
+                <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[cur.id] || ""}
+                  onChange={(e) => setRemarks((r) => ({ ...r, [cur.id]: e.target.value }))} />
+                <button className="ix-b danger" onClick={() => decide(cur, "rejected")} disabled={!!busy}>{busy === cur.id + "rejected" ? "..." : "Reject"}</button>
+                <button className="ix-b ok" onClick={() => decide(cur, "approved")} disabled={!!busy}>{busy === cur.id + "approved" ? "..." : "Approve"}</button>
+              </div>
+            ) : (
+              <div className={cur.status === "rejected" ? "oa-done bad" : "oa-done ok"}>
+                <Icon name={cur.status === "rejected" ? "x" : "check"} size={14} />
+                <span>{cur.status === "rejected" ? "Rejected. The arrangement stays the same." : `Approved. Now ${modeLabel(to(cur)).toLowerCase()}.`}
+                  {cur.remarks ? <> Remarks: <em>{cur.remarks}</em></> : null}
+                  {cur.reviewer_name ? <small> · {cur.reviewer_name}</small> : null}</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const WF_CSS = `
+.wf-mode { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #0f172a; }
+.wf-mode.offsite { color: #15803d; }
+.fx-side:not(.ask) .wf-mode { color: #334155; }
+.wf-proof { display: flex; align-items: center; gap: 12px; flex: none; padding: 0 2px; }
+.wf-file { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid #e2e8f0; border-radius: 9px; font-size: 13px; color: #0f172a; text-decoration: none !important; min-width: 0; }
+.wf-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.wf-file em { font-style: normal; font-weight: 700; color: #ea580c; margin-left: 4px; }
+.wf-file:hover { border-color: #fdba74; background: #fff8f3; }
+.wf-note { font-size: 13px; color: #64748b; display: inline-flex; align-items: center; gap: 6px; }
+.wf-note.ok { color: #15803d; font-weight: 600; }
+`;
 
 const svCss = `
 .sv-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }

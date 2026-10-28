@@ -130,66 +130,87 @@ function Requests({ user, requests, loading, error, refresh, onRefresh, preOf })
     }
   };
 
+  const [q, setQ] = useState("");
+  const [show, setShow] = useState("all");          // all | pending | approved | printed
+  const sq = q.trim().toLowerCase();
+  const stOf = (r) => (r.status === "approved" && r.printed_at ? "printed" : r.status === "approved" ? "approved" : "pending");
+  const ST = { pending: { label: "Pending", type: "pending" }, approved: { label: "Approved · to print", type: "online" }, printed: { label: "Printed · to claim", type: "onsite" } };
+  const shown = requests
+    .filter((r) => show === "all" || stOf(r) === show)
+    .filter((r) => `${r.intern_name} ${r.intern_email} ${r.type || ""}`.toLowerCase().includes(sq))
+    .sort((a, b) => (stOf(a) === "pending") === (stOf(b) === "pending")
+      ? String(a.created_at).localeCompare(String(b.created_at)) : stOf(a) === "pending" ? -1 : 1);
+
   if (loading) return <Spinner />;
 
   return (
     <>
       <Msg msg={msg} />
-
-      {requests.length === 0 && !error ? (
-        <div className="ix-card ix-allgood">
-          <div className="ix-empty-icon"><Icon name="check" size={30} /></div>
-          <div className="ix-empty-title" style={{ fontSize: 17 }}>All caught up!</div>
-          <div className="ix-empty-sub">No card requests waiting. New applications will show up here.</div>
+      <div className="ix-toolbar">
+        <div className="ix-search">
+          <Icon name="search" size={16} />
+          <input type="text" placeholder="Search name or request..." value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-      ) : (
-        <Inbox
-          items={requests}
-          row={(r) => {
-            const st = r.status === "approved" && r.printed_at ? { label: "Printed", type: "onsite" }
-              : r.status === "approved" ? { label: "Approved", type: "pending" } : STATUS[r.status] || STATUS.pending;
+        <select className="ix-select" value={show} onChange={(e) => setShow(e.target.value)} aria-label="Filter by status">
+          <option value="all">All requests</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved · to print</option>
+          <option value="printed">Printed · to claim</option>
+        </select>
+        <span className="ix-chip">{shown.length} requests</span>
+      </div>
+      <div className="ix-card flush nfc-req-table">
+        <Table
+          headers={["Intern", "Request", "Applied", "Pre-internship", "Status", "Remarks", ""]}
+          rows={shown.map((r) => {
+            const st = ST[stOf(r)];
             const p = preOf ? preOf(r) : null;
-            return { name: r.intern_name, photo: r.intern_photo, sub: `${r.type || "NFC card"} · applied ${fmtDate(r.created_at)}`,
-              tag: <Badge label={st.label} type={st.type} />, meta: p ? `Pre-internship ${p.approved}/${p.total}` : "" };
-          }}
-          detail={(r) => {
-            const st = r.status === "approved" && r.printed_at ? { label: "Printed · waiting for claim", type: "onsite" }
-              : r.status === "approved" ? { label: "Approved · waiting for print", type: "pending" } : STATUS[r.status] || STATUS.pending;
-            const p = preOf ? preOf(r) : null;
-            return (
-              <>
-                <div className="ibx-head"><Avatar name={r.intern_name} photo={r.intern_photo} size={48} />
-                  <div><b>{r.intern_name}</b><small>{r.intern_email}</small></div>
-                  <span style={{ marginLeft: "auto" }}><Badge label={st.label} type={st.type} /></span></div>
-                <div className="ibx-kv ibx-sec">
-                  <div><small>Request</small><b>{r.type || "NFC card"}</b></div>
-                  <div><small>Applied</small><b>{fmtDate(r.created_at)}</b></div>
-                  {p && <div><small>Pre-internship</small><b className={p.started ? "nfc-ok" : "nfc-not"}>{p.approved}/{p.total}{p.started ? " · started" : ""}</b></div>}
-                </div>
-                {r.notes && <div className="ibx-sec"><span>Intern's note</span><p>{r.notes}</p></div>}
-                {r.status === "approved" && (
-                  <div className="nfc-wait">
-                    <Icon name="clock" size={16} />
-                    <span>{r.printed_at
-                      ? "Printed. The intern claims it at the office; the card becomes active when they pick it up."
-                      : `Approved. The intern signs the ID card at the ${ID_OFFICE}; the admin prints it and links it when they claim it.`}</span>
-                  </div>
-                )}
-                {r.status === "pending" && (
-                  <div className="ibx-act">
-                    <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[r.id] || ""}
-                      onChange={(e) => setRemarks((x) => ({ ...x, [r.id]: e.target.value }))} />
-                    <button className="ix-b danger" onClick={() => review(r, "reject")} disabled={!!processing}>
-                      {processing === r.id + "reject" ? "..." : "Reject"}</button>
-                    <button className="ix-b ok" onClick={() => review(r, "approve")} disabled={!!processing}>
-                      {processing === r.id + "approve" ? "..." : "Approve"}</button>
-                  </div>
-                )}
-              </>
-            );
-          }}
+            const pending = stOf(r) === "pending";
+            return [
+              <div className="ix-actions">
+                <Avatar name={r.intern_name} photo={r.intern_photo} size={30} />
+                <span className="nfc-who"><strong>{r.intern_name}</strong><small>{r.intern_email}</small></span>
+              </div>,
+              <span className="nfc-reqcol"><span className="ix-chip">{r.type || "NFC card"}</span>
+                {r.notes && <small title={r.notes}>“{r.notes}”</small>}</span>,
+              fmtDate(r.created_at),
+              p ? <span className={p.started ? "nfc-ok" : "nfc-not"}>{p.approved}/{p.total}{p.started ? " · started" : ""}</span> : <span className="ix-muted">—</span>,
+              <Badge label={st.label} type={st.type} />,
+              pending ? (
+                <input type="text" className="ix-input nfc-rem" placeholder="Remarks (optional)" value={remarks[r.id] || ""}
+                  onChange={(e) => setRemarks((x) => ({ ...x, [r.id]: e.target.value }))} />
+              ) : <span className="os-remarks">{r.remarks || "—"}</span>,
+              pending ? (
+                <span className="nfc-acts">
+                  <button className="ix-b danger sm" onClick={() => review(r, "reject")} disabled={!!processing}>
+                    {processing === r.id + "reject" ? "..." : "Reject"}</button>
+                  <button className="ix-b ok sm" onClick={() => review(r, "approve")} disabled={!!processing}>
+                    {processing === r.id + "approve" ? "..." : "Approve"}</button>
+                </span>
+              ) : (
+                <span className="nfc-next" title={r.printed_at
+                  ? "The intern claims it at the office; the card becomes active when they pick it up."
+                  : `The intern signs the ID card at the ${ID_OFFICE}; the admin prints it and links it when they claim it.`}>
+                  <Icon name="clock" size={13} /> {r.printed_at ? "Waiting for claim" : "Waiting for print"}
+                </span>
+              ),
+            ];
+          })}
+          empty={requests.length ? "No requests match." : "No card requests waiting. New applications will show up here."}
         />
-      )}
+      </div>
+      <style>{`
+        .nfc-who { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+        .nfc-who small { font-size: 12px; color: #64748b; }
+        .nfc-reqcol { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 170px; }
+        .nfc-reqcol small { font-size: 12px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+        .nfc-rem { width: 100%; min-width: 120px; max-width: 220px; padding: 7px 10px !important; font-size: 13px !important; }
+        .nfc-req-table { overflow-x: auto; }
+        .nfc-req-table td:nth-child(6) { width: 22%; }
+        .nfc-acts { display: inline-flex; gap: 6px; white-space: nowrap; }
+        .nfc-next { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: #64748b; white-space: nowrap; }
+        .nfc-ok { color: #15803d; font-weight: 700; } .nfc-not { color: #b45309; font-weight: 700; }
+      `}</style>
     </>
   );
 }
@@ -393,6 +414,7 @@ export function CardBack({ u, settings = {} }) {
    • can preview a card in the CSU design.
    requests = /supervisor/nfc-requests rows; interns = admin user rows (for student ID, course, birthday...). */
 // To print → (printed) To link → (UID saved, can be done in advance) Ready to claim → (intern picks it up) Released
+const STEP_SUB = { toprint: "Download and print", tolink: "Tap the new card", toclaim: "Intern picks it up", released: "Card is active" };
 const STAGES = [
   { key: "toprint",  label: "To print" },
   { key: "tolink",   label: "To link" },
@@ -611,12 +633,21 @@ export function CardRequests({ requests, interns, onChanged }) {
   return (
     <>
       <style>{nfcCss}</style>
-      <div className="ix-pills">
-        {STAGES.map((t) => (
-          <button key={t.key} className={stage === t.key ? "ix-pill active" : "ix-pill"} onClick={() => changeStage(t.key)}>
-            {t.label} <span className="ix-pill-count">{count(t.key)}</span>
-          </button>
-        ))}
+      {/* the card's journey: each step is a stage; click one to see the cards in it */}
+      <div className="idq-steps" role="tablist" aria-label="Card stages">
+        {STAGES.map((t, i) => {
+          const at = STAGES.findIndex((x) => x.key === stage);
+          const n = count(t.key);
+          return [
+            i > 0 && <span key={t.key + "-ar"} className={i <= at ? "idq-ar past" : "idq-ar"} aria-hidden="true">›</span>,
+            <button key={t.key} type="button" role="tab" aria-selected={stage === t.key}
+              className={`idq-step${stage === t.key ? " on" : ""}${i < at ? " past" : ""}`} onClick={() => changeStage(t.key)}>
+              <i>{i + 1}</i>
+              <span className="idq-st"><b>{t.label}</b><small>{STEP_SUB[t.key]}</small></span>
+              <span className={n && t.key !== "released" ? "idq-n hot" : "idq-n"}>{n}</span>
+            </button>,
+          ];
+        })}
       </div>
       <p className="idq-help">
         {stage === "toprint" && `Approved interns come to the ${ID_OFFICE} to sign. Make the cards in your printing app after they sign, then mark them as printed so they're told to claim it.`}
@@ -920,6 +951,26 @@ export const idCardCss = `
 `;
 
 const nfcCss = `
+  .ix-page .idq-steps { display: flex; align-items: stretch; gap: 6px; margin: 0 0 12px; overflow-x: auto; }
+  .ix-page .idq-step { flex: 1 1 0; min-width: 170px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e8ebf0; border-radius: 12px;
+    background: #fff; font: inherit; text-align: left; cursor: pointer; }
+  .ix-page .idq-step:hover { border-color: #fdba74; }
+  .ix-page .idq-step i { flex: none; width: 26px; height: 26px; border-radius: 50%; background: #eef0f4; color: #64748b; font-style: normal; font-size: 12px; font-weight: 800;
+    display: inline-flex; align-items: center; justify-content: center; }
+  .ix-page .idq-step.past i { background: #e9f8ef; color: #15803d; }
+  .ix-page .idq-step.on { border-color: #ea580c; background: #fff4ee; box-shadow: inset 0 -3px 0 #ea580c; }
+  .ix-page .idq-step.on i { background: #ea580c; color: #fff; }
+  .ix-page .idq-st { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+  .ix-page .idq-st b { font-size: 13.5px; color: #0f172a; white-space: nowrap; }
+  .ix-page .idq-step.on .idq-st b { color: #c2410c; }
+  .ix-page .idq-st small { font-size: 11.5px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ix-page .idq-n { flex: none; min-width: 24px; height: 22px; padding: 0 7px; border-radius: 11px; background: #eef0f4; color: #475569; font-size: 11.5px; font-weight: 800;
+    display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+  .ix-page .idq-n.hot { background: #ef4444; color: #fff; }
+  .ix-page .idq-ar { flex: none; align-self: center; font-size: 20px; color: #cbd5e1; }
+  .ix-page .idq-ar.past { color: #ea580c; }
+  .ix-page .idq-steps + .idq-help { margin: 0 0 12px; }
+
   .nfc-req-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
   .nfc-pre { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 700; background: #fef3c7; color: #92400e; }
   .nfc-pre.done { background: #dcf5e6; color: #146c3a; }

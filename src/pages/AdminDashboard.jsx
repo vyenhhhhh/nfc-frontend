@@ -6,7 +6,7 @@ import Shell, {
   navWithTabs,
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker, Inbox,
   InternMonitor, AccountSecurity, UserDetails, UserForm, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
-  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard,
+  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer,
 } from "../components/DashKit.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
@@ -399,6 +399,12 @@ const CAL_TIP_CSS = `
   .cal-tip-type { align-self: flex-start; padding: 2px 8px; border-radius: 99px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
   .cal-tip-type.holiday { background: #dcfce7; color: #15803d; }
   .cal-tip-type.nonwork { background: #fef3c7; color: #b45309; }
+  .cal-tip-ev { display: flex; flex-direction: column; gap: 3px; }
+  .cal-tip-ev + .cal-tip-ev { margin-top: 8px; padding-top: 8px; border-top: 1px solid #f1f2f4; }
+  .cal-tip-type.k-off { background: #fef2f2; color: #b91c1c; } .cal-tip-type.k-school { background: #f3efff; color: #6d28d9; }
+  .cal-tip-type.k-hte { background: #eef4ff; color: #1d4ed8; } .cal-tip-type.k-work, .cal-tip-type.k-open { background: #ecfdf3; color: #15803d; }
+  .cal-tip-mean { font-style: normal; font-size: 11.5px; font-weight: 600; }
+  .cal-tip-mean.k-off { color: #b91c1c; } .cal-tip-mean.k-school { color: #6d28d9; } .cal-tip-mean.k-hte { color: #1d4ed8; } .cal-tip-mean.k-work, .cal-tip-mean.k-open { color: #15803d; }
   .cal-tip strong { font-size: 13.5px; font-weight: 700; line-height: 1.3; }
   .cal-tip p { margin: 0; font-size: 12.5px; line-height: 1.45; color: #4b5563; white-space: pre-line; overflow-wrap: anywhere; }
   .cal-tip small { margin-top: 2px; font-size: 11px; color: #9ca3af; }
@@ -433,9 +439,16 @@ export function HomeCalendar() {
   const isToday = (d) => d === td && month === tm - 1 && year === ty;
   const keyOf = (d) => `${year}-${pad(month + 1)}-${pad(d)}`;
   // slice(0, 10) so both "2026-10-15" and "2026-10-15T00:00:00Z" work
-  const eventOf = (d) => events.find((e) => String(e.date).slice(0, 10) === keyOf(d));
+  const eventsOf = (d) => events.filter((e) => String(e.date).slice(0, 10) === keyOf(d));
+  // the one event that sets the day's color: an HTE working day > an HTE day off > a university day
+  const mainOf = (list) => list.find((e) => e.hte_key && e.type === "working") || list.find((e) => e.hte_key) || list[0];
+  const kindOfEv = (e) => !e ? null : e.hte_key ? (e.type === "working" ? "work" : "hte")
+    : (e.scope === "school_event" || e.off === false ? (e.scope === "school_event" ? "school" : "open") : "off");
+  // "next break": a day that really closes OJT for this viewer (staff: university No-OJT days)
+  const closesOJT = (e) => e.off !== false && (!e.hte_key || events.every((x) => !x.hte_key || x.hte_key === e.hte_key));
 
   const upcoming = events
+    .filter(closesOJT)
     .map((e) => ({ ...e, k: String(e.date).slice(0, 10) }))
     .filter((e) => e.k >= todayKey)
     .sort((a, b) => a.k.localeCompare(b.k))[0];
@@ -462,8 +475,10 @@ export function HomeCalendar() {
         {Array.from({ length: firstDay }, (_, i) => <div key={`blank-${i}`} />)}
         {Array.from({ length: daysInMonth }, (_, i) => {
           const d = i + 1;
-          const ev = eventOf(d);
-          const cls = ["adm-cal-day", isToday(d) && "today", ev && "event"].filter(Boolean).join(" ");
+          const evs = eventsOf(d);
+          const ev = mainOf(evs);
+          const kind = kindOfEv(ev);
+          const cls = ["adm-cal-day", isToday(d) && "today", ev && "event", kind && `k-${kind}`].filter(Boolean).join(" ");
           // show the hover card above the day (or below it near the top of the screen)
           const showTip = (e) => {
             if (!ev) return;
@@ -471,7 +486,7 @@ export function HomeCalendar() {
             const z = currentFit();
             const r = e.currentTarget.getBoundingClientRect();
             const below = r.top < 150;
-            setTip({ ev, x: (r.left + r.width / 2) / z, y: (below ? r.bottom + 8 : r.top - 8) / z, below });
+            setTip({ ev, evs, x: (r.left + r.width / 2) / z, y: (below ? r.bottom + 8 : r.top - 8) / z, below });
           };
           return (
             <div
@@ -479,30 +494,47 @@ export function HomeCalendar() {
               tabIndex={ev ? 0 : undefined}
               onMouseEnter={showTip} onFocus={showTip}
               onMouseLeave={() => setTip(null)} onBlur={() => setTip(null)}
-              aria-label={`${monthName} ${d}${ev ? ", " + ev.title + (ev.description ? ". " + ev.description : "") : ""}`}
+              aria-label={`${monthName} ${d}${evs.length ? ", " + evs.map((x) => x.title).join(", ") : ""}`}
             >
               {d}
-              {ev && <i className="adm-cal-dot" />}
+              {ev && <i className={`adm-cal-dot k-${kind}`} />}
             </div>
           );
         })}
       </div>
 
-      <div className="adm-cal-legend">
-        <span><i className="dot orange" /> Today</span>
-        <span><i className="dot amber" /> Holiday / Non-working</span>
-      </div>
+      {/* color guide: only the kinds that appear this month */}
+      {(() => {
+        const inMonth = events.filter((e) => String(e.date).slice(0, 7) === `${year}-${pad(month + 1)}`).map(kindOfEv);
+        const show = [["off", "No OJT"], ["school", "School event"], ["hte", "HTE day off"], ["work", "HTE open"]].filter(([k]) => inMonth.includes(k) || (k === "work" && inMonth.includes("open")));
+        return show.length > 0 && (
+          <div className="adm-cal-keys">{show.map(([k, l]) => <span key={k}><i className={`k-${k}`} />{l}</span>)}</div>
+        );
+      })()}
       {tip && createPortal(
         <div
           className={tip.below ? "cal-tip below" : "cal-tip"}
           style={{ left: Math.min(Math.max(tip.x, 140), window.innerWidth / currentFit() - 140), top: tip.y }}
           role="tooltip"
         >
-          <span className={tip.ev.type === "holiday" ? "cal-tip-type holiday" : "cal-tip-type nonwork"}>
-            {tip.ev.type === "holiday" ? "Holiday" : "Non-working day"}
-          </span>
-          <strong>{tip.ev.title}</strong>
-          {tip.ev.description && <p>{tip.ev.description}</p>}
+          {(tip.evs || [tip.ev]).map((x) => {
+            const k = kindOfEv(x);
+            const opened = !x.hte_key && x.off === false && x.scope !== "school_event";
+            const label = x.hte_key ? (x.type === "working" ? "HTE open" : "HTE day off") + (x.hte_name ? ` · ${x.hte_name}` : "")
+              : x.scope === "school_event" ? "School event" : x.type === "holiday" ? "Holiday" : "Non-working day";
+            const meaning = x.hte_key
+              ? (x.type === "working" ? "Your HTE is open: time in as usual." : "No OJT at this HTE: time-ins are closed.")
+              : x.scope === "school_event" ? "School event: interns still time in."
+              : opened ? "Your HTE is open this day: time in as usual." : "No OJT: time-ins are closed.";
+            return (
+              <div key={x.id} className="cal-tip-ev">
+                <span className={`cal-tip-type k-${opened ? "open" : k}`}>{label}</span>
+                <strong>{x.title}</strong>
+                {x.description && <p>{x.description}</p>}
+                <em className={`cal-tip-mean k-${opened ? "work" : k}`}>{meaning}</em>
+              </div>
+            );
+          })}
           <small>
             {new Date(String(tip.ev.date).slice(0, 10) + "T00:00:00")
               .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
@@ -880,11 +912,22 @@ function Accounts({ users, onRefresh }) {
     .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(sq));
   // the user shown on the right: the one clicked, or (wide screens) the only one left after a search.
   // Nothing opens by itself.
-  const cur = vu || (wide && sq && shownUsers.length === 1 ? shownUsers[0] : null) || null;
+  const cur = vu || null;   // a table of everyone; clicking a user opens their details
 
   return (
     <>
       <style>{ACC_OFF_CSS}</style>
+      <style>{`.ix-page .acc-filter { width: auto; min-width: 180px; flex: none; }
+        .ix-page .acc-name { display: inline-flex; align-items: center; gap: 10px; border: 0; background: none; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+        .ix-page .acc-name strong { white-space: nowrap; }
+        .ix-page .acc-name:hover strong { color: #ea580c; }
+        .ix-page .acc-mail { font-size: 12.5px; color: #64748b; }
+        .ix-page .acc-table .ix-table-wrap { max-height: none; }
+        .ix-page .acc-table td { vertical-align: middle; }
+        /* the account opens in the side panel (like the calendar): a wider panel, the profile in one column */
+        .ix-page .ix-drawer:has(.acc-detail) { width: min(720px, calc(100vw - 24px)); }
+        .ix-drawer .acc-detail .acc-detail-bar { position: sticky; top: -16px; z-index: 2; background: #fff; padding: 4px 0 10px; margin: 0; display: flex; gap: 8px; justify-content: flex-start; }
+        .ix-drawer .acc-detail :is(.ipv-grid, .uf-grid).c3, .ix-drawer .acc-detail .uf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }`}</style>
       {importing && <ImportInterns onClose={() => setImporting(false)} onDone={onRefresh} />}
       <PageHeader title="Manage Accounts" sub="Click a user to see their profile, then Edit to change it." />
 
@@ -929,45 +972,38 @@ function Accounts({ users, onRefresh }) {
               <Icon name="search" size={15} />
               <input type="text" placeholder="Search name, email or ID..." value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
-            {ROLE_TABS.map((t) => (
-              <button key={t.key} type="button" className={roleFilter === t.key ? "mon-chip on" : "mon-chip"} onClick={() => setRoleFilter(t.key)}>
-                {t.label} · {t.key === "all" ? users.length : t.key === "inactive" ? users.filter((u) => u.deactivated_at).length : users.filter((u) => u.role === t.key).length}
-              </button>
-            ))}
+            <select className="ix-select acc-filter" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} aria-label="Filter by role">
+              {ROLE_TABS.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.key === "all" ? "All users" : t.label} ({t.key === "all" ? users.length : t.key === "inactive" ? users.filter((u) => u.deactivated_at).length : users.filter((u) => u.role === t.key).length})
+                </option>
+              ))}
+            </select>
+            <span className="mon-chip on">{shownUsers.length} shown</span>
             <button className="ix-b ghost sm acc-add" onClick={() => setImporting(true)}><Icon name="upload" size={14} /> Import interns (Excel)</button>
             <button className="ix-b primary sm" onClick={openModal}><Icon name="plus" size={14} /> Add New User</button>
           </div>
 
-          <div className="mon-split">
-            <div className="mon-list" role="list">
-              {shownUsers.length === 0 ? (
-                <Empty icon="users" title={users.length ? "No users match your search." : "No users yet."} />
-              ) : shownUsers.map((u) => (
-                <button key={u.id} type="button" role="listitem"
-                  className={cur?.id === u.id ? "mon-item on" : "mon-item"}
-                  onClick={() => { if (editUser && editUser.id !== u.id) closeEdit(); openView(u); }}>
-                  <Avatar name={u.name} photo={u.photo} size={34} />
-                  <span className="mon-who">
-                    <b>{u.name}</b>
-                    <small>{u.email}</small>
-                  </span>
-                  <span className="mon-right">
-                    {u.deactivated_at
-                      ? <span className="acc-role-tag off">Deactivated</span>
-                      : <span className={`acc-role-tag ${u.role}`}>{ROLE_NAME[u.role] || u.role}</span>}
-                    <small>{u.student_id || ""}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <div className="mon-detail">
-              <button type="button" className="mon-back" onClick={backToList} disabled={savingEdit}>
-                <Icon name="menu" size={14} /> All users
-              </button>
-              {!cur ? (
-                <div className="mon-empty"><Empty icon="search" title="Search or select a user" sub="Their details show here." /></div>
-              ) : (
+          <div className="ix-card flush rec-card acc-table">
+            <Table
+              headers={["User", "Role", "Email", "ID", "Program / HTE", "Status", ""]}
+              rows={shownUsers.map((u) => [
+                <button type="button" className="acc-name" onClick={() => openView(u)}>
+                  <Avatar name={u.name} photo={u.photo} size={28} /><strong>{u.name}</strong></button>,
+                <span className={`acc-role-tag ${u.role}`}>{ROLE_NAME[u.role] || u.role}</span>,
+                <span className="acc-mail">{u.email}</span>,
+                u.student_id || <span className="ix-muted">—</span>,
+                <span className="acc-mail">{[u.role === "intern" ? u.program : null, u.placement].filter(Boolean).join(" · ") || "—"}</span>,
+                u.deactivated_at ? <span className="acc-role-tag off">Deactivated</span> : <Badge label="Active" type="approved" />,
+                <button type="button" className="ix-b ghost sm" onClick={() => openView(u)}>View</button>,
+              ])}
+              empty={users.length ? "No users match your search." : "No users yet."}
+            />
+          </div>
+          {cur && (
+            <Drawer inPage key={cur.id} icon={editUser ? "pencil" : "user"} kicker={editUser ? "Edit account" : (ROLE_NAME[cur.role] || cur.role)}
+              title={cur.name} onClose={() => { if (!savingEdit) backToList(); }}>
+              {(
                 <div className="acc-detail">
                   {!editUser && (
                     <div className="acc-detail-bar">
@@ -1050,8 +1086,8 @@ function Accounts({ users, onRefresh }) {
                   )}
                 </div>
               )}
-            </div>
-          </div>
+            </Drawer>
+          )}
         </div>
       )}
     </>
@@ -1188,7 +1224,7 @@ export function DTR({ interns, records, canCertify = false }) {
     setShown({ id: picked.id, year, mon, period });
   };
 
-  const holidays = useHolidays();
+  const holidays = useHolidays(shown?.id || null);   // that intern's days off (university + their HTE)
 
   // everything below is for the DTR that was displayed (not the fields being changed)
   const intern = shown ? interns.find((u) => u.id === shown.id) : null;
@@ -1389,11 +1425,31 @@ export function Reports({ interns, records }) {
 
 /* ───────────────────────── Calendar Management ───────────────────────── */
 // also used by the OJT coordinator (she sets the holidays and non-working days)
-/* Calendar: events on the left (plus "New event"), the selected one's form on the right */
-export function Calendar() {
+/* Calendar: the month on the left (click a day to add or edit), upcoming days off on the right.
+   The form opens from the right side. */
+const CAL_DOW = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/* what kind of day an event is (one color each) */
+const kindOf = (e) => e.hte_key
+  ? (e.type === "working" ? "work" : "hte")
+  : (e.scope === "school_event" ? "school" : e.type === "holiday" ? "h" : "n");
+const KIND_LABEL = { h: "Holiday", n: "Non-working", school: "School event", hte: "HTE day off", work: "HTE working day", uni: "University", unischool: "School event" };
+// a supervisor sees the university's days in gray (for reference only)
+const kindFor = (e, sup) => (sup && !e.hte_key ? (e.scope === "school_event" ? "unischool" : "uni") : kindOf(e));
+
+/* Two calendars:
+   - staff (OJT coordinator / admin): the university calendar. Each day is either "No OJT" (time-ins closed
+     for every intern) or "School event only" (shown, interns still time in). Every HTE's days show too.
+   - supervisor: their HTE's calendar (shared by all supervisors at the same HTE). Days off close time-ins
+     for that HTE's interns only; "We work this day" keeps time-ins open on a university No-OJT day. */
+export function Calendar({ mode = "staff" }) {
+  const sup = mode === "supervisor";
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null);
+  const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [open, setOpen] = useState(null);   // { date } for a new event, or the event to open
+  const [hteFilter, setHteFilter] = useState("all");   // staff: "all" | "uni" | an hte_key
 
   const fetchEvents = async () => {
     try {
@@ -1409,31 +1465,317 @@ export function Calendar() {
   };
   useEffect(() => { fetchEvents(); }, []);
 
-  const today = new Date().toLocaleDateString("en-CA");
-  const sorted = [...events].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const upcoming = sorted.filter((e) => String(e.date).slice(0, 10) >= today);
-  const past = sorted.filter((e) => String(e.date).slice(0, 10) < today).reverse();
-  const md = (d) => { const x = new Date(String(d).slice(0, 10) + "T00:00:00"); return isNaN(x) ? d : x.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", year: "numeric" }); };
+  const today = ymd(new Date());
+  const htes = [...new Map(events.filter((e) => e.hte_key).map((e) => [e.hte_key, e.hte_name || e.hte_key])).entries()];
+  const shownEvents = sup || hteFilter === "all" ? events
+    : hteFilter === "uni" ? events.filter((e) => !e.hte_key)
+    : events.filter((e) => !e.hte_key || e.hte_key === hteFilter);
+  const byDay = {};
+  shownEvents.forEach((e) => { const k = String(e.date).slice(0, 10); (byDay[k] ||= []).push(e); });
+  const upcoming = shownEvents.filter((e) => String(e.date).slice(0, 10) >= today).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const past = shownEvents.filter((e) => String(e.date).slice(0, 10) < today).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const start = new Date(month); start.setDate(1 - month.getDay());
+  const days = Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+  const lastRow = days.slice(35).every((d) => d.getMonth() !== month.getMonth()) ? 35 : 42;
+  const monthLabel = month.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const shift = (n) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1));
+  const dayTile = (iso) => { const x = new Date(iso + "T00:00:00"); return { d: x.getDate(), m: x.toLocaleDateString("en-US", { month: "short" }).toUpperCase(), w: x.toLocaleDateString("en-US", { weekday: "long" }) }; };
+  const done = (m) => { setMsg(m); if (m?.type === "success") { setOpen(null); fetchEvents(); } };
+
+  // clicking a day: a supervisor opens their HTE's event (or the university one to see it); staff open the university one
+  const clickDay = (iso, evs) => {
+    const mine = evs.find((e) => e.hte_key);
+    const uni = evs.find((e) => !e.hte_key);
+    if (sup) setOpen(mine || (uni ? { ...uni, _uni: true } : { date: iso }));
+    else setOpen(uni || (evs[0] ? evs[0] : { date: iso }));
+  };
 
   return (
     <>
-      <PageHeader title="Calendar Management" sub="Manage holidays and non-working days." />
+      <PageHeader title={sup ? "HTE Calendar" : "Calendar Management"}
+        sub={sup ? "Your HTE's own calendar. Days off here apply only to the interns placed at your HTE. The university's days show for reference."
+          : "The university calendar. Click a day to add a holiday, a suspension or a school event. Each HTE keeps its own calendar too."} />
       <Msg msg={msg} />
       {loading ? <Spinner /> : (
-        <Inbox
-          items={[{ id: "__new" }, ...upcoming, ...past]}
-          row={(e) => e.id === "__new"
-            ? { icon: "plus", name: "New event", sub: "Add a holiday or non-working day", tag: null, meta: "" }
-            : { icon: "calendar", tone: String(e.date).slice(0, 10) < today ? "past" : e.type === "holiday" ? "" : "waiting",
-                name: e.title, sub: md(e.date),
-                tag: <Badge label={e.type === "holiday" ? "Holiday" : "Non-working"} type={e.type === "holiday" ? "approved" : "pending"} />,
-                meta: String(e.date).slice(0, 10) < today ? "past" : "" }}
-          detail={(e) => <CalEditor key={e.id} ev={e.id === "__new" ? null : e} onDone={(m) => { setMsg(m); fetchEvents(); }} />}
-        />
+        <div className="cm-cols">
+          <section className="ix-card flush cm-cal">
+            <header className="cm-hd">
+              <div className="cm-nav">
+                <button type="button" className="cm-nb" onClick={() => shift(-1)} aria-label="Previous month">‹</button>
+                <b>{monthLabel}</b>
+                <button type="button" className="cm-nb" onClick={() => shift(1)} aria-label="Next month">›</button>
+                <button type="button" className="ix-b ghost sm cm-today" onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); }}>Today</button>
+                {!sup && htes.length > 0 && (
+                  <select className="ix-select cm-filter" value={hteFilter} onChange={(e) => setHteFilter(e.target.value)} aria-label="Show">
+                    <option value="all">University + all HTEs</option>
+                    <option value="uni">University only</option>
+                    {htes.map(([k, n]) => <option key={k} value={k}>University + {n}</option>)}
+                  </select>
+                )}
+              </div>
+              <div className="cm-leg">
+                {sup ? (<>
+                  <span><i className="hte" />Your HTE's day off</span><span><i className="work" />Your HTE works</span><span><i className="uni" />University (reference)</span>
+                </>) : (<>
+                  <span><i className="h" />Holiday</span><span><i className="n" />Non-working</span><span><i className="school" />School event</span>
+                  <span><i className="hte" />HTE day off</span><span><i className="work" />HTE working</span>
+                </>)}
+              </div>
+            </header>
+            <div className="cm-grid" style={{ gridTemplateRows: `auto repeat(${lastRow / 7}, minmax(0, 1fr))` }}>
+              {CAL_DOW.map((d) => <div key={d} className="cm-dow">{d}</div>)}
+              {days.slice(0, lastRow).map((d) => {
+                const iso = ymd(d);
+                const evs = byDay[iso] || [];
+                const other = d.getMonth() !== month.getMonth();
+                const we = d.getDay() === 0 || d.getDay() === 6;
+                return (
+                  <button key={iso} type="button"
+                    className={`cm-day${other ? " other" : ""}${we ? " we" : ""}${iso === today ? " today" : ""}`}
+                    onClick={() => clickDay(iso, evs)}
+                    title={evs.length ? evs.map((e) => `${e.title}${e.hte_key && !sup ? ` (${e.hte_name})` : ""}`).join(", ") : sup ? "Add a day to your HTE calendar" : "Add a university event"}>
+                    <b>{d.getDate()}</b>
+                    {evs.slice(0, 3).map((e) => <span key={e.id} className={`cm-tag ${kindFor(e, sup)}`}>{e.hte_key && !sup ? `${e.hte_name}: ` : ""}{e.title}</span>)}
+                    {evs.length > 3 && <span className="cm-more">+{evs.length - 3} more</span>}
+                    {!evs.length && !other && <span className="cm-plus">+</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="ix-card flush cm-list">
+            <header className="cm-hd"><b>Upcoming</b><span className="cm-cnt">{upcoming.length} event{upcoming.length === 1 ? "" : "s"}</span></header>
+            <div className="cm-items">
+              {upcoming.length === 0 && <div className="cm-empty">Nothing coming up.<small>Click a day on the calendar to add one.</small></div>}
+              {[...upcoming, ...past.slice(0, 5)].map((e) => {
+                const iso = String(e.date).slice(0, 10);
+                const t = dayTile(iso);
+                const k = kindFor(e, sup);
+                return (
+                  <button key={e.id} type="button" className={`cm-item${iso < today ? " past" : ""}`}
+                    onClick={() => { setOpen(sup && !e.hte_key ? { ...e, _uni: true } : e); setMonth(new Date(iso.slice(0, 4), Number(iso.slice(5, 7)) - 1, 1)); }}>
+                    <span className={`cm-tile ${k}`}><b>{t.d}</b><small>{t.m}</small></span>
+                    <span className="cm-tx"><b>{e.title}</b>
+                      <small>{t.w}{e.hte_key ? (sup ? " · your HTE" : ` · ${e.hte_name}`) : " · University"}{iso < today ? " · past" : ""}</small></span>
+                    <span className={`cm-pill ${k}`}>{KIND_LABEL[k]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        </div>
       )}
+      {open && <CalDrawer key={(open.id || open.date) + (open._uni ? "u" : "")} ev={open.id ? open : null} date={open.date} sup={sup} workFrom={open._work} events={events} onClose={() => setOpen(null)} onDone={done} onWorkDay={(uni) => setOpen({ date: String(uni.date).slice(0, 10), _work: uni })} />}
+      <style>{CM_CSS}</style>
     </>
   );
 }
+
+function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, onDone, onWorkDay }) {
+  // what is being edited
+  const viewUni = sup && ev?._uni;                      // supervisor looking at a university day: read only
+  const hteEvent = sup || !!ev?.hte_key;                 // an HTE calendar day
+  const base = sup ? `${API}/supervisor/calendar` : `${API}/calendar`;
+  const [date, setDate] = useState(String(ev ? ev.date : initDate).slice(0, 10));
+  const [type, setType] = useState(ev ? ev.type : workFrom ? "working" : "holiday");
+  const [scope, setScope] = useState(ev?.scope || "no_ojt");
+  const [title, setTitle] = useState(ev ? ev.title : workFrom ? "Office open as usual" : "");
+  const [description, setDescription] = useState(ev ? ev.description || "" : workFrom ? `Our HTE works on ${workFrom.title}.` : "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const d = new Date(date + "T00:00:00");
+  const dateTitle = isNaN(d) ? "New event" : d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!date || !title.trim()) { setErr("Please enter a date and title."); return; }
+    setSaving(true); setErr(null);
+    try {
+      const res = await fetch(ev ? `${base}/${ev.id}` : base, {
+        method: ev ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ date, type, title: title.trim(), description, ...(hteEvent ? {} : { scope }) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Failed to save.");
+      onDone({ type: "success", text: data.message || "Saved." });
+    } catch (er) { setErr(er.message); } finally { setSaving(false); }
+  };
+  const del = async () => {
+    if (!window.confirm("Delete this day from the calendar?")) return;
+    try {
+      const res = await fetch(`${base}/${ev.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "Failed to delete.");
+      onDone({ type: "success", text: data.message || "Deleted." });
+    } catch (er) { setErr(er.message); }
+  };
+
+  /* a supervisor opening a university day: see it, and (on a No-OJT day) "We work this day" */
+  if (viewUni) {
+    const closes = ev.scope !== "school_event";
+    return (
+      <Drawer inPage title={dateTitle} kicker="University calendar" icon="calendar" onClose={onClose}
+        footer={closes ? (close) => (<>
+          <button type="button" className="ix-b ghost" onClick={close}>Close</button>
+          <button type="button" className="ix-b primary" onClick={() => onWorkDay(ev)}>We work this day</button>
+        </>) : null}>
+        <div className="cm-form">
+          <span className={`cm-pill ${kindOf(ev)}`} style={{ alignSelf: "flex-start" }}>{KIND_LABEL[kindOf(ev)]}</span>
+          <div><small className="cm-lbl">Title</small><b className="cm-val">{ev.title}</b></div>
+          {ev.description && <div><small className="cm-lbl">Description</small><p className="cm-val">{ev.description}</p></div>}
+          <small className="cm-note">{closes
+            ? "Set by the OJT coordinator: no OJT for every intern. If your HTE is open this day, click “We work this day” so your interns can time in."
+            : "A school event. Your interns still time in as usual."}</small>
+        </div>
+      </Drawer>
+    );
+  }
+
+  const isWork = type === "working";
+  // "We work" only makes sense on a day the university closed (No OJT): it opens that day for this HTE's interns
+  const uniClosed = events.some((x) => !x.hte_key && String(x.date).slice(0, 10) === date && x.scope !== "school_event");
+  const canWork = hteEvent && (uniClosed || isWork);
+  return (
+    <Drawer inPage title={dateTitle}
+      kicker={hteEvent ? (sup ? (ev ? "Your HTE calendar" : "Add to your HTE calendar") : `HTE calendar · ${ev?.hte_name || ""}`) : ev ? "University calendar · edit" : "University calendar"}
+      icon="calendar" onClose={onClose}
+      footer={(close) => (<>
+        {ev ? <button type="button" className="ix-b danger" onClick={del}><Icon name="trash" size={14} /> Delete</button>
+          : <button type="button" className="ix-b ghost" onClick={close} disabled={saving}>Cancel</button>}
+        <button type="submit" form="cal-form" className="ix-b primary" disabled={saving}>{saving ? "Saving..." : ev ? "Update" : "Add"}</button>
+      </>)}>
+      <form id="cal-form" onSubmit={save} className="ix-form cm-form">
+        {err && <Msg msg={{ type: "error", text: err }} />}
+        {hteEvent && !sup && (
+          <div className="cm-hte"><Icon name="info" size={14} /> {ev?.hte_name}'s own calendar{ev?.created_by_name ? `, added by ${ev.created_by_name}` : ""}. It applies only to the interns placed there.</div>
+        )}
+        <div className="ix-field">
+          <label>Type</label>
+          <div className="cm-seg" role="radiogroup" aria-label="Type">
+            <button type="button" role="radio" aria-checked={type === "holiday"} className={type === "holiday" ? "on h" : ""} onClick={() => setType("holiday")}>Holiday</button>
+            <button type="button" role="radio" aria-checked={type === "non_working"} className={type === "non_working" ? "on n" : ""} onClick={() => setType("non_working")}>Non-working</button>
+            {canWork && <button type="button" role="radio" aria-checked={isWork} className={isWork ? "on work" : ""} onClick={() => setType("working")}>We're open</button>}
+          </div>
+        </div>
+        {!hteEvent && (
+          <div className="ix-field">
+            <label>For interns</label>
+            <div className="cm-seg two" role="radiogroup" aria-label="For interns">
+              <button type="button" role="radio" aria-checked={scope === "no_ojt"} className={scope === "no_ojt" ? "on h" : ""} onClick={() => setScope("no_ojt")}>
+                No OJT<small>Time-ins closed for all interns</small></button>
+              <button type="button" role="radio" aria-checked={scope === "school_event"} className={scope === "school_event" ? "on school" : ""} onClick={() => setScope("school_event")}>
+                School event only<small>Shown; interns still time in</small></button>
+            </div>
+          </div>
+        )}
+        <div className="ix-field">
+          <label htmlFor="cal-date">Date</label>
+          <input id="cal-date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div className="ix-field">
+          <label htmlFor="cal-title">Title</label>
+          <input id="cal-title" type="text" required placeholder={isWork ? "e.g. Office open as usual" : hteEvent ? "e.g. Company anniversary" : "e.g. Independence Day"}
+            value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+        </div>
+        <div className="ix-field">
+          <label htmlFor="cal-desc">Description <span className="ix-muted">(optional)</span></label>
+          <textarea id="cal-desc" rows={3} placeholder="e.g. interns are not allowed to time in" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </div>
+        {canWork && !isWork && <small className="cm-note">The university has no OJT this day. If your office is open, choose “We're open” so your interns can time in.</small>}
+        <small className="cm-note">{isWork
+          ? "The university has no OJT this day, but your office is open: your interns can time in as usual. The OJT coordinator is notified."
+          : hteEvent ? "Only the interns placed at this HTE can't time in this day. They and the OJT coordinator are notified."
+          : scope === "school_event" ? "Shown on everyone's calendar. Interns still time in at their HTE."
+          : "No intern can time in this day (unless their HTE marks it as a working day). It shows on the DTR."}</small>
+      </form>
+    </Drawer>
+  );
+}
+
+const CM_CSS = `
+.ix-page .cm-cols { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: stretch; }
+.ix-page .ix-card.cm-cal, .ix-page .ix-card.cm-list { margin: 0 !important; padding: 0 !important; overflow: hidden; display: flex; flex-direction: column; }
+.ix-page .cm-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid #eef0f3; min-height: 56px; box-sizing: border-box; }
+.ix-page .cm-hd > b { font-size: 15px; font-weight: 600; color: #111827; }
+.ix-page .cm-nav { display: flex; align-items: center; gap: 8px; }
+.ix-page .cm-nav > b { font-size: 15px; font-weight: 600; color: #111827; min-width: 140px; text-align: center; }
+.ix-page .cm-nb { width: 32px; height: 32px !important; min-height: 0 !important; padding: 0 !important; border: 1px solid #e7e9ee; border-radius: 9px; background: #fff; font: inherit; font-size: 16px; color: #374151; cursor: pointer; }
+.ix-page .cm-nb:hover { border-color: #f6c9b3; color: #c2410c; }
+.ix-page .cm-today { height: 32px !important; }
+.ix-page .cm-leg { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: #6b7280; }
+.ix-page .cm-leg span { display: inline-flex; align-items: center; gap: 5px; }
+.ix-page .cm-leg i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ix-page .cm-leg i.h { background: #ef4444; } .ix-page .cm-leg i.n { background: #f59e0b; } .ix-page .cm-leg i.w { background: #d1d5db; }
+.ix-page .cm-leg i.school { background: #8b5cf6; } .ix-page .cm-leg i.hte { background: #3b82f6; } .ix-page .cm-leg i.work { background: #22c55e; }
+.ix-page .cm-tag.school, .ix-page .cm-pill.school { background: #f3efff; color: #6d28d9; }
+.ix-page .cm-tag.hte, .ix-page .cm-pill.hte { background: #eef4ff; color: #1d4ed8; }
+.ix-page .cm-tag.work, .ix-page .cm-pill.work { background: #ecfdf3; color: #15803d; }
+.ix-page .cm-tile.school { background: #f3efff; color: #6d28d9; } .ix-page .cm-tile.hte { background: #eef4ff; color: #1d4ed8; } .ix-page .cm-tile.work { background: #ecfdf3; color: #15803d; }
+.ix-page .cm-more { font-size: 10.5px; color: #6b7280; padding-left: 2px; }
+.ix-page .cm-leg i.uni { background: #9ca3af; }
+.ix-page :is(.cm-tag, .cm-pill, .cm-tile).uni, .ix-page :is(.cm-tag, .cm-pill, .cm-tile).unischool { background: #f3f4f6; color: #4b5563; }
+.ix-page .cm-filter { height: 32px !important; font-size: 12px !important; padding: 0 28px 0 10px !important; width: auto !important; margin-left: 4px; }
+.ix-page .cm-seg.two button { height: auto !important; min-height: 52px !important; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 6px 8px !important; }
+.ix-page .cm-seg button small { font-size: 10.5px; font-weight: 500; color: #6b7280; }
+.ix-page .cm-seg button.on.school { border-color: #8b5cf6; background: #f3efff; color: #6d28d9; }
+.ix-page .cm-seg button.on.work { border-color: #22c55e; background: #ecfdf3; color: #15803d; }
+.ix-page .cm-hte { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: #eef4ff; color: #1e40af; font-size: 12.5px; line-height: 1.45; }
+.ix-page .cm-lbl { display: block; font-size: 11.5px; color: #8b919b; margin-bottom: 2px; }
+.ix-page .cm-val { font-size: 14px; color: #111827; margin: 0; }
+.ix-page .cm-grid { flex: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; padding: 12px 16px 16px; }
+.ix-page .cm-dow { font-size: 10.5px; font-weight: 600; color: #8b919b; text-align: center; padding: 2px 0 4px; }
+.ix-page .cm-day { position: relative; min-height: 64px; display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 8px !important; border: 1px solid #eef0f3; border-radius: 10px;
+  background: #fff; font: inherit; text-align: left; cursor: pointer; overflow: hidden; height: auto !important; transition: border-color .15s, background .15s; }
+.ix-page .cm-day > b { font-size: 12.5px; font-weight: 600; color: #111827; }
+.ix-page .cm-day.we { background: #fafafb; } .ix-page .cm-day.we > b { color: #9ca3af; }
+.ix-page .cm-day.other { opacity: .4; }
+.ix-page .cm-day.today { border-color: #e8582a; } .ix-page .cm-day.today > b { color: #e8582a; }
+.ix-page .cm-day:hover { border-color: #f6c9b3; background: #fff7f2; }
+.ix-page .cm-plus { position: absolute; right: 8px; top: 5px; font-size: 15px; color: #e8582a; opacity: 0; transition: opacity .15s; }
+.ix-page .cm-day:hover .cm-plus { opacity: 1; }
+.ix-page .cm-tag { display: block; font-size: 10.5px; font-weight: 600; border-radius: 6px; padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ix-page .cm-tag.h { background: #fef2f2; color: #b91c1c; } .ix-page .cm-tag.n { background: #fff7ed; color: #c2410c; }
+.ix-page .cm-cnt { font-size: 12px; color: #6b7280; }
+.ix-page .cm-items { flex: 1; min-height: 0; overflow-y: auto; }
+.ix-page .cm-item { width: 100%; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 16px !important; border: 0; border-bottom: 1px solid #f1f2f4;
+  background: #fff; font: inherit; text-align: left; cursor: pointer; height: auto !important; border-radius: 0; }
+.ix-page .cm-item:hover { background: #fffaf7; }
+.ix-page .cm-item.past { opacity: .55; }
+.ix-page .cm-tile { width: 42px; height: 42px; border-radius: 11px; background: #fff1ea; color: #c2410c; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+.ix-page .cm-tile b { font-size: 15px; } .ix-page .cm-tile small { font-size: 9px; font-weight: 700; }
+.ix-page .cm-tx { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ix-page .cm-tx b { font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ix-page .cm-tx small { font-size: 11.5px; color: #6b7280; }
+.ix-page .cm-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ix-page .cm-pill.h { background: #fef2f2; color: #b91c1c; } .ix-page .cm-pill.n { background: #fff7ed; color: #c2410c; }
+.ix-page .cm-empty { padding: 32px 16px; text-align: center; font-size: 13px; color: #374151; font-weight: 600; display: flex; flex-direction: column; gap: 4px; }
+.ix-page .cm-empty small { font-weight: 400; color: #9ca3af; font-size: 12px; }
+.ix-page .cm-form { display: flex; flex-direction: column; gap: 14px; }
+.ix-page .cm-seg { display: flex; gap: 8px; }
+.ix-page .cm-seg button { flex: 1; height: 40px !important; min-height: 0 !important; border: 1px solid #e3e5ea; border-radius: 10px; background: #fff; font: inherit; font-size: 13px; font-weight: 600; color: #374151; cursor: pointer; }
+.ix-page .cm-seg button.on.h { border-color: #ef4444; background: #fef2f2; color: #b91c1c; }
+.ix-page .cm-seg button.on.n { border-color: #f59e0b; background: #fff7ed; color: #c2410c; }
+.ix-page .cm-note { font-size: 12px; color: #6b7280; line-height: 1.5; }
+/* computers: the page fits the window */
+@media (min-width: 1001px) and (min-height: 600px) {
+  .ix-page.lay2 .ix-main:has(.cm-cols) { display: flex !important; flex-direction: column !important; overflow-y: auto !important; }
+  .ix-page.lay2 .ix-main:has(.cm-cols) > .ix-content { flex: 1 0 auto !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.cm-cols) > .ix-content > * { flex: none; }
+  .ix-page .ix-content > .cm-cols { flex: 1 0 auto !important; min-height: 460px; }
+  .ix-page .cm-day { min-height: 0; }
+}
+@media (max-width: 1000px) {
+  .ix-page .cm-cols { grid-template-columns: 1fr; }
+  .ix-page .cm-leg { display: none; }
+  .ix-page .cm-day { min-height: 48px; padding: 4px 5px !important; }
+  .ix-page .cm-tag { font-size: 0; padding: 0; height: 5px; border-radius: 3px; }
+  .ix-page .cm-tag.h { background: #ef4444; } .ix-page .cm-tag.n { background: #f59e0b; } .ix-page .cm-tag.school { background: #8b5cf6; } .ix-page .cm-tag.hte { background: #3b82f6; } .ix-page .cm-tag.work { background: #22c55e; }
+  .ix-page .cm-grid { gap: 4px; padding: 10px; }
+}
+`;
 
 const CAL_FORM_CSS = `
 /* Calendar event form: everything fits without scrolling */
@@ -1629,60 +1971,191 @@ export function AdminProfile({ user }) {
     }
   };
 
+  const role = { admin: "Admin", ojt_coordinator: "OJT Coordinator", supervisor: "HTE Supervisor" }[me.role] || me.role;
+  const parts = (me.name || "").trim().split(/\s+/);
+  const bday = me.date_of_birth
+    ? new Date(String(me.date_of_birth).slice(0, 10) + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+  // one fact: a label and its value, or an input while editing
+  const kv = (label, value, key, opts = {}) => (
+    <div key={label} className={opts.full ? "pf-kv full" : "pf-kv"}>
+      <small>{label}</small>
+      {editing && key
+        ? <input className="pf-input" type={opts.type || "text"} value={form[key] ?? ""} onChange={set(key)} aria-label={label}
+            placeholder={opts.placeholder} autoComplete={opts.type === "password" ? "new-password" : undefined} required={opts.required} />
+        : <b>{value || "—"}</b>}
+    </div>
+  );
+
   return (
     <>
       <PageHeader
         title="My Profile"
         sub={canEdit ? "Your account information and security." : "Your account information. Ask the admin if something needs to be changed."}
       />
-      <Msg msg={msg} />
       {!acct ? <Spinner /> : (
-        <div className="prof-stack">
-          {editing ? (
-            <div className="ix-card prof-main">
-              <form onSubmit={save} onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}>
-                <UserForm
-                  mode="edit"
-                  f={form}
-                  set={set}
-                  isIntern={false}
-                  supervisors={[]}
-                  title={me.name}
-                  sub="Click the photo to change it."
-                  header={
-                    <label className="ix-photo-box" style={{ width: 84, height: 84, borderRadius: "50%" }}>
-                      <input type="file" accept="image/*" onChange={pickPhoto} />
-                      {preview ? <img src={preview} alt="New profile" /> : <Avatar name={me.name} photo={me.photo} size={84} />}
-                      <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
-                    </label>
-                  }
-                  actions={
-                    <>
-                      <button type="button" className="ix-b ghost" onClick={cancelEdit} disabled={saving}>Cancel</button>
-                      <button type="submit" className="ix-b primary" disabled={saving}>{saving ? "Saving..." : "Save changes"}</button>
-                    </>
-                  }
-                />
-              </form>
-            </div>
-          ) : (
-            <div className="ix-card prof-main">
-              {canEdit && (
-                <div className="prof-tools">
-                  <button type="button" className="ix-b ghost sm" onClick={startEdit}>
-                    <Icon name="pencil" size={14} /> Edit
-                  </button>
-                </div>
+        <form className="pf-page" onSubmit={save} onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") e.preventDefault(); }}>
+          {/* header: who you are, at a glance */}
+          <div className="ix-card pf-head">
+            <div className="pf-photo">
+              {preview ? <img src={preview} alt="New profile" className="pf-preview" /> : <Avatar name={me.name} photo={me.photo} size={76} />}
+              {editing && (
+                <label className="pf-cam" title="Change photo">
+                  <input type="file" accept="image/*" onChange={pickPhoto} />
+                  <Icon name="camera" size={14} />
+                </label>
               )}
-              <UserDetails u={me} />
             </div>
-          )}
-          <div className="prof-sec"><AccountSecurity user={user} /></div>
-        </div>
+            <div className="pf-who">
+              <h2>{me.name}</h2>
+              <div className="pf-sub">
+                <span>Employee ID <b>{me.student_id || "—"}</b></span>
+                {me.email && <span>{me.email}</span>}
+                {me.role === "supervisor" && me.placement && <span>{me.placement}</span>}
+              </div>
+              <div className="pf-tags">
+                <span className="pf-tag o">{role}</span>
+                <span className="pf-tag">{me.college || "CCIS"}</span>
+                <span className="pf-tag g">Active</span>
+              </div>
+            </div>
+            <div className="pf-right">
+              {canEdit ? (
+                editing ? (
+                  <div className="pf-actions">
+                    <button type="button" className="ix-b ghost" onClick={cancelEdit} disabled={saving}>Cancel</button>
+                    <button type="submit" className="ix-b primary" disabled={saving}>{saving ? "Saving..." : "Save changes"}</button>
+                  </div>
+                ) : (
+                  <button type="button" className="ix-b ghost" onClick={startEdit}><Icon name="pencil" size={14} /> Edit profile</button>
+                )
+              ) : (
+                <span className="pf-lock"><Icon name="lock" size={12} /> Only the admin can edit these</span>
+              )}
+            </div>
+          </div>
+          <Msg msg={msg} />
+
+          <div className="pf-grid">
+            <section className="ix-card flush pf-card">
+              <header>Personal information</header>
+              <div className="pf-body">
+                {kv("First name", me.first_name || parts[0], "first_name", { required: true })}
+                {kv("Middle name", me.middle_name, "middle_name")}
+                {kv("Last name", me.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""), "last_name", { required: true })}
+                {kv("Birthday", bday, "date_of_birth", { type: "date" })}
+                {kv("Contact number", me.contact_number, "contact_number", { type: "tel" })}
+                {kv("Address", me.address, "address", { full: true })}
+              </div>
+            </section>
+            <section className="ix-card flush pf-card">
+              <header>{me.role === "supervisor" ? "HTE details" : "Work details"}</header>
+              <div className="pf-body">
+                {kv("Role", role)}
+                {kv("Employee ID", me.student_id, "student_id")}
+                {kv("Email", me.email, "email", { type: "email", full: true, required: true })}
+                {me.role === "supervisor"
+                  ? kv("HTE (company / office)", me.placement || "Not set", null, { full: true })
+                  : kv("College", me.college || "CCIS")}
+                {editing && kv("New password", "", "password", { type: "password", full: true, placeholder: "Leave blank to keep the current one" })}
+              </div>
+            </section>
+          </div>
+          {!editing && <div className="pf-sec pf-sec-full"><AccountSecurity user={user} /></div>}
+        </form>
       )}
+      <style>{STAFF_PF_CSS}</style>
+      <style>{`
+        .ix-page .pf-photo { position: relative; flex-shrink: 0; }
+        .ix-page .pf-preview { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; display: block; }
+        .ix-page .pf-cam { position: absolute; right: -2px; bottom: -2px; width: 28px; height: 28px; border-radius: 50%; background: #e8582a; color: #fff;
+          display: grid; place-items: center; border: 2px solid #fff; cursor: pointer; }
+        .ix-page .pf-cam input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+        .ix-page .pf-actions { display: flex; gap: 8px; }
+        .ix-page .pf-input { width: 100%; height: 36px; padding: 0 10px; border: 1px solid #e3e5ea; border-radius: 9px; font: inherit; font-size: 13px; box-sizing: border-box; background: #fff; color: #111827; }
+        .ix-page .pf-input:focus { outline: none; border-color: #e8582a; box-shadow: 0 0 0 3px rgba(232,88,42,.12); }
+        /* this page has 3 cards: personal and work side by side, account security under them */
+        @media (min-width: 901px) and (min-height: 600px) {
+          .ix-page .pf-page:not(:has(.pf-sec-full)) .pf-grid { grid-template-rows: 1fr; }
+          .ix-page .pf-page:has(.pf-sec-full) .pf-grid { grid-template-rows: 1fr; flex: 1 1 0; }
+          .ix-page .pf-sec-full { flex: none; }
+          .ix-page .pf-sec-full > .ix-card.sec-card { height: auto; }
+        }
+      `}</style>
     </>
   );
 }
+const STAFF_PF_CSS = `
+.ix-page .pf-page { display: flex; flex-direction: column; gap: 14px; }
+.ix-page .ix-card.pf-head { position: relative; overflow: hidden; display: flex; align-items: center; gap: 18px; margin: 0 !important; padding: 18px 22px !important;
+  background: linear-gradient(100deg, #fff7f2 0%, #fff 60%) !important; }
+.ix-page .ix-card.pf-head { background: linear-gradient(100deg, #fff4ec 0%, #fffaf7 45%, #fff 100%) !important; }
+.ix-page .pf-head > * { position: relative; z-index: 1; }
+.ix-page .pf-who { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.ix-page .pf-who h2 { margin: 0; font-size: 20px; line-height: 1.25 !important; font-weight: 700; color: #111827; }
+.ix-page .pf-page :is(.pf-sub, .pf-stats small, .pf-stats b, .pf-lock, .pf-card > header) { line-height: 1.3 !important; }
+.ix-page .pf-sec .sec-card :is(.sec-label, .sec-hint, .ipv-title) { line-height: 1.4 !important; }
+.ix-page .pf-sub { display: flex; flex-wrap: wrap; gap: 0; font-size: 12.5px; color: #6b7280; }
+.ix-page .pf-sub span + span::before { content: "·"; margin: 0 7px; color: #c4c8cf; }
+.ix-page .pf-sub b { color: #111827; font-weight: 600; }
+.ix-page .pf-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.ix-page .pf-tag { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px; background: #f3f4f6; color: #374151; font-size: 11.5px; font-weight: 600; }
+.ix-page .pf-tag.o { background: #fff3ec; color: #c2410c; } .ix-page .pf-tag.g { background: #ecfdf3; color: #15803d; }
+.ix-page .pf-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.ix-page .pf-stats { display: flex; gap: 28px; }
+.ix-page .pf-stats div { text-align: right; }
+.ix-page .pf-stats small { display: block; font-size: 11.5px; color: #6b7280; }
+.ix-page .pf-stats b { font-size: 19px; font-weight: 700; color: #111827; }
+.ix-page .pf-lock { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #8b919b; }
+.ix-page .pf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
+.ix-page .ix-card.pf-card { margin: 0 !important; padding: 0 !important; overflow: hidden; }
+.ix-page .pf-card > header { padding: 13px 18px; border-bottom: 1px solid #eef0f3; font-size: 14px; font-weight: 600; color: #111827; }
+.ix-page .pf-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; padding: 16px 18px 18px; }
+.ix-page .pf-kv { min-width: 0; }
+.ix-page .pf-kv.full { grid-column: 1 / -1; }
+.ix-page .pf-kv small { display: block; font-size: 11.5px; line-height: 1.35 !important; color: #8b919b; margin: 0 0 2px !important; }
+.ix-page .pf-kv b { display: block; font-size: 13.5px; line-height: 1.35 !important; font-weight: 600; color: #111827; overflow-wrap: anywhere; margin: 0 !important; }
+/* account security uses the same card header as the others */
+.ix-page .pf-sec, .ix-page .pf-sec > .sec-card { height: 100%; }
+.ix-page .pf-sec > .ix-card.sec-card { margin: 0 !important; padding: 0 0 16px !important; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; }
+.ix-page .pf-sec .sec-card > .ipv-title { margin: 0 !important; padding: 13px 18px; border-bottom: 1px solid #eef0f3; font-size: 14px !important; font-weight: 600 !important; color: #111827; text-transform: none !important; letter-spacing: 0 !important; }
+.ix-page .pf-sec .sec-card > .ipv-title::after { display: none !important; }
+.ix-page .pf-sec .sec-card > :not(.ipv-title) { margin-left: 18px !important; margin-right: 18px !important; }
+.ix-page .pf-sec .sec-change { align-self: flex-start; }
+@media (max-width: 1100px) { .ix-page .pf-stats { gap: 18px; } }
+/* computers: the page fits the window; the four cards share the height left */
+@media (min-width: 901px) and (min-height: 600px) {
+  .ix-page.lay2 .ix-main:has(.pf-page) { overflow-y: auto !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content > * { flex: none; }
+  .ix-page .ix-content > .pf-page { flex: 1 0 auto !important; min-height: 0; }
+  .ix-page .ix-card.pf-head { flex: none; padding: clamp(12px, 1.8vh, 18px) 22px !important; }
+  /* each row is at least as tall as its content (nothing is cut); extra height is shared */
+  .ix-page .pf-grid { flex: 1 0 auto; grid-template-rows: minmax(min-content, 1.15fr) minmax(min-content, 1fr); }
+  .ix-page .pf-grid > * { min-height: 0; }
+  .ix-page .pf-card > header, .ix-page .pf-sec .sec-card > .ipv-title { padding: clamp(9px, 1.4vh, 13px) 18px !important; }
+  .ix-page .pf-body { gap: clamp(8px, 1.4vh, 14px) 24px; padding: clamp(10px, 1.6vh, 16px) 18px; }
+  .ix-page .pf-sec > .ix-card.sec-card { gap: clamp(6px, 1.2vh, 12px); padding-bottom: clamp(10px, 1.6vh, 16px) !important; }
+  .ix-page .pf-sec .sec-hint { font-size: 11.5px; line-height: 1.45; }
+}
+/* wide screens: three facts per row, so the cards stay short */
+@media (min-width: 1200px) and (max-height: 900px) { .ix-page .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* tall screens: roomier facts so the cards are filled */
+@media (min-width: 901px) and (min-height: 901px) { .ix-page .pf-body { gap: 18px 24px; } .ix-page .pf-kv b { font-size: 14px; } }
+@media (min-width: 901px) and (max-height: 800px) {
+  .ix-page .pf-sec .sec-hint { display: none; }
+  .ix-page .pf-kv small { margin-bottom: 0; font-size: 11px; } .ix-page .pf-kv b { font-size: 12.5px; }
+  .ix-page .pf-head .ix-avatar, .ix-page .pf-head > :first-child { transform: scale(.85); }
+}
+@media (max-width: 900px) {
+  .ix-page .ix-card.pf-head { flex-wrap: wrap; }
+  .ix-page .pf-stats { margin-left: 0; width: 100%; justify-content: space-between; }
+  .ix-page .pf-stats div { text-align: left; }
+  .ix-page .pf-lock { position: static !important; }
+  .ix-page .pf-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) { .ix-page .pf-body { grid-template-columns: 1fr; } }
+`;
+
 const cap = (s = "") => s.charAt(0).toUpperCase() + s.slice(1);
 
 /* ───────────────────────── admin styles ───────────────────────── */
@@ -1876,6 +2349,19 @@ export const adminCss = `
 .adm-cal-day.event:focus-visible { outline: 2px solid #e8582a; outline-offset: -2px; }
 .adm-cal-day.today.event { background: linear-gradient(135deg, #f2733a, #e04a1a); color: #fff; }
 .adm-cal-dot { position: absolute; bottom: 6px; width: 6px; height: 6px; border-radius: 50%; background: #f59e0b; }
+/* day colors: red no OJT, purple school event, blue HTE day off, green open (HTE working) */
+.ix-page .ix-content .adm-cal .adm-cal-day.event.k-off { background: #fef2f2 !important; color: #b91c1c !important; }
+.ix-page .ix-content .adm-cal .adm-cal-day.event.k-school { background: #f3efff !important; color: #6d28d9 !important; }
+.ix-page .ix-content .adm-cal .adm-cal-day.event.k-hte { background: #eef4ff !important; color: #1d4ed8 !important; }
+.ix-page .ix-content .adm-cal .adm-cal-day.event:is(.k-work, .k-open) { background: #ecfdf3 !important; color: #15803d !important; }
+.ix-page .ix-content .adm-cal .adm-cal-dot.k-off { background: #ef4444 !important; } .ix-page .ix-content .adm-cal .adm-cal-dot.k-school { background: #8b5cf6 !important; }
+.ix-page .ix-content .adm-cal .adm-cal-dot.k-hte { background: #3b82f6 !important; } .ix-page .adm-cal-dot:is(.k-work, .k-open) { background: #22c55e !important; }
+.ix-page .adm-cal-day.today .adm-cal-dot { background: #fff !important; }
+.ix-page .adm-cal-keys { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 2px 0; font-size: 10.5px; color: #6b7280; line-height: 1.3; }
+.ix-page .adm-cal-keys span { display: inline-flex; align-items: center; gap: 4px; }
+.ix-page .adm-cal-keys i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.ix-page .adm-cal-keys i.k-off { background: #ef4444; } .ix-page .adm-cal-keys i.k-school { background: #8b5cf6; }
+.ix-page .adm-cal-keys i.k-hte { background: #3b82f6; } .ix-page .adm-cal-keys i.k-work { background: #22c55e; }
 .adm-cal-day.today .adm-cal-dot { background: var(--ix-surface, #fff); }
 .adm-cal-legend {
   margin-top: 14px; padding-top: 14px; border-top: 1px dashed #f1ddd1;
@@ -1969,6 +2455,9 @@ function Kiosks() {
   const [shown, setShown] = useState(null);     // { name, key } just made: shown once
   const [copied, setCopied] = useState(false);
   const [readerPick, setReaderPick] = useState("auto");   // which card reader the kiosk device uses
+  const [adding, setAdding] = useState(false);
+  const [kq, setKq] = useState("");
+  const [kf, setKf] = useState("all");
 
   const load = () => fetch(`${API}/admin/kiosks`, { headers: { Accept: "application/json" } })
     .then((r) => r.json()).then((d) => setData(d && Array.isArray(d.kiosks) ? d : { kiosks: [], placements: [] }))
@@ -1991,18 +2480,37 @@ function Kiosks() {
   const add = async (e) => {
     e.preventDefault();
     const d = await call(`${API}/admin/kiosks`, "POST", { name: form.name.trim(), placement: form.placement || null }, "add");
-    if (d?.key) { setShown({ name: form.name.trim(), key: d.key }); setCopied(false); setForm({ name: "", placement: "" }); }
+    if (d?.key) { setShown({ name: form.name.trim(), key: d.key }); setCopied(false); setForm({ name: "", placement: "" }); setAdding(false); }
   };
   const newKey = async (k) => {
     if (!window.confirm(`Make a new key for "${k.name}"? The old key stops working right away, so you'll need to set up the kiosk again.`)) return;
     const d = await call(`${API}/admin/kiosks/${k.id}`, "PATCH", { new_key: true }, "key" + k.id);
     if (d?.key) { setShown({ name: k.name, key: d.key }); setCopied(false); }
   };
+  // show the setup link of a kiosk again (the key is kept encrypted on the server)
+  const showLink = async (k) => {
+    setBusy("show" + k.id); setMsg(null);
+    try {
+      const res = await fetch(`${API}/admin/kiosks/${k.id}/key`, { headers: { Accept: "application/json" } });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || "Couldn't get the key.");
+      setShown({ name: k.name, key: d.key }); setCopied(false);
+      const m = document.querySelector(".ix-main"); if (m) m.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setBusy(null); }
+  };
   const toggle = (k) => call(`${API}/admin/kiosks/${k.id}`, "PATCH", { active: !k.active }, "on" + k.id);
   const remove = (k) => window.confirm(`Remove "${k.name}"? Its key stops working.`) && call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id);
   const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}${readerPick !== "auto" ? `&reader=${readerPick}` : ""}` : "";
   const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select it by hand */ } };
   const seen = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Never");
+  const kqs = kq.trim().toLowerCase();
+  const kiosksShown = (data?.kiosks || [])
+    .filter((k) => kf === "all" || (kf === "on" && k.active) || (kf === "off" && !k.active) || (kf === "ccis" && !k.placement)
+      || (kf === "hte" && k.placement) || (kf === "never" && !k.last_seen_at))
+    .filter((k) => !kqs || `${k.name} ${k.placement || ""}`.toLowerCase().includes(kqs))
+    .sort((a, b) => (b.active - a.active) || String(a.name).localeCompare(String(b.name)));
 
   return (
     <div className="ks-wrap">
@@ -2011,7 +2519,7 @@ function Kiosks() {
       {shown && (
         <div className="ix-card ks-key">
           <div className="ks-key-h"><Icon name="key" size={18} /><b>Set up "{shown.name}"</b><button type="button" className="ix-b ghost sm" onClick={() => setShown(null)}>Done</button></div>
-          <p>Open this link <b>once</b> on the kiosk device. It saves the key there. This key is shown only now: if you lose it, make a new key.</p>
+          <p>Open this link <b>once</b> on the kiosk device. It saves the key there. You can see this link again any time with <b>Show link</b>. Keep it private: anyone with it can set up a kiosk.</p>
           <div className="ks-reader">
             <label htmlFor="ks-reader">Card reader on this kiosk</label>
             <select id="ks-reader" className="ix-select" value={readerPick} onChange={(e) => { setReaderPick(e.target.value); setCopied(false); }}>
@@ -2024,51 +2532,109 @@ function Kiosks() {
           <div className="ks-link"><code>{link}</code><button type="button" className="ix-b primary sm" onClick={copy}>{copied ? "Copied" : "Copy link"}</button></div>
         </div>
       )}
-      <div className="ks-grid">
-        <form className="ix-card ks-form" onSubmit={add}>
-          <h3>Add a kiosk</h3>
-          <div className="ix-field">
-            <label htmlFor="ks-name">Kiosk name</label>
-            <input id="ks-name" className="ix-input" required maxLength={120} placeholder="e.g. CCIS lobby, City Hall IT office"
-              value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-          </div>
-          <div className="ix-field">
-            <label htmlFor="ks-place">Who can tap here?</label>
-            <select id="ks-place" className="ix-select" value={form.placement} onChange={(e) => setForm((f) => ({ ...f, placement: e.target.value }))}>
-              <option value="">Every intern (CCIS kiosk)</option>
-              {(data?.placements || []).map((p) => <option key={p} value={p}>Only interns placed at {p}</option>)}
-            </select>
-            <small className="ks-hint">The HTE list comes from the interns' OJT placement.</small>
-          </div>
-          <button type="submit" className="ix-b primary" disabled={busy === "add" || !form.name.trim()}>{busy === "add" ? "Adding..." : "Add kiosk"}</button>
-        </form>
-        <div className="ix-card ks-list">
+      <div className="ix-card ks-list">
+        <div className="ks-bar">
           <h3>Kiosks <span className="ks-n">{data?.kiosks?.length ?? 0}</span></h3>
-          {!data ? <Spinner /> : (
-            <Table
-              headers={["Kiosk", "Who can tap", "Last used", "Status", ""]}
-              empty="No kiosks yet. The main kiosk key in the server's .env still works as a CCIS kiosk."
-              rows={data.kiosks.map((k) => [
-                <b>{k.name}</b>,
-                k.placement ? <span>Interns at <b>{k.placement}</b></span> : "Every intern (CCIS)",
-                seen(k.last_seen_at),
-                <Badge label={k.active ? "On" : "Off"} type={k.active ? "approved" : "rejected"} />,
-                <span className="ks-acts">
-                  <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => toggle(k)}>{k.active ? "Turn off" : "Turn on"}</button>
-                  <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => newKey(k)}>New key</button>
-                  <button type="button" className="ix-b danger sm" disabled={!!busy} onClick={() => remove(k)}>Remove</button>
-                </span>,
-              ])}
-            />
-          )}
+          <div className="ix-search ks-search"><Icon name="search" size={15} />
+            <input type="text" placeholder="Search kiosk or HTE..." value={kq} onChange={(e) => setKq(e.target.value)} /></div>
+          <select className="ix-select ks-filter" value={kf} onChange={(e) => setKf(e.target.value)} aria-label="Filter kiosks">
+            <option value="all">All kiosks</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="ccis">CCIS (every intern)</option>
+            <option value="hte">HTE kiosks</option>
+            <option value="never">Never used</option>
+          </select>
+          <button type="button" className="ix-b primary sm ks-addbtn" onClick={() => setAdding(true)}><Icon name="plus" size={14} /> Add kiosk</button>
         </div>
+        {!data ? <Spinner /> : kiosksShown.length === 0 ? (
+          <div className="ks-empty">{data.kiosks.length ? "No kiosk matches." : "No kiosks yet. The main kiosk key in the server's .env still works as a CCIS kiosk."}</div>
+        ) : (
+          <div className="ks-scroll">
+            <table className="ks-t">
+              <thead><tr><th>Kiosk</th><th>Who can tap</th><th>Last used</th><th>Status</th><th className="r">Actions</th></tr></thead>
+              <tbody>
+                {kiosksShown.map((k) => (
+                  <tr key={k.id} className={k.active ? "" : "off"}>
+                    <td><b>{k.name}</b></td>
+                    <td>{k.placement ? <span className="ks-hte">{k.placement}</span> : <span className="ks-ccis">Every intern (CCIS)</span>}</td>
+                    <td className="ks-seen">{seen(k.last_seen_at)}</td>
+                    <td>
+                      <button type="button" className={k.active ? "ks-sw on" : "ks-sw"} role="switch" aria-checked={k.active} disabled={!!busy}
+                        onClick={() => toggle(k)} title={k.active ? "Turn off" : "Turn on"}><i /><span>{k.active ? "On" : "Off"}</span></button>
+                    </td>
+                    <td className="r">
+                      <span className="ks-acts">
+                        <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => showLink(k)} title="Show the setup link of this kiosk again"><Icon name="eye" size={13} /> {busy === "show" + k.id ? "..." : "Show link"}</button>
+                        <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => newKey(k)} title="Make a new key: the old link stops working (use it if the link was shared by mistake)"><Icon name="key" size={13} /> New key</button>
+                        <button type="button" className="ix-b danger sm ks-del" disabled={!!busy} onClick={() => remove(k)} aria-label={`Remove ${k.name}`} title="Remove"><Icon name="trash" size={15} /></button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
+      {adding && (
+        <Drawer inPage title="Add a kiosk" kicker="Kiosks" icon="tap" onClose={() => setAdding(false)}
+          footer={(close) => (
+            <>
+              <button type="button" className="ix-b ghost" onClick={close}>Cancel</button>
+              <button type="submit" form="ks-add-form" className="ix-b primary" disabled={busy === "add" || !form.name.trim()}>{busy === "add" ? "Adding..." : "Add kiosk"}</button>
+            </>
+          )}>
+          <form id="ks-add-form" className="ks-form" onSubmit={async (e) => { await add(e); }}>
+            <div className="ix-field">
+              <label htmlFor="ks-name">Kiosk name</label>
+              <input id="ks-name" className="ix-input" required maxLength={120} placeholder="e.g. CCIS lobby, City Hall IT office" autoFocus
+                value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div className="ix-field">
+              <label htmlFor="ks-place">Who can tap here?</label>
+              <select id="ks-place" className="ix-select" value={form.placement} onChange={(e) => setForm((f) => ({ ...f, placement: e.target.value }))}>
+                <option value="">Every intern (CCIS kiosk)</option>
+                {(data?.placements || []).map((p) => <option key={p} value={p}>Only interns placed at {p}</option>)}
+              </select>
+              <small className="ks-hint">The HTE list comes from the interns' OJT placement.</small>
+            </div>
+            <p className="ks-hint">After adding, a setup link shows at the top of the page. Open it once on the kiosk device.</p>
+          </form>
+        </Drawer>
+      )}
       <CardAlerts />
     </div>
   );
 }
 
 const KIOSK_CSS = `
+  .ix-page .ks-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .ix-page .ks-bar h3 { margin: 0 6px 0 0 !important; }
+  .ix-page .ks-search { flex: 1 1 220px; max-width: 340px; }
+  .ix-page .ks-filter { width: auto; min-width: 170px; }
+  .ix-page .ks-addbtn { margin-left: auto; }
+  .ix-page .ks-scroll { max-height: min(60vh, 560px); overflow: auto; border: 1px solid #eef0f4; border-radius: 12px; }
+  .ix-page .ks-t { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .ix-page .ks-t th { position: sticky; top: 0; z-index: 1; background: #f8f9fb; text-align: left; font-size: 12.5px; font-weight: 700; color: #475569; padding: 10px 14px; border-bottom: 1px solid #eef0f4; }
+  .ix-page .ks-t td { padding: 9px 14px; border-bottom: 1px solid #f1f2f5; vertical-align: middle; }
+  .ix-page .ks-t tr:last-child td { border-bottom: 0; }
+  .ix-page .ks-t tr:hover td { background: #fffaf7; }
+  .ix-page .ks-t tr.off td { color: #94a3b8; }
+  .ix-page .ks-t .r { text-align: right; }
+  .ix-page .ks-hte { font-weight: 600; }
+  .ix-page .ks-ccis { color: #64748b; }
+  .ix-page .ks-seen { white-space: nowrap; color: #64748b; font-size: 12.5px; }
+  .ix-page .ks-acts { display: inline-flex !important; flex-wrap: nowrap !important; gap: 6px; align-items: center; }
+  .ix-page .ks-del { width: 34px; padding-left: 0 !important; padding-right: 0 !important; justify-content: center; }
+  .ix-page .ks-sw { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 700; color: #94a3b8; cursor: pointer; }
+  .ix-page .ks-sw i { position: relative; width: 34px; height: 20px; border-radius: 10px; background: #cbd5e1; transition: background .2s; }
+  .ix-page .ks-sw i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .2s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .ix-page .ks-sw.on { color: #15803d; }
+  .ix-page .ks-sw.on i { background: #16a34a; }
+  .ix-page .ks-sw.on i::after { left: 16px; }
+  .ix-page .ks-empty { padding: 26px; text-align: center; color: #94a3b8; font-size: 13px; border: 1.5px dashed #e5e7eb; border-radius: 12px; }
+  .ks-form { display: flex; flex-direction: column; gap: 14px; }
   .ix-page .ks-reader { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; flex-wrap: wrap; }
   .ix-page .ks-reader label { font-size: 12.5px; font-weight: 600; color: #374151; }
   .ix-page .ks-reader .ix-select { width: auto; min-width: 260px; }

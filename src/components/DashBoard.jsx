@@ -176,7 +176,7 @@ export function NeedsAttention({ interns, records, monitorPath, limit = 6 }) {
         .then((list) => {
           if (!Array.isArray(list)) return;
           const m = {};
-          list.forEach((e) => { m[String(e.date).slice(0, 10)] = true; });
+          list.forEach((e) => { if (e.off !== false && !e.hte_key) m[String(e.date).slice(0, 10)] = true; });   // university No-OJT days
           setHolidays(m);
         })
         .catch(() => {});
