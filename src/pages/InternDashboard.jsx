@@ -1,33 +1,83 @@
 // InternDashboard.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar, Modal, Drawer, Empty, Inbox,
   calcHours, fmtTime, greeting, esc, requiredHoursFor, programKey,
   PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, dueStatus, AnnouncementBoard, AccountSecurity, UserDetails,
-  sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, SCHEDULE, liveRefresh, todayManila,
+  sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, MODALITIES, SCOPES, modalityOf, scopeOf, SCHEDULE, liveRefresh, todayManila,
 } from "../components/DashKit.jsx";
 
 // Home look (stats, calendar, gaps) is shared with the admin / coordinator dashboards
-import { HomeCalendar, adminCss } from "./AdminDashboard.jsx";
+import { HomeCalendar, Calendar, adminCss } from "./AdminDashboard.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TimeLine } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API, STORAGE } from "../config.js";
+import { MyGrade } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
 import { ID_OFFICE, CardFace, CardBack, idCardCss, loadCardSettings } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
 
 
 const NAV = [
-  { path: "/intern",         label: "Dashboard",     icon: "dashboard" },
-  { path: "/intern/records", label: "My Attendance", icon: "list" },
-  { path: "/intern/dtr",     label: "My DTR",        icon: "file" },
-  { path: "/intern/online",  label: "Submit Online", icon: "upload" },
-  { path: "/intern/movs",    label: "Submit MOV",    icon: "folder" },
-  { path: "/intern/requests", label: "My Requests",  icon: "inbox" },
-  { path: "/intern/nfc",     label: "NFC Card",      icon: "card" },
-  { path: "/intern/profile", label: "My Profile",    icon: "user" },
+  { path: "/intern",          label: "Dashboard",     icon: "dashboard" },
+  { path: "/intern/online",   label: "Submit Online", icon: "upload" },
+  { path: "/intern/movs",     label: "Submit MOV",    icon: "folder" },
+  { path: "/intern/records",  label: "My Attendance", icon: "list" },
+  { path: "/intern/dtr",      label: "My DTR",        icon: "file" },
+  { path: "/intern/grade",    label: "My Grade",      icon: "chart" },
+  { path: "/intern/requests", label: "My Request",    icon: "inbox" },
+  { path: "/intern/nfc",      label: "My NFC Card",   icon: "card" },
+  { path: "/intern/calendar", label: "Calendar",      icon: "calendar" },
+  { path: "/intern/profile",  label: "My Profile",    icon: "user" },
 ];
+
+/* Confetti for the finish line: only mounted when the intern has rendered all required hours.
+   Draws on a canvas over the panel, plays once (and again when the ring is clicked), and stops by itself. */
+function FinishConfetti({ play }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv || !play) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const box = cv.parentElement;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = box.clientWidth, H = box.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const ctx = cv.getContext("2d");
+    ctx.scale(dpr, dpr);
+    const colors = ["#e8582a", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899", "#fcd34d"];
+    const bits = [];
+    const burst = (x, n, dir) => {
+      for (let i = 0; i < n; i++) {
+        const a = (-Math.PI / 2) + dir * (Math.random() * 0.9) + (Math.random() - 0.5) * 0.5;
+        const v = 7 + Math.random() * 9;
+        bits.push({ x, y: H * 0.85, vx: Math.cos(a) * v, vy: Math.sin(a) * v, w: 5 + Math.random() * 6, h: 3 + Math.random() * 5,
+          r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.4, c: colors[(Math.random() * colors.length) | 0], round: Math.random() < 0.25, life: 0 });
+      }
+    };
+    burst(W * 0.08, 70, 1); burst(W * 0.92, 70, -1);
+    const t2 = setTimeout(() => { burst(W * 0.3, 40, 1); burst(W * 0.7, 40, -1); }, 700);
+    let raf, last = performance.now();
+    const tick = (now) => {
+      const dt = Math.min((now - last) / 16.67, 2); last = now;
+      ctx.clearRect(0, 0, W, H);
+      for (let i = bits.length - 1; i >= 0; i--) {
+        const b = bits[i];
+        b.vy += 0.28 * dt; b.vx *= 0.992; b.x += b.vx * dt; b.y += b.vy * dt; b.r += b.vr * dt; b.life += dt;
+        if (b.y > H + 20 || b.life > 260) { bits.splice(i, 1); continue; }
+        ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, (260 - b.life) / 60));
+        ctx.translate(b.x, b.y); ctx.rotate(b.r); ctx.fillStyle = b.c;
+        if (b.round) { ctx.beginPath(); ctx.arc(0, 0, b.w / 2.4, 0, 6.28); ctx.fill(); } else ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+        ctx.restore();
+      }
+      if (bits.length || performance.now() - last < 900) raf = requestAnimationFrame(tick); else ctx.clearRect(0, 0, W, H);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t2); ctx.clearRect(0, 0, W, H); };
+  }, [play]);
+  return <canvas ref={ref} className="dbx-confetti" aria-hidden="true" />;
+}
 
 export default function InternDashboard() {
   const user = JSON.parse(sessionStorage.getItem("user") || "{}");
@@ -102,8 +152,27 @@ export default function InternDashboard() {
         <MyDtr user={user} records={records} loading={loading} mode={dtrMode} />
       )}
       {path === "/intern/online" && <SubmitOnline user={user} />}
-      {path === "/intern/movs" && <SubmitMov user={user} unlocked={user.tracking_type === "output" || totalHours >= required} totalHours={totalHours} required={required} />}
+      {path === "/intern/movs" && <SubmitMov user={user} unlocked={totalHours >= required} totalHours={totalHours} required={required} />}
       {path === "/intern/requests" && <MyRequests user={user} records={records} />}
+      {path === "/intern/grade" && (
+        <>
+          <PageHeader title="My Grade" sub="Your internship grade, once your OJT coordinator releases it." />
+          <div className="gr-page">
+            <MyGrade />
+            <div className="ix-card gr-empty">
+              <b>No grade yet</b>
+              <small>Your grade appears here after your HTE supervisor's appraisal and your OJT coordinator's evaluation are in and the coordinator releases it.</small>
+            </div>
+          </div>
+          <style>{`
+            .ix-page .gr-page > :not(.gr-empty) ~ .gr-empty { display: none; }
+            .ix-page .gr-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 48px 20px !important; }
+            .ix-page .gr-empty b { font-size: 15px; color: #1f2937; }
+            .ix-page .gr-empty small { font-size: 12.5px; color: #6b7280; max-width: 420px; line-height: 1.5; }
+          `}</style>
+        </>
+      )}
+      {path === "/intern/calendar" && <Calendar mode="intern" />}
       {path === "/intern/nfc" && <NfcApply user={user} records={records} />}
       {path === "/intern/profile" && <Profile user={user} totalHours={totalHours} required={required} days={uniqueDays} />}
     </Shell>
@@ -114,12 +183,13 @@ export default function InternDashboard() {
    Everything the intern asked for, in one place, with where each one is now:
    Online attendance and overtime: Filed → HTE supervisor (confirms) → OJT coordinator (final decision);
    interns without a supervisor go straight to the coordinator.
-   Time corrections and work arrangement: Filed → HTE supervisor (final decision). */
+   Time corrections: Filed → HTE supervisor (final decision).
+   The modality (on-site / hybrid / virtual) is decided by the HTE, so interns don't request it. */
 const REQ_KINDS = {
   online:     { label: "Online attendance", icon: "upload" },
   overtime:   { label: "Overtime",          icon: "clock" },
   correction: { label: "Time correction",   icon: "pencil" },
-  wfh:        { label: "Work arrangement",  icon: "globe" },
+  event:      { label: "School event",      icon: "calendar" },
 };
 
 function reqSteps(row) {
@@ -150,7 +220,16 @@ const REQ_STATUS = {
 function MyRequests({ user, records }) {
   const [online, setOnline] = useState([]);
   const [fixes, setFixes] = useState([]);
-  const [wfh, setWfh] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [evOpen, setEvOpen] = useState(false);
+  const [evForm, setEvForm] = useState({ date: "", event_name: "", reason: "", mandatory: false });
+  const [evBusy, setEvBusy] = useState(false);
+  const [evMsg, setEvMsg] = useState(null);
+  // missed a whole day (no tap at all)
+  const [dayOpen, setDayOpen] = useState(false);
+  const [dayForm, setDayForm] = useState({ date: "", time_in: "08:00", time_out: "17:00", reason: "" });
+  const [dayBusy, setDayBusy] = useState(false);
+  const [dayMsg, setDayMsg] = useState(null);
   const [hasSup, setHasSup] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
@@ -160,19 +239,64 @@ function MyRequests({ user, records }) {
 
   const load = async () => {
     const get = (url) => fetch(url, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null);
-    const [o, c, w, me] = await Promise.all([
+    const [o, c, me, ev] = await Promise.all([
       get(`${API}/intern/my-online?user_id=${user.id}`),
       get(`${API}/intern/time-corrections`),
-      get(`${API}/intern/work-mode-requests`),
       get(`${API}/me?user_id=${user.id}`),
+      get(`${API}/intern/school-events`),
     ]);
     if (Array.isArray(o)) setOnline(o);
     if (Array.isArray(c)) setFixes(c);
-    if (Array.isArray(w)) setWfh(w);
+    if (Array.isArray(ev)) setEvents(ev);
     if (me) setHasSup(!!(me.user || me).supervisor_id);
     setLoading(false);
   };
   useEffect(() => { load(); return liveRefresh(load); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  const openEvent = () => { setEvForm({ date: "", event_name: "", reason: "", mandatory: false }); setEvMsg(null); setEvOpen(true); };
+  const sendEvent = async (e) => {
+    e.preventDefault();
+    setEvBusy(true); setEvMsg(null);
+    try {
+      const res = await fetch(`${API}/intern/school-events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ user_id: user.id, ...evForm, event_name: evForm.event_name.trim(), reason: evForm.reason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
+      setEvOpen(false);
+      load();
+    } catch (err) {
+      setEvMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setEvBusy(false); }
+  };
+  const openDay = () => { setDayForm({ date: "", time_in: "08:00", time_out: "17:00", reason: "" }); setDayMsg(null); setDayOpen(true); };
+  const sendDay = async (e) => {
+    e.preventDefault();
+    if (weekdayIdx(dayForm.date) >= 5) { setDayMsg({ type: "error", text: "Pick a weekday (Monday to Friday)." }); return; }
+    if (records.some((r) => r.date === dayForm.date)) { setDayMsg({ type: "error", text: 'That day already has attendance. Use "Request fix" on that day in My Attendance instead.' }); return; }
+    setDayBusy(true); setDayMsg(null);
+    try {
+      const res = await fetch(`${API}/intern/time-corrections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ user_id: user.id, kind: "day", ...dayForm, reason: dayForm.reason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
+      setDayOpen(false);
+      load();
+    } catch (err) {
+      setDayMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setDayBusy(false); }
+  };
+  const dayWaiting = fixes.filter((f) => f.kind === "day" && (f.status === "pending" || f.status === "endorsed"));
+  const removeEvent = async (id) => {
+    if (!window.confirm("Remove this request?")) return;
+    await fetch(`${API}/intern/school-events/${id}`, { method: "DELETE", headers: { Accept: "application/json" } }).catch(() => {});
+    setOpenKey(null); load();
+  };
 
   const day = (v) => v ? new Date(String(v).slice(0, 10) + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
   const time12 = (t) => {
@@ -201,9 +325,11 @@ function MyRequests({ user, records }) {
       endorsed: !!c.endorsed_at || c.status === "endorsed",
       details: `${c.kind === "day" ? `Missed the whole day · in ${time12(c.requested_in)}, out` : c.kind === "in" ? `Forgot to time in · in ${time12(c.requested_in)}, out` : "Forgot to time out ·"} ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks,
     })),
-    ...wfh.map((w) => ({
-      key: `w${w.id}`, kind: "wfh", date: w.created_at, status: w.status, viaSupervisor: true, supervisorOnly: true, endorsed: false,
-      details: `${w.requested_mode === "offsite" ? "Work from home" : "Back to onsite"} — ${w.reason || ""}`, remarks: w.remarks,
+    ...events.map((v) => ({
+      key: `e${v.id}`, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
+      endorsed: !!v.endorsed_at || v.status === "endorsed",
+      details: `${v.event_name}${v.mandatory ? " (mandatory)" : ""} · excused, no hours counted${v.reason ? " — " + v.reason : ""}`,
+      remarks: v.remarks || v.endorse_remarks,
     })),
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
@@ -229,7 +355,7 @@ function MyRequests({ user, records }) {
 
   return (
     <>
-      <PageHeader title="My Requests" sub="Everything you filed and where it is now." live />
+      <PageHeader title="My Request" sub="Everything you filed and where it is now." live />
 
       <div className="mon-bar rq-bar">
         {[["all", "All", ofType.length], ["waiting", "Waiting", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
@@ -246,7 +372,7 @@ function MyRequests({ user, records }) {
         <div className="ix-card flush rq-table">
           {loading ? <Spinner /> : shown.length === 0 ? (
             <div className="rq-empty"><Icon name="inbox" size={22} /><b>{rows.length ? "Nothing here" : "No requests yet"}</b>
-              <small>Online attendance, overtime, time corrections and WFH requests you file will show up here.</small></div>
+              <small>Online attendance, overtime, time corrections and school events you file will show up here.</small></div>
           ) : (
             <table>
               <thead><tr><th>Request</th><th>Filed</th><th>Where it is</th><th>Status</th></tr></thead>
@@ -289,17 +415,17 @@ function MyRequests({ user, records }) {
             <b>File a request</b>
             <div className="rq-new">
               <button type="button" title="Opens My Attendance: use “Request fix” on that day" onClick={() => go("/intern/records")}><Icon name="pencil" size={15} /><span>Forgot to time in / out</span></button>
-              <button type="button" onClick={() => go("/intern/records?missed=1")}><Icon name="calendar" size={15} /><span>Missed a whole day</span></button>
+              <button type="button" onClick={openDay}><Icon name="calendar" size={15} /><span>Missed a whole day</span></button>
               <button type="button" onClick={() => go("/intern/online")}><Icon name="upload" size={15} /><span>Online attendance</span></button>
-              <button type="button" onClick={() => go("/intern/online?wfh=1")}><Icon name="globe" size={15} /><span>Work from home</span></button>
+              <button type="button" title="Attending a CSU school event: an excused day, no hours counted" onClick={openEvent}><Icon name="calendar" size={15} /><span>School event (excused)</span></button>
             </div>
           </div>
           <div className="ix-card rq-box rq-how-box">
             <b>How approval works</b>
             <ol className="rq-how2">
               <li><span>1</span><div><strong>You file it</strong><small>From My Attendance or Submit Online.</small></div></li>
-              <li><span>2</span><div><strong>Your HTE supervisor checks it</strong><small>Tap fixes and work arrangement end here.</small></div></li>
-              <li><span>3</span><div><strong>The OJT coordinator decides</strong><small>For online days and overtime.</small></div></li>
+              <li><span>2</span><div><strong>Your HTE supervisor checks it</strong><small>Tap fixes end here. School events go on to the coordinator.</small></div></li>
+              <li><span>3</span><div><strong>The OJT coordinator decides</strong><small>For online days, overtime and school events.</small></div></li>
             </ol>
             <div className="rq-legend">
               <small>What the colors mean</small>
@@ -318,10 +444,86 @@ function MyRequests({ user, records }) {
               <div className="ibx-sec"><span>Where it is now</span><Steps r={open} big /></div>
               {open.details && <div className="ibx-sec"><span>Details</span><p>{open.details}</p></div>}
               {open.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{open.remarks}”</p></div>}
+              {open.kind === "event" && (open.status === "pending" || open.status === "endorsed") && (
+                <button type="button" className="ix-b ghost" onClick={() => removeEvent(open.evId)}>Remove request</button>
+              )}
             </div>
           </Drawer>
         );
       })()}
+
+      {dayOpen && (
+        <Drawer title="Missed a whole day?" kicker="Attendance request" icon="calendar"
+          sub="No tap at all on a workday. Your HTE supervisor approves or rejects it." onClose={() => setDayOpen(false)}
+          footer={(close) => (<>
+            <button type="button" className="ix-b ghost" onClick={close} disabled={dayBusy}>Cancel</button>
+            <button type="submit" form="rq-day-form" className="ix-b primary" disabled={dayBusy}>{dayBusy ? "Sending..." : "Send request"}</button>
+          </>)}>
+          <form id="rq-day-form" onSubmit={sendDay} className="ix-form">
+            <Msg msg={dayMsg} />
+            <div className="ix-field">
+              <label htmlFor="rq-day-date">Which day?</label>
+              <input id="rq-day-date" type="date" required max={addDays(manilaToday(), -1)} min={addDays(manilaToday(), -30)} value={dayForm.date}
+                onChange={(e) => setDayForm((f) => ({ ...f, date: e.target.value }))} />
+              <small className="fx-hint">A weekday in the last 30 days that has no attendance.</small>
+            </div>
+            <div className="fx-two">
+              <div className="ix-field">
+                <label htmlFor="rq-day-in">Time in</label>
+                <input id="rq-day-in" type="time" required min="06:00" value={dayForm.time_in} onChange={(e) => setDayForm((f) => ({ ...f, time_in: e.target.value }))} />
+              </div>
+              <div className="ix-field">
+                <label htmlFor="rq-day-out">Time out</label>
+                <input id="rq-day-out" type="time" required max="17:00" value={dayForm.time_out} onChange={(e) => setDayForm((f) => ({ ...f, time_out: e.target.value }))} />
+              </div>
+            </div>
+            <div className="ix-field">
+              <label htmlFor="rq-day-reason">Reason</label>
+              <textarea id="rq-day-reason" rows={3} required maxLength={500} value={dayForm.reason}
+                placeholder="e.g. I left my card at home and the guard let me in. My supervisor saw me that day."
+                onChange={(e) => setDayForm((f) => ({ ...f, reason: e.target.value }))} />
+            </div>
+            {dayWaiting.length > 0 && (
+              <small className="fx-hint">Already waiting: {dayWaiting.map((f) => new Date(f.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")}</small>
+            )}
+          </form>
+        </Drawer>
+      )}
+
+      {evOpen && (
+        <Drawer title="School event (excused)" kicker="Excused absence" icon="calendar"
+          sub="Attending a CSU event? The day is excused: no OJT hours are counted for it, and it is not counted as absent."
+          onClose={() => setEvOpen(false)}
+          footer={(close) => (<>
+            <button type="button" className="ix-b ghost" onClick={close} disabled={evBusy}>Cancel</button>
+            <button type="submit" form="ev-form" className="ix-b primary" disabled={evBusy}>{evBusy ? "Sending..." : "Send request"}</button>
+          </>)}>
+          <form id="ev-form" onSubmit={sendEvent} className="ix-form">
+            <Msg msg={evMsg} />
+            <div className="ix-field">
+              <label htmlFor="ev-date">Which day?</label>
+              <input id="ev-date" type="date" required min={addDays(manilaToday(), -30)} value={evForm.date}
+                onChange={(e) => setEvForm((f) => ({ ...f, date: e.target.value }))} />
+              <small className="fx-hint">A weekday. File it before the event if you can.</small>
+            </div>
+            <div className="ix-field">
+              <label htmlFor="ev-name">Event</label>
+              <input id="ev-name" type="text" required maxLength={160} value={evForm.event_name} placeholder="e.g. University Foundation Day"
+                onChange={(e) => setEvForm((f) => ({ ...f, event_name: e.target.value }))} />
+            </div>
+            <label className="ix-check">
+              <input type="checkbox" checked={evForm.mandatory} onChange={(e) => setEvForm((f) => ({ ...f, mandatory: e.target.checked }))} />
+              <span>This event is mandatory for students</span>
+            </label>
+            <div className="ix-field">
+              <label htmlFor="ev-reason">Note (optional)</label>
+              <textarea id="ev-reason" rows={3} maxLength={500} value={evForm.reason} placeholder="e.g. Morning program, I will report to the office after lunch."
+                onChange={(e) => setEvForm((f) => ({ ...f, reason: e.target.value }))} />
+              <small className="fx-hint">If you still tap in that day, those hours count as normal. Only the event time is not counted.</small>
+            </div>
+          </form>
+        </Drawer>
+      )}
     </>
   );
 }
@@ -361,11 +563,15 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   }, []);
 
   // pre-internship requirements and the NFC card, for the number strip and "Getting started"
-  const [pre, setPre] = useState(null);       // { approved, total, status }
-  const [card, setCard] = useState(null);     // null (loading) | true | false
-  const [myMovs, setMyMovs] = useState([]);    // every requirement the intern sent (newest first)
-  const [deadlines, setDeadlines] = useState({}); // "during:weekly_report" -> due date
-  const [reports, setReports] = useState([]);     // reports the coordinator asked for
+  // the last answers are kept in this browser, so the dashboard shows at once and refreshes quietly (no waiting spinner)
+  const cacheKey = `mytrack.home.${user.id}`;
+  const cached = (() => { try { return JSON.parse(localStorage.getItem(cacheKey) || "{}") || {}; } catch { return {}; } })();
+  const [pre, setPre] = useState(cached.pre ?? null);       // { approved, total, status }
+  const [card, setCard] = useState(cached.card ?? null);     // null (loading) | true | false
+  const [myMovs, setMyMovs] = useState(cached.myMovs || []);    // every requirement the intern sent (newest first)
+  const [deadlines, setDeadlines] = useState(cached.deadlines || {}); // "during:weekly_report" -> due date
+  const [reports, setReports] = useState(cached.reports || []);     // reports the coordinator asked for
+  const saveCache = (patch) => { try { const c = JSON.parse(localStorage.getItem(cacheKey) || "{}") || {}; localStorage.setItem(cacheKey, JSON.stringify({ ...c, ...patch })); } catch { /* private window */ } };
   const [fixes, setFixes] = useState([]);         // time corrections the intern already sent
   useEffect(() => {
     const load = () => {
@@ -379,28 +585,34 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
           if (!Array.isArray(list)) return;
           setPre(preStatusOf(list));
           setMyMovs(list);
+          saveCache({ pre: preStatusOf(list), myMovs: list });
         })
         .catch(() => {});
       // due dates set by the coordinator
       fetch(`${API}/requirement-deadlines`, { headers: { Accept: "application/json" } })
         .then((r) => r.json())
-        .then((d) => { if (Array.isArray(d)) setDeadlines(Object.fromEntries(d.map((x) => [`${x.phase}:${x.requirement}`, x.due_date]))); })
+        .then((d) => { if (Array.isArray(d)) { const m = Object.fromEntries(d.map((x) => [`${x.phase}:${x.requirement}`, x.due_date])); setDeadlines(m); saveCache({ deadlines: m }); } })
         .catch(() => {});
       fetch(`${API}/reports`, { headers: { Accept: "application/json" } })
         .then((r) => r.json())
-        .then((d) => { if (Array.isArray(d)) setReports(d); })
+        .then((d) => { if (Array.isArray(d)) { setReports(d); saveCache({ reports: d }); } })
         .catch(() => {});
       fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
         .then((r) => r.json())
-        .then((d) => setCard(!!(d?.user || d)?.nfc_uid))
-        .catch(() => {});
+        .then((d) => { const c = !!(d?.user || d)?.nfc_uid; setCard(c); saveCache({ card: c }); })
+        .catch(() => setCard(false));
     };
     load();
     return liveRefresh(load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const needsCard = user.work_mode !== "offsite" && user.tracking_type !== "output";
+  // hold the "Getting started" / "Requirements due" slot until its data is in, so the page doesn't jump around while loading
+  const [gsWaited, setGsWaited] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setGsWaited(true), 900); return () => clearTimeout(t); }, []);
+  const slotReady = gsWaited || pre !== null;   // the card step fills in by itself if /me is slower
+
+  const needsCard = user.work_mode !== "offsite";
   const pct = Math.max(Math.min((totalHours / required) * 100, 100), 0);
   const left = Math.max(Math.round((required - totalHours) * 10) / 10, 0);
   const nextMilestone = [25, 50, 75, 100].find((m) => pct < m);
@@ -468,7 +680,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
         : "Your taps count once all of them are approved.",
       action: pre.status === "approved" || pre.status === "pending" ? null : { label: "Upload", run: () => go("/intern/movs") },
     },
-    // interns who work offsite or are output-based don't need a card
+    // interns who work offsite don't need a card
     ...(needsCard || card ? [{
       key: "card", title: "Get your NFC card",
       state: card ? "done" : "todo",
@@ -485,6 +697,10 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   ];
   const stepsDone = steps.filter((x) => x.state === "done").length;
   const showSteps = steps.length > 0 && stepsDone < steps.length;
+
+  // confetti only when the required hours are really rendered (never for an unfinished internship)
+  const done = Number(required) > 0 && Number(totalHours) >= Number(required);
+  const [confettiRun, setConfettiRun] = useState(1);
 
   // Finish line: when the intern finishes at their own pace (weekends and holidays skipped)
   const holidays = useHolidays();
@@ -517,7 +733,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   const daysLeft = left > 0 ? workdaysFor(left) : 0;
 
   // Requirements due: during- and post-internship requirements, the ones that need action first
-  const hoursDone = user.tracking_type === "output" || totalHours >= required;   // post-internship opens after the hours
+  const hoursDone = totalHours >= required;   // post-internship opens after the hours
   const RANK = { overdue: 0, returned: 1, due: 2, todo: 3, locked: 4, waiting: 5, approved: 6 };
   const dueList = [["during", DURING_REQUIREMENTS], ["post", POST_REQUIREMENTS]].flatMap(([phase, list]) => list.map((r) => {
     const m = myMovs.find((x) => x.requirement === r.key && (x.phase || "pre") === phase);
@@ -616,7 +832,10 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
               {week.map((w) => <span key={w.d} className={`${w.cls}${w.d === today ? " is-today" : ""}`}><b>{w.l}</b>{w.label}</span>)}
             </div>
           </Panel>
-          {showSteps && (
+          {!slotReady && (
+            <Panel title=" " className="dbx-gs" grow><Spinner /></Panel>
+          )}
+          {slotReady && showSteps && (
             <Panel title="Getting started" count={`${stepsDone} of ${steps.length} done`} className="dbx-gs" grow>
               <div className="dbx-gs-bar"><i style={{ width: `${(stepsDone / steps.length) * 100}%` }} /></div>
               <ol className="dbx-gs-list">
@@ -631,7 +850,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
             </Panel>
           )}
           {/* once Getting started is done, the same spot shows the requirements still to do */}
-          {!showSteps && (
+          {slotReady && !showSteps && (
             <Panel title="Requirements due" count={dueCount || undefined} link="Submit MOV" onLink={() => go("/intern/movs")}>
               {dueList.slice(0, 5).map((x) => (
                 <DashRow key={x.key} icon={DUE_LOOK[x.st][0]} tone={DUE_LOOK[x.st][1]} title={x.label}
@@ -647,7 +866,9 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
     >
       <Panel title="My OJT finish line" link="My Attendance" onLink={() => go("/intern/records")} className="dbx-fin">
         <div className="dbx-fin-body">
-          <div className="dbx-ring" style={{ "--p": pct }}>
+          {done && <FinishConfetti play={confettiRun} />}
+          <div className={`dbx-ring${done ? " done" : ""}`} style={{ "--p": pct }}
+            onClick={done ? () => setConfettiRun((n) => n + 1) : undefined} title={done ? "Click to celebrate again" : undefined}>
             <div><b>{pct.toFixed(0)}%</b><small>{totalHours}h of {required}h</small></div>
           </div>
           <div className="dbx-eta">
@@ -722,15 +943,11 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
   const [fixKind, setFixKind] = useState("out"); // "out" = forgot to time out, "in" = forgot to time in
   const [fixTime, setFixTime] = useState("17:00");
   const [fixIn, setFixIn] = useState("08:00");
-  // missed the whole day (no tap at all)
-  const [dayOpen, setDayOpen] = useState(false);
-  const [dayForm, setDayForm] = useState({ date: "", time_in: "08:00", time_out: "17:00", reason: "" });
-  const [dayBusy, setDayBusy] = useState(false);
-  const [dayMsg, setDayMsg] = useState(null);
   const [fixReason, setFixReason] = useState("");
   const [fixBusy, setFixBusy] = useState(false);
   const [fixMsg, setFixMsg] = useState(null);
   const [pageMsg, setPageMsg] = useState(null);
+  const excusedDays = useExcused();
 
   const loadFixes = async () => {
     try {
@@ -784,38 +1001,6 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
     }
   };
   const fixOf = (attendanceId) => fixes.find((f) => f.attendance_id === attendanceId);
-  const yesterday = addDays(manilaToday(), -1);
-  const openDay = () => { setDayForm({ date: "", time_in: "08:00", time_out: "17:00", reason: "" }); setDayMsg(null); setDayOpen(true); };
-  // opened from My Requests → "Missed a whole day"
-  useEffect(() => {
-    if (!/[?&]missed=1/.test(window.location.search)) return;
-    window.history.replaceState(window.history.state, "", window.location.pathname);   // open it once, not on every refresh
-    openDay();
-    /* eslint-disable-next-line */
-  }, []);
-  const sendDay = async (e) => {
-    e.preventDefault();
-    const wd = weekdayIdx(dayForm.date);
-    if (wd >= 5) { setDayMsg({ type: "error", text: "Pick a weekday (Monday to Friday)." }); return; }
-    if (records.some((r) => r.date === dayForm.date)) { setDayMsg({ type: "error", text: 'That day already has attendance. Use "Request fix" on that day instead.' }); return; }
-    setDayBusy(true); setDayMsg(null);
-    try {
-      const res = await fetch(`${API}/intern/time-corrections`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ user_id: user.id, kind: "day", ...dayForm, reason: dayForm.reason.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
-      setDayOpen(false);
-      setPageMsg({ type: "success", text: data.message });
-      loadFixes();
-    } catch (err) {
-      setDayMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
-    } finally { setDayBusy(false); }
-  };
-  // days asked for with "Missed a whole day" that are still waiting
-  const dayWaiting = fixes.filter((f) => f.kind === "day" && (f.status === "pending" || f.status === "endorsed"));
   const [filter, setFilter] = useState("all");
   const [month, setMonth] = useState("all"); // "all" or "YYYY-MM"
 
@@ -916,6 +1101,18 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
       <PageHeader title="My Attendance" sub="Your attendance log and computed OJT hours, day by day." live />
       <Msg msg={pageMsg} />
 
+      {Object.keys(excusedDays).length > 0 && (
+        <div className="at-excused" role="note">
+          <Icon name="calendar" size={15} />
+          <div>
+            <b>Excused school events</b>
+            <span>{Object.entries(excusedDays).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6)
+              .map(([d, n]) => `${new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ${n}`).join("   ")}</span>
+            <small>Excused, not absent. The event time gives no OJT hours.</small>
+          </div>
+        </div>
+      )}
+
       {fixFor && (
         <Modal title="Request a time correction" sub={`${new Date(fixFor.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · your HTE supervisor approves or rejects it.`} onClose={() => setFixFor(null)}>
           <form onSubmit={sendFix} className="ix-form">
@@ -964,54 +1161,6 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
         </Modal>
       )}
 
-      {dayOpen && (
-        <Drawer title="Missed a whole day?" kicker="Attendance request" icon="calendar"
-          sub="No tap at all on a workday. Your HTE supervisor approves or rejects it." onClose={() => setDayOpen(false)}
-          footer={(close) => (<>
-            <button type="button" className="ix-b ghost" onClick={close} disabled={dayBusy}>Cancel</button>
-            <button type="submit" form="day-form" className="ix-b primary" disabled={dayBusy}>{dayBusy ? "Sending..." : "Send request"}</button>
-          </>)}>
-          <form id="day-form" onSubmit={sendDay} className="ix-form">
-            <Msg msg={dayMsg} />
-            <div className="ix-field">
-              <label htmlFor="day-date">Which day?</label>
-              <input id="day-date" type="date" required max={yesterday} min={addDays(manilaToday(), -30)} value={dayForm.date}
-                onChange={(e) => setDayForm((f) => ({ ...f, date: e.target.value }))} />
-              <small className="fx-hint">A weekday in the last 30 days that has no attendance.</small>
-            </div>
-            <div className="fx-two">
-              <div className="ix-field">
-                <label htmlFor="day-in">Time in</label>
-                <input id="day-in" type="time" required min="06:00" value={dayForm.time_in} onChange={(e) => setDayForm((f) => ({ ...f, time_in: e.target.value }))} />
-              </div>
-              <div className="ix-field">
-                <label htmlFor="day-out">Time out</label>
-                <input id="day-out" type="time" required max="17:00" value={dayForm.time_out} onChange={(e) => setDayForm((f) => ({ ...f, time_out: e.target.value }))} />
-              </div>
-            </div>
-            <div className="ix-field">
-              <label htmlFor="day-reason">Reason</label>
-              <textarea id="day-reason" rows={3} required maxLength={500} value={dayForm.reason}
-                placeholder="e.g. I left my card at home and the guard let me in. My supervisor saw me that day."
-                onChange={(e) => setDayForm((f) => ({ ...f, reason: e.target.value }))} />
-            </div>
-          </form>
-          <div className="ix-drawer-steps">
-            <h3>What happens next</h3>
-            <ol>
-              <li><span>1</span><b>Your HTE supervisor approves or rejects it</b></li>
-              <li><span>2</span><b>Approved days show on your attendance and DTR</b></li>
-              <li><span>3</span><b>Follow it in My Requests</b></li>
-            </ol>
-          </div>
-          {dayWaiting.length > 0 && (
-            <div className="ix-drawer-note">
-              <Icon name="clock" size={14} />
-              <span>Already waiting: {dayWaiting.map((f) => new Date(f.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")}</span>
-            </div>
-          )}
-        </Drawer>
-      )}
 
       {/* one slim summary: progress on the left, the numbers beside it */}
       <div className="at-sum">
@@ -1050,16 +1199,7 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
           <option value="all">All months</option>
           {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
         </select>
-        <div className="at-day-box">
-          <button type="button" className="at-fix-btn at-day-btn" onClick={openDay} title="No tap at all on a workday? Ask your supervisor to add it.">Missed a whole day?</button>
-        </div>
       </div>
-      {dayWaiting.length > 0 && (
-        <div className="at-day-wait">
-          <Icon name="clock" size={14} />
-          <span>Waiting for your supervisor: {dayWaiting.map((f) => new Date(f.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")} (whole day)</span>
-        </div>
-      )}
 
       {/* the log: one compact row per day, grouped by month */}
       <div className="at-log2">
@@ -1346,141 +1486,40 @@ const SO_CSS = `
 }
 `;
 
-/* ───────────────────────── Work arrangement (WFH) ─────────────────────────
-   From the OJT coordinator: WFH needs a letter from the HTE approving it (plus the student's request),
-   unless WFH is already stated in the MOA or Student Contract. The HTE supervisor decides (final).
-   Online attendance: an onsite intern logs single days from home; a WFH intern logs every workday. */
+/* ───────────────────────── Internship modality ─────────────────────────
+   The HTE decides whether the intern works on-site, virtually, or hybrid; the OJT coordinator records it.
+   Interns don't request it. Any intern can log a single day worked from home as online attendance. */
 function WorkModeCard({ user }) {
-  const [mode, setMode] = useState(null);          // onsite | offsite
-  const [reqs, setReqs] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ reason: "", in_moa: false, file: null });
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState(null);
-
+  const [u, setU] = useState(null);
   const load = () => {
     fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
-      .then((r) => r.json()).then((d) => setMode((d?.user || d)?.work_mode || "onsite")).catch(() => {});
-    fetch(`${API}/intern/work-mode-requests`, { headers: { Accept: "application/json" } })
-      .then((r) => r.json()).then((d) => { if (Array.isArray(d)) setReqs(d); }).catch(() => {});
+      .then((r) => r.json()).then((d) => setU(d?.user || d || null)).catch(() => {});
   };
   useEffect(() => {
     load();
     return liveRefresh(load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  if (!mode) return null;
-  const wfh = mode === "offsite";
-  const want = wfh ? "onsite" : "offsite";
-  const pending = reqs.find((r) => r.status === "pending");
-  const last = reqs[0];
-  // opened from My Requests → "Work from home"
-  if (!open && !pending && /[?&]wfh=1/.test(window.location.search)) {
-    window.history.replaceState(window.history.state, "", window.location.pathname);   // open it once, not on every refresh
-    setTimeout(() => setOpen(true), 0);
-  }
-
-  const send = async (e) => {
-    e.preventDefault();
-    setBusy(true); setMsg(null);
-    try {
-      const fd = new FormData();
-      fd.append("requested_mode", want);
-      fd.append("reason", form.reason);
-      fd.append("in_moa", form.in_moa ? "1" : "0");
-      if (form.file) fd.append("file", form.file);
-      const res = await fetch(`${API}/intern/work-mode-requests`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || (data.errors && Object.values(data.errors)[0]?.[0]) || "Something went wrong.");
-      setOpen(false);
-      setForm({ reason: "", in_moa: false, file: null });
-      setMsg({ type: "success", text: data.message });
-      load();
-    } catch (err) {
-      setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
-    } finally {
-      setBusy(false);
-    }
+  if (!u) return null;
+  const m = modalityOf(u);
+  // one short line that fits the modality (nothing about "working from home" for interns who work remotely by design)
+  const NOTE = {
+    onsite: "Tap at the kiosk. Worked from home for a day? Log it below.",
+    hybrid: "Tap at the kiosk on office days and log your remote days below.",
+    virtual: "Log every workday below.",
+    project: "Log the days you worked on your project below.",
   };
-
-  const cancel = async () => {
-    if (!pending || !window.confirm("Cancel your work arrangement request?")) return;
-    const res = await fetch(`${API}/intern/work-mode-requests/${pending.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
-    const data = await res.json().catch(() => ({}));
-    setMsg({ type: res.ok ? "success" : "error", text: data.message || "Something went wrong." });
-    load();
-  };
-
   return (
-    <div className="ix-card wm-card">
-      <div className="wm-row">
-        <div className="wm-text">
-          <strong>Work arrangement: {wfh ? "Work from home" : "Onsite"}</strong>
-          <small>
-            {pending
-              ? `Your request to ${pending.requested_mode === "offsite" ? "work from home" : "go back onsite"} is waiting for your HTE supervisor.`
-              : wfh
-                ? "You work from home for your internship: log every workday below. Your supervisor confirms it, then your coordinator approves it."
-                : "Worked from home for a day? Log it below. Your supervisor confirms it, then your coordinator approves it. Working from home for the whole semester? Request WFH with your HTE's letter."}
-            {!pending && last?.status === "rejected" && ` Your last request was not approved${last.remarks ? `: ${last.remarks}` : "."}`}
-          </small>
-        </div>
-        {pending
-          ? <button type="button" className="ix-b ghost sm" onClick={cancel}>Cancel request</button>
-          : <button type="button" className="ix-b primary sm" onClick={() => { setMsg(null); setOpen(true); }}>
-              {wfh ? "Request to go back onsite" : "Request WFH"}
-            </button>}
-      </div>
-      <Msg msg={msg} />
-
-      {open && (
-        <Modal title={wfh ? "Go back onsite" : "Request work from home"} sub="Your HTE supervisor reviews this request." onClose={() => setOpen(false)}>
-          <form onSubmit={send} className="ix-form">
-            <div className="ix-field">
-              <label htmlFor="wm-reason">Reason</label>
-              <textarea id="wm-reason" rows={3} required maxLength={500} value={form.reason}
-                placeholder={wfh ? "e.g. My HTE asked us to report onsite again." : "e.g. My HTE allows us to work from home for the whole semester."}
-                onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
-            </div>
-            {!wfh && (
-              <>
-                <small className="wm-hint">This is for working from home for the whole semester. For a single day, just log it under Submit Online.</small>
-                <label className="wm-check">
-                  <input type="checkbox" checked={form.in_moa} onChange={(e) => setForm((f) => ({ ...f, in_moa: e.target.checked }))} />
-                  WFH is already stated in our MOA / Student Internship Contract
-                </label>
-                {!form.in_moa && (
-                  <div className="ix-field">
-                    <label>Letter from the HTE approving the WFH</label>
-                    <label className={form.file ? "ix-drop has-file" : "ix-drop"}>
-                      <input type="file" accept={ACCEPT} onChange={(e) => setForm((f) => ({ ...f, file: e.target.files[0] || null }))} />
-                      <span className="ix-drop-icon"><Icon name={form.file ? "file" : "upload"} size={22} /></span>
-                      <span className="ix-drop-text">
-                        {form.file ? form.file.name : "Click to choose a file"}
-                        <small>{form.file ? "Click to change" : "PDF, JPG, PNG, DOC or DOCX"}</small>
-                      </span>
-                    </label>
-                  </div>
-                )}
-              </>
-            )}
-            <button type="submit" className="ix-btn" disabled={busy}>{busy ? "Sending..." : "Send request"}</button>
-          </form>
-        </Modal>
-      )}
+    <div className="wm-strip">
+      <span className={`wm-tag m-${m}`}>{MODALITIES[m]}</span>
+      <span className="wm-note">{NOTE[m]} Your supervisor confirms it, then your coordinator approves it.</span>
+      <small className="wm-help" title="Your modality is set by your HTE. Ask your OJT coordinator if it is wrong.">Wrong modality? Ask your OJT coordinator.</small>
       <style>{`
-        .ix-content .ix-card.wm-card { margin-bottom: 16px; padding: 12px 16px !important; }
-        .wm-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-        .wm-ic { width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-          background: #fff1e6; color: #ea580c; }
-        .wm-ic.wfh { background: #e8f6ea; color: #2e7d32; }
-        .wm-text { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 2px; }
-        .wm-text strong { font-size: 14px; }
-        .wm-text small { display: block; font-size: 12.5px; line-height: 1.45; color: #6b7280; }
-        .wm-hint { display: block; margin: -4px 0 8px; font-size: 11.5px; color: #8a7a71; line-height: 1.4; }
-        .wm-check { display: flex; align-items: center; gap: 8px; margin: 4px 0 12px; font-size: 13px; color: #374151; cursor: pointer; }
-        .wm-check input { width: 16px; height: 16px; accent-color: #e8582a; }
+        .ix-content .wm-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; font-size: 12.5px; color: #6b7280; }
+        .wm-tag { font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: #fff1ea; color: #c2410c; white-space: nowrap; }
+        .wm-tag.m-hybrid { background: #e0f2fe; color: #0369a1; } .wm-tag.m-virtual { background: #f3e8ff; color: #7e22ce; } .wm-tag.m-project { background: #dcfce7; color: #15803d; }
+        .wm-note { flex: 1; min-width: 220px; line-height: 1.45; }
+        .wm-help { color: #9ca3af; font-size: 11.5px; }
       `}</style>
     </div>
   );
@@ -2338,6 +2377,27 @@ export function useHolidays(forId = null) {
   return holidays;
 }
 
+// Approved school-event days (excused absence): { "2026-11-05": "University Foundation Day" }
+// forId: (staff) the intern whose DTR is shown; interns get their own.
+export function useExcused(forId = null) {
+  const [days, setDays] = useState({});
+  useEffect(() => {
+    fetch(`${API}/excused-days${forId ? `?user_id=${forId}` : ""}`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json())
+      .then((list) => {
+        if (!Array.isArray(list)) { setDays({}); return; }
+        const map = {};
+        list.forEach((e) => { map[String(e.date).slice(0, 10)] = e.event_name || "School event"; });
+        setDays(map);
+      })
+      .catch(() => {});
+  }, [forId]);
+  return days;
+}
+// printed on the DTR for an excused day with no taps (a holiday on the same day wins)
+export const excusedLabels = (map) =>
+  Object.fromEntries(Object.entries(map).map(([d, n]) => [d, `EXCUSED: ${n}`]));
+
 export function buildDtr({ records, month, from, to, mode, holidays = {} }) {
   const S = SCHEDULE;
   const mins = (h) => Math.max(Math.floor(h * 60 + 1e-6), 0);   // hours → whole minutes, never negative
@@ -2423,7 +2483,8 @@ function MyDtr({ user, records, loading, mode }) {
     setShown({ year, mon, period });
   };
 
-  const holidays = useHolidays();
+  const excusedDays = useExcused();
+  const holidays = { ...excusedLabels(excusedDays), ...useHolidays() };
 
   // everything below is for the DTR that was displayed (not the dropdowns being changed)
   let view = null;
@@ -2556,6 +2617,13 @@ export const DTR_PICK_CSS = `
         .dtr-wait p { margin: 4px 0 0; font-size: 13px; }
         .dtr-shown-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 18px 0 10px; }
         .dtr-shown-head .req-dtr-meta { margin: 0; }
+        /* the DTR card reaches the bottom of the window (it still grows when a long DTR is shown, then the page scrolls) */
+        @media (min-width: 801px) and (min-height: 520px) {
+          .ix-page.lay2 .ix-main:has(.dtr-pick) { display: flex !important; flex-direction: column !important; overflow-y: auto !important; }
+          .ix-page.lay2 .ix-main:has(.dtr-pick) > .ix-content { flex: 1 0 auto !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+          .ix-page.lay2 .ix-main:has(.dtr-pick) > .ix-content > * { flex: none; }
+          .ix-page.lay2 .ix-main:has(.dtr-pick) > .ix-content > .ix-card:has(> .dtr-pick) { flex: 1 0 auto; margin-bottom: 0 !important; }
+        }
         @media (max-width: 800px) { .dtr-pick { grid-template-columns: 1fr 1fr; } .fl-btn { grid-column: 1 / -1; justify-content: center; } }
 `;
 
@@ -2677,7 +2745,7 @@ function NfcApply({ user, records = [] }) {
 
   return (
     <>
-      <PageHeader title="NFC Card" sub="Your attendance card and its status." />
+      <PageHeader title="My NFC Card" sub="Your attendance card and its status." />
       <style>{idCardCss}</style>
       {loading ? <Spinner /> : error ? (
         <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>
@@ -2931,7 +2999,9 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
               </div>
               <div className="pf-tags">
                 <span className="pf-tag o">OJT Intern</span>
-                <span className="pf-tag">{u.work_mode === "offsite" ? "Work from home" : "Onsite"}</span>
+                <span className="pf-tag">{MODALITIES[modalityOf(u)]}</span>
+                {scopeOf(u) !== "local" && <span className="pf-tag">{SCOPES[scopeOf(u)]}</span>}
+                {modalityOf(u) !== "virtual" && u.work_mode === "offsite" && <span className="pf-tag">Work from home</span>}
                 <span className={u.nfc_uid ? "pf-tag g" : "pf-tag"}>{u.nfc_uid ? "Card linked" : "No card yet"}</span>
               </div>
             </div>
@@ -2967,8 +3037,9 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
                 {kv("Placement", u.placement)}
                 {kv("HTE supervisor", u.supervisor_name || "Not assigned yet")}
                 {kv("Required hours", `${requiredHoursFor(u.program)}h`)}
+                {kv("Modality", MODALITIES[modalityOf(u)])}
+                {kv("Scope", SCOPES[scopeOf(u)])}
                 {kv("Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite")}
-                {kv("Tracking", u.tracking_type === "output" ? "Output-based" : "Hours-based")}
                 {kv("DTR type", DTR_MODES[dtrModeOf(u)])}
               </div>
             </section>
@@ -3141,6 +3212,21 @@ export const cardUnify = `
    the .hv-* rules below are the Home redesign. mdCss (materialTheme.js) is
    loaded after this and restyles the look. */
 export const internCss = `
+.ix-page .dbx-fin-body { position: relative; }
+/* DashKit lines the top cards up with the tall calendar, which stretches "No time in yet" and "My OJT finish line".
+   Here the calendar + announcements column sits on its own, so those two cards are only as tall as their content.
+   The second row stretches, so every card ends on the same bottom line (new interns with Getting started, and finished ones with Requirements due). */
+@media (min-width: 1251px) {
+  .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:has(> .dbx-mid > :nth-child(2)) { grid-template-rows: auto 1fr !important; }
+  .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:has(> .dbx-mid > :nth-child(2)) > .dbx-side { display: flex !important; flex-direction: column !important; gap: 12px !important; grid-column: 3 !important; grid-row: 1 / 3 !important; align-self: stretch !important; margin: 0 !important; }
+  .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:has(> .dbx-mid > :nth-child(2)) > .dbx-side > * { grid-column: auto !important; grid-row: auto !important; margin: 0 !important; }
+  .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:has(> .dbx-mid > :nth-child(2)) > .dbx-side > :last-child { flex: 1 1 auto !important; }
+}
+.ix-page .dbx-confetti { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+.ix-page .dbx-ring.done { cursor: pointer; animation: dbxRingPop .7s ease-out both; }
+@keyframes dbxRingPop { 0% { transform: scale(.9); } 55% { transform: scale(1.06); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .ix-page .dbx-ring.done { animation: none; } }
+
 /* ═════════ SHARED LOOK (matches admin) ═════════ */
 .ix-main { background:
     #ffede5;
@@ -3365,8 +3451,8 @@ export const internCss = `
 
 /* ═════════ MY ATTENDANCE ═════════ */
 .at-stack { display: flex; flex-direction: column; gap: 16px; }
-.ix-page .wm-card ~ .ibx .mon-split.ibx-split { height: calc(100vh / var(--fit, 1) - 320px); min-height: 380px; }
-@media (max-width: 900px) { .ix-page .wm-card ~ .ibx .mon-split.ibx-split { height: auto; min-height: 0; } }
+.ix-page .wm-strip ~ .ibx .mon-split.ibx-split { height: calc(100vh / var(--fit, 1) - 270px); min-height: 380px; }
+@media (max-width: 900px) { .ix-page .wm-strip ~ .ibx .mon-split.ibx-split { height: auto; min-height: 0; } }
 /* Submit MOV (list + details) */
 .ix-page .mv-prog { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
 .ix-page .mv-prog b { white-space: nowrap; } .ix-page .mv-prog small { color: #8a7a71; white-space: nowrap; }
@@ -3656,6 +3742,16 @@ export const internCss = `
 .req-item .rm-confirm { flex-shrink: 0; }
 
 
+/* Excused school events */
+.at-excused { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 12px;
+  background: color-mix(in srgb, #6366f1 9%, var(--card, #fff)); border: 1px solid color-mix(in srgb, #6366f1 28%, transparent); font-size: 13px; }
+.at-excused > svg { margin-top: 2px; color: #6366f1; flex: none; }
+.at-excused div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.at-excused span { white-space: pre-wrap; }
+.at-excused small { opacity: .7; }
+.ix-check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.ix-check input { width: 16px; height: 16px; }
+
 /* My Requests */
 .ix-page .rq-bar { margin-bottom: 12px !important; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .ix-page .rq-bar .rq-type { height: 34px; }
@@ -3667,7 +3763,7 @@ export const internCss = `
 .ix-page .rq-table tbody tr { cursor: pointer; transition: background .15s; }
 .ix-page .rq-table tbody tr:hover, .ix-page .rq-table tbody tr:focus-visible { background: #fffaf7; outline: none; }
 .ix-page .rq-table tbody tr:last-child td { border-bottom: 0; }
-.ix-page .rq-table tr.g-rejected { box-shadow: inset 3px 0 0 #ef4444; } .ix-page .rq-table tr.g-waiting { box-shadow: inset 3px 0 0 #f59e0b; } .ix-page .rq-table tr.g-approved { box-shadow: inset 3px 0 0 #22c55e; }
+.ix-page .rq-table tr.g-rejected > td:first-child { box-shadow: inset 3px 0 0 #ef4444; } .ix-page .rq-table tr.g-waiting > td:first-child { box-shadow: inset 3px 0 0 #f59e0b; } .ix-page .rq-table tr.g-approved > td:first-child { box-shadow: inset 3px 0 0 #22c55e; }
 .ix-page .rq-table .rq-what { max-width: none; min-width: 0; }
 .ix-page .rq-ic.approved { background: #ecfdf3; color: #16a34a; } .ix-page .rq-ic.rejected { background: #fef2f2; color: #dc2626; } .ix-page .rq-ic.waiting { background: #fff7ed; color: #d97706; }
 .ix-page .rq-rem { font-style: normal; font-size: 11.5px; color: #b91c1c; margin-top: 2px; }

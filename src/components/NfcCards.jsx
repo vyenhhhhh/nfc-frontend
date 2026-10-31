@@ -6,8 +6,9 @@ import CardAlerts from "./CardAlerts.jsx";
 import logo from "../assets/logo.png";          // CCIS logo (right side of the ID)
 import csuLogo from "../assets/csu-logo.png";   // CSU seal (left side of the ID)
 import campus from "../assets/campus.jpg";      // faded background of the ID
-import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh, Inbox } from "./DashKit.jsx";
+import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh, Inbox, OA_CSS, OaHistory, Drawer } from "./DashKit.jsx";
 import { API } from "../config.js";
+import { createHelperReader } from "../kioskReaders.js";
 
 
 // where interns sign and claim their ID card (same text as the server notifications)
@@ -29,6 +30,202 @@ const fmtDate = (v) => {
   const d = new Date(v);
   return !v || isNaN(d) ? "—" : d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
 };
+
+/* ───────────────────────── Approvals → NFC Cards (OJT coordinator) ─────────────────────────
+   Same layout as Online Attendance / Overtime: Waiting / Reviewed list on the left, the picked request on the right.
+   The coordinator only approves or rejects; the admin prints and links the card. */
+const NFC_STEP = (r) => r.status === "rejected" ? -1 : r.status === "issued" ? 4 : r.status === "approved" ? (r.printed_at ? 3 : 2) : 1;
+const nfcBadge = (r, long) => r.status === "pending" ? <Badge label={long ? "Waiting for you" : "Waiting"} type="pending" />
+  : r.status === "rejected" ? <Badge label="Rejected" type="rejected" />
+  : r.status === "issued" ? <Badge label="Card issued" type="approved" />
+  : <Badge label={r.printed_at ? "Printed · to claim" : "Approved · to print"} type="online" />;
+
+export function NfcReview({ user, onRefresh, preOf }) {
+  const [requests, setRequests] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [view, setView] = useState("waiting");
+  const [sel, setSel] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [remarks, setRemarks] = useState({});
+  const [busy, setBusy] = useState(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [alerts, setAlerts] = useState(0);
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${API}/supervisor/nfc-requests`, { headers: { Accept: "application/json" } });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.message || "Could not load card requests.");
+      setRequests(Array.isArray(d) ? d : []);
+    } catch (e) { setRequests((x) => x || []); setMsg({ type: "error", text: friendly(e) }); }
+  };
+  useEffect(() => { load(); return liveRefresh(load); }, []);
+  useEffect(() => {
+    const f = () => fetch(`${API}/card-flags`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => setAlerts((d?.flags || []).filter((x) => !x.resolved_at).length)).catch(() => {});
+    f(); const iv = setInterval(f, 60000); return () => clearInterval(iv);
+  }, []);
+
+  if (!requests) return <Spinner />;
+  const waiting = requests.filter((r) => r.status === "pending");
+  const reviewed = requests.filter((r) => r.status !== "pending")
+    .sort((a, b) => String(b.reviewed_at || b.updated_at || "").localeCompare(String(a.reviewed_at || a.updated_at || "")));
+  const sq = q.trim().toLowerCase();
+  const list = (view === "waiting" ? waiting : reviewed).filter((r) => !sq || `${r.intern_name} ${r.intern_email || ""}`.toLowerCase().includes(sq));
+  const cur = list.find((r) => r.id === sel) || list[0] || null;
+  const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
+
+  const decide = async (r, action) => {
+    setBusy(r.id + action); setMsg(null);
+    try {
+      const res = await fetch(`${API}/supervisor/nfc-requests/${r.id}/review`, {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ status: action, remarks: remarks[r.id] || "", reviewer_id: user?.id }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || "Something went wrong.");
+      setMsg({ type: "success", text: d.message || "Request updated." });
+      setSel(null); setOpen(false);
+      load(); onRefresh && onRefresh();
+    } catch (e) { setMsg({ type: "error", text: friendly(e) }); }
+    finally { setBusy(null); }
+  };
+
+  const steps = (r) => {
+    const st = NFC_STEP(r);
+    const L = ["Intern applied", "You approve", "Admin prints", "Card claimed"];
+    return (
+      <ol className="oa-steps">
+        {L.map((t, i) => {
+          const cls = st < 0 ? (i === 0 ? "done" : i === 1 ? "bad" : "") : i < st ? "done" : i === st ? "now" : "";
+          return (
+            <li key={t} className={cls}>
+              <i>{cls === "done" ? <Icon name="check" size={11} /> : cls === "bad" ? <Icon name="x" size={11} /> : i + 1}</i>
+              <span>{cls === "bad" ? "Rejected" : t}</span>
+            </li>
+          );
+        })}
+      </ol>
+    );
+  };
+
+  return (
+    <>
+      <Msg msg={msg} />
+      <div className={open && cur ? "oa oa-open" : "oa"}>
+        <style>{OA_CSS}</style>
+        <style>{NFCR_CSS}</style>
+        <div className="oa-list">
+          <div className="oa-switch" role="tablist" aria-label="Show">
+            <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
+              Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
+            </button>
+            <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
+              Reviewed <span className="oa-n">{reviewed.length}</span>
+            </button>
+          </div>
+          {(view === "waiting" ? waiting : reviewed).length > 6 && (
+            <div className="oa-search"><Icon name="search" size={14} />
+              <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" /></div>
+          )}
+          <div className="oa-items" role="list">
+            {list.length === 0 ? (
+              <div className="oa-none">
+                <span className="oa-none-ic"><Icon name="check" size={18} /></span>
+                <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
+                <small>{sq ? "Try another name." : view === "waiting" ? "No card requests waiting for you." : "Requests you approve or reject show here."}</small>
+              </div>
+            ) : list.map((r) => (
+              <button key={r.id} type="button" role="listitem" className={cur && cur.id === r.id ? "oa-item on" : "oa-item"}
+                onClick={() => { setSel(r.id); setOpen(true); }}>
+                <Avatar name={r.intern_name} photo={r.intern_photo} size={34} />
+                <span className="oa-who"><b>{r.intern_name}</b><small>{r.type || "NFC card"} · {fmtDate(r.created_at)}</small></span>
+                {view === "reviewed" && nfcBadge(r)}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="nfcr-alerts" onClick={() => setAlertsOpen(true)}>
+            <Icon name="warn" size={14} /> Card alerts {alerts > 0 && <span className="oa-n hot">{alerts}</span>}
+          </button>
+        </div>
+
+        <div className="oa-detail">
+          {!cur ? (
+            <div className="oa-blank">
+              <span className="oa-none-ic"><Icon name="card" size={20} /></span>
+              <b>{view === "waiting" ? "No card requests waiting" : "Nothing to show yet"}</b>
+              <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the requests already checked." : "When an intern applies for an NFC card, it shows here."}</small>
+            </div>
+          ) : (() => {
+            const p = preOf ? preOf(cur) : null;
+            return (
+              <>
+                <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+                <div className="oa-head">
+                  <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
+                  <div className="oa-hn"><b>{cur.intern_name}</b><small>{cur.intern_email || "NFC card request"}</small></div>
+                  {nfcBadge(cur, true)}
+                </div>
+                <div className="oa-kv">
+                  <div><small>Request</small><b>{cur.type || "NFC card"}</b></div>
+                  <div><small>Applied</small><b>{fmtDate(cur.created_at)}</b></div>
+                  <div><small>Pre-internship</small><b className={p ? (p.started ? "nfcr-ok" : "nfcr-not") : ""}>{p ? `${p.approved}/${p.total}${p.started ? " · started" : ""}` : "—"}</b></div>
+                  <div><small>{view === "waiting" ? "Card on file" : "Reviewed"}</small><b>{view === "waiting" ? (cur.uid ? "Has a card" : "None yet") : fmtDate(cur.reviewed_at || cur.updated_at)}</b></div>
+                </div>
+                <div className="oa-tasks">
+                  <span>Intern's note</span>
+                  <p>{cur.notes || "—"}</p>
+                </div>
+                {p && !p.started && cur.status === "pending" && (
+                  <div className="oa-done"><Icon name="warn" size={14} /><span>Pre-internship requirements are not complete yet ({p.approved}/{p.total}). The card can be printed, but the intern can claim it only when every requirement is approved.</span></div>
+                )}
+                {steps(cur)}
+                <OaHistory name={cur.intern_name}
+                  rows={requests.filter((x) => x.id !== cur.id && (x.user_id ? x.user_id === cur.user_id : x.intern_name === cur.intern_name))
+                    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 10)
+                    .map((x) => ({ id: x.id, when: fmtDate(x.created_at), text: x.type || "NFC card", badge: nfcBadge(x) }))}
+                  onPick={(x) => { const w = waiting.some((y) => y.id === x.id); setView(w ? "waiting" : "reviewed"); setQ(""); setSel(x.id); }} />
+                {cur.status === "pending" ? (
+                  <div className="oa-act">
+                    <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[cur.id] || ""}
+                      onChange={(e) => setRemarks((x) => ({ ...x, [cur.id]: e.target.value }))} />
+                    <button className="ix-b danger" onClick={() => decide(cur, "rejected")} disabled={!!busy}>{busy === cur.id + "rejected" ? "..." : "Reject"}</button>
+                    <button className="ix-b ok" onClick={() => decide(cur, "approved")} disabled={!!busy}>{busy === cur.id + "approved" ? "..." : "Approve"}</button>
+                  </div>
+                ) : (
+                  <div className={cur.status === "rejected" ? "oa-done bad" : cur.status === "issued" ? "oa-done ok" : "oa-done"}>
+                    <Icon name={cur.status === "rejected" ? "x" : cur.status === "issued" ? "check" : "clock"} size={14} />
+                    <span>{cur.status === "rejected" ? "Rejected." : cur.status === "issued" ? `Card issued${cur.uid ? "" : ""}. It is active.`
+                      : cur.printed_at ? "Approved and printed. Waiting for the intern to claim it." : "Approved. Waiting for the admin to print it."}
+                      {cur.remarks ? <> Remarks: <em>{cur.remarks}</em></> : null}
+                      {cur.reviewer_name ? <small> · {cur.reviewer_name}</small> : null}</span>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </div>
+      {alertsOpen && (
+        <Drawer inPage title="Card alerts" kicker="NFC cards" icon="warn" onClose={() => setAlertsOpen(false)}>
+          <div className="nfcr-ca"><CardAlerts /></div>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+const NFCR_CSS = `
+.nfcr-alerts { flex: none; display: flex; align-items: center; gap: 8px; margin: 6px; padding: 9px 12px; border: 1px dashed #f3c48b; border-radius: 10px;
+  background: #fffaf2; font: inherit; font-size: 12.5px; font-weight: 700; color: #92400e; cursor: pointer; }
+.nfcr-alerts:hover { background: #fff4e5; }
+.nfcr-alerts .oa-n { margin-left: auto; }
+.nfcr-ok { color: #15803d !important; } .nfcr-not { color: #b45309 !important; }
+.ix-drawer:has(.nfcr-ca) { width: min(960px, calc(100vw - 24px)); }
+.nfcr-ca .ix-table-wrap, .nfcr-ca table { overflow-x: auto; max-width: 100%; }
+.nfcr-ca .ix-card { margin: 0 !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
+`;
 
 /* ───────────────────────── page ───────────────────────── */
 export default function NfcCards({ user, interns, onRefresh, preOf }) {
@@ -506,7 +703,19 @@ export function CardRequests({ requests, interns, onChanged }) {
       } else if (e.key.length === 1) buffer.current += e.key;
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // ACR122U with the helper program: the card is not typed, the helper sends it (the same way the kiosk reads it)
+    let helper = null;
+    try {
+      helper = createHelperReader({
+        onCard: ({ uid }) => {
+          const v = String(uid || "").trim().toUpperCase();
+          if (v.length >= 4) { setUids((u) => ({ ...u, [scanningId]: v })); setScanningId(null); }
+        },
+        onStatus: () => {},
+      });
+      helper.start();
+    } catch { /* no helper: the typing reader still works */ }
+    return () => { window.removeEventListener("keydown", onKey); try { helper?.stop(); } catch { /* ignore */ } };
   }, [scanningId]);
 
   // one request: link = save the card UID (can be done before the intern comes; the card isn't active yet),

@@ -1,20 +1,19 @@
 // AdminDashboard.jsx
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   navWithTabs,
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker, Inbox,
   InternMonitor, AccountSecurity, UserDetails, UserForm, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
-  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer,
+  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL,
 } from "../components/DashKit.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
-import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, CertifyBar, DTR_PICK_CSS } from "./InternDashboard.jsx";
+import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, useExcused, excusedLabels, CertifyBar, DTR_PICK_CSS } from "./InternDashboard.jsx";
 import { CardRequests } from "../components/NfcCards.jsx";
 import CardAlerts from "../components/CardAlerts.jsx";
-import QuarterlyReport from "../components/QuarterlyReport.jsx";
 import { currentFit } from "../fit.js";
 import { API, STORAGE } from "../config.js";
 
@@ -22,8 +21,11 @@ const NAV = [
   { path: "/admin",          label: "Dashboard",  icon: "dashboard" },
   { path: "/admin/interns",  label: "Interns",    icon: "users" },
   { path: "/admin/accounts", label: "Accounts",   icon: "settings" },
-  { path: "/admin/reports",  label: "Reports",    icon: "chart" },
+  { path: "/admin/kiosks",   label: "Kiosks",     icon: "tap" },
+  // no Reports: the DTR and the quarterly report belong to the OJT coordinator (and the supervisor certifies DTRs)
   { path: "/admin/calendar", label: "Calendar",   icon: "calendar" },
+  { path: "/admin/activity", label: "Activity Log", icon: "list", section: "System" },
+  { path: "/admin/backups",  label: "Backups",    icon: "folder", section: "System" },
   { path: "/admin/profile",  label: "My Profile", icon: "user" },
 ];
 
@@ -43,17 +45,7 @@ const GROUPS = {
     tabs: [
       { key: "users", label: "Manage Accounts", icon: "settings", sub: "Add, view, edit or remove users from the system." },
       { key: "cards", label: "Card Requests",   icon: "card",     sub: "Approved ID cards: download the details for your printing app, then mark them as printed." },
-      { key: "kiosks", label: "Kiosks",         icon: "tap",      sub: "Each kiosk has its own key. An HTE kiosk only accepts the interns placed at that HTE." },
-      { key: "activity", label: "Activity Log", icon: "list",     sub: "Who did what, and when: sign-ins, approvals, edits and deletions." },
       { key: "term",     label: "End of Term",  icon: "download", sub: "At the end of a term: export a batch's records to Excel, then deactivate their accounts (records are kept)." },
-      { key: "backup",   label: "Backups",      icon: "download", sub: "Download a copy of the whole database. Keep it somewhere safe (not only on this laptop)." },
-    ],
-  },
-  "/admin/reports": {
-    title: "Reports",
-    tabs: [
-      { key: "dtr",     label: "Generate DTR",        icon: "file",  sub: "Daily Time Record for each intern. Search an intern and pick a month to view or print it." },
-      { key: "quarterly", label: "Quarterly Report", icon: "file", sub: "Unit Performance Review Report: the deployment tables fill in by themselves; type the rest, then print or save as PDF." },
     ],
   },
 };
@@ -62,8 +54,10 @@ const GROUPS = {
 const OLD_PATHS = {
   "/admin/records": "/admin/interns?tab=records",
   "/admin/cards":   "/admin/accounts?tab=cards",
-  "/admin/dtr":     "/admin/reports?tab=dtr",
+  "/admin/dtr":     "/admin",
+  "/admin/reports": "/admin",
   "/admin/hours":   "/admin",
+  "/admin/term":    "/admin/accounts?tab=term",
 };
 
 /* ───────── Page with tabs (one title, a row of tabs, then the open tab) ─────────
@@ -210,6 +204,14 @@ export default function AdminDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
+  // the old Accounts tabs for kiosks, end of term and backups open their own pages now
+  useEffect(() => {
+    const t = new URLSearchParams(search).get("tab");
+    const moved = { kiosks: "/admin/kiosks", activity: "/admin/activity", backup: "/admin/backups" };
+    if (path === "/admin/accounts" && moved[t]) navigate(moved[t], { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, search]);
+
   // which tab is open on a grouped page
   const group = GROUPS[path];
   const asked = new URLSearchParams(search).get("tab");
@@ -239,16 +241,24 @@ export default function AdminDashboard() {
           {/* Accounts */}
           {tab.key === "users" && <Accounts users={users} onRefresh={fetchAll} />}
           {tab.key === "cards" && <PrintIdCards interns={interns} />}
-          {tab.key === "kiosks" && <Kiosks />}
-          {tab.key === "activity" && <ActivityLog />}
           {tab.key === "term" && <EndOfTerm users={users} records={records} onRefresh={fetchAll} />}
-          {tab.key === "backup" && <Backups />}
           {/* Reports */}
-          {tab.key === "dtr" && <DTR interns={interns} records={records} />}
-          {tab.key === "quarterly" && <QuarterlyReport user={user} />}
         </GroupPage>
       )}
 
+      {/* their own pages (moved out of Accounts) */}
+      {path === "/admin/kiosks" && (<>
+        <PageHeader title="Kiosks" sub="Each kiosk has its own key. An HTE kiosk only accepts the interns placed at that HTE." />
+        <Kiosks />
+      </>)}
+      {path === "/admin/activity" && (<>
+        <PageHeader title="Activity Log" sub="Who did what, and when: sign-ins, approvals, edits and deletions." />
+        <ActivityLog />
+      </>)}
+      {path === "/admin/backups" && (<>
+        <PageHeader title="Backups" sub="Download a copy of the whole database. Keep it somewhere safe (not only on this laptop)." />
+        <Backups />
+      </>)}
       {path === "/admin/calendar" && <Calendar />}
       {path === "/admin/profile" && <AdminProfile user={user} />}
     </Shell>
@@ -312,7 +322,7 @@ function Home({ user, records, interns, coordinators, loading }) {
       status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody timed in yet", tone: checkedIn > 0 ? "live" : "" }}
       actions={[
         { icon: "list", label: "Records", run: () => go("/admin/interns?tab=records") },
-        { icon: "file", label: "DTR", run: () => go("/admin/reports?tab=dtr") },
+        { icon: "card", label: "Card Requests", run: () => go("/admin/accounts?tab=cards") },
         { icon: "users", label: "Monitor", run: () => go("/admin/interns"), primary: true },
       ]}
       strip={[
@@ -388,42 +398,131 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // hover card on the calendar (rendered on <body> so the card's edges never cut it off)
 const CAL_TIP_CSS = `
-  .cal-tip { position: fixed; z-index: 9999; transform: translate(-50%, -100%); width: max-content; max-width: 260px;
-    padding: 10px 12px 9px; background: var(--ix-surface, #fff); border: 1px solid #f1e2d9; border-radius: 10px;
-    box-shadow: 0 12px 28px rgba(15,23,42,.16); font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1f2937;
-    display: flex; flex-direction: column; gap: 3px; pointer-events: none; animation: cal-tip-in .12s ease-out; }
+  .cal-tip { position: fixed; z-index: 9999; transform: translate(-50%, -100%); width: 290px; max-width: calc(100vw - 24px);
+    padding: 12px; background: var(--ix-surface, #fff); border: 1px solid #f1e2d9; border-radius: 12px;
+    box-shadow: 0 14px 32px rgba(15,23,42,.18); font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1f2937;
+    display: flex; flex-direction: column; gap: 8px; pointer-events: none; animation: cal-tip-in .12s ease-out; }
   .cal-tip.below { transform: translate(-50%, 0); }
   .cal-tip::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: var(--ix-surface, #fff);
     border-right: 1px solid #f1e2d9; border-bottom: 1px solid #f1e2d9; transform: translateX(-50%) rotate(45deg); }
   .cal-tip.below::after { bottom: auto; top: -6px; transform: translateX(-50%) rotate(225deg); }
-  .cal-tip-type { align-self: flex-start; padding: 2px 8px; border-radius: 99px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
-  .cal-tip-type.holiday { background: #dcfce7; color: #15803d; }
-  .cal-tip-type.nonwork { background: #fef3c7; color: #b45309; }
-  .cal-tip-ev { display: flex; flex-direction: column; gap: 3px; }
-  .cal-tip-ev + .cal-tip-ev { margin-top: 8px; padding-top: 8px; border-top: 1px solid #f1f2f4; }
-  .cal-tip-type.k-off { background: #fef2f2; color: #b91c1c; } .cal-tip-type.k-school { background: #f3efff; color: #6d28d9; }
-  .cal-tip-type.k-hte { background: #eef4ff; color: #1d4ed8; } .cal-tip-type.k-work, .cal-tip-type.k-open { background: #ecfdf3; color: #15803d; }
-  .cal-tip-mean { font-style: normal; font-size: 11.5px; font-weight: 600; }
-  .cal-tip-mean.k-off { color: #b91c1c; } .cal-tip-mean.k-school { color: #6d28d9; } .cal-tip-mean.k-hte { color: #1d4ed8; } .cal-tip-mean.k-work, .cal-tip-mean.k-open { color: #15803d; }
-  .cal-tip strong { font-size: 13.5px; font-weight: 700; line-height: 1.3; }
-  .cal-tip p { margin: 0; font-size: 12.5px; line-height: 1.45; color: #4b5563; white-space: pre-line; overflow-wrap: anywhere; }
-  .cal-tip small { margin-top: 2px; font-size: 11px; color: #9ca3af; }
+  .cal-tip .ct-date { font-size: 11px; font-weight: 600; color: #9ca3af; }
+  .cal-tip .ct-src { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 10px; background: #fafafb; border: 1px solid #eceef1; }
+  .cal-tip .ct-src-h { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .cal-tip .ct-lab { font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+  .cal-tip .ct-lab.uni { color: #b91c1c; } .cal-tip .ct-lab.hte { color: #1d4ed8; } .cal-tip .ct-lab.due { color: #c2410c; }
+  .cal-tip .ct-sub { font-size: 10.5px; color: #9ca3af; }
+  .cal-tip .ct-t { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .cal-tip .ct-t b { font-size: 13px; line-height: 1.3; min-width: 0; }
+  .cal-tip .ct-tag { flex: none; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap; background: #f3f4f6; color: #4b5563; }
+  .cal-tip .ct-tag.red { background: #fee2e2; color: #b91c1c; } .cal-tip .ct-tag.green { background: #dcfce7; color: #15803d; }
+  .cal-tip .ct-tag.blue { background: #dbeafe; color: #1d4ed8; } .cal-tip .ct-tag.orange { background: #ffedd5; color: #c2410c; }
+  .cal-tip .ct-p { margin: 0; font-size: 12px; line-height: 1.45; color: #4b5563; white-space: pre-line; overflow-wrap: anywhere; }
+  .cal-tip .ct-over { color: #15803d; font-weight: 600; }
+  .cal-tip .ct-res { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 9px; font-size: 12px; }
+  .cal-tip .ct-res.ok { background: #ecfdf3; color: #15803d; } .cal-tip .ct-res.bad { background: #fef2f2; color: #b91c1c; }
   @keyframes cal-tip-in { from { opacity: 0; } to { opacity: 1; } }
+`;
+
+// day markers: one dot per source (event / deadline), and the deadline colour
+const CAL_DAY_CSS = `
+  .ix-page .adm-cal .adm-cal-dots { position: absolute; left: 0; right: 0; bottom: 4px; display: flex; justify-content: center; gap: 3px; pointer-events: none; }
+  .ix-page .ix-content .adm-cal .adm-cal-dots .adm-cal-dot { position: static !important; bottom: auto !important; margin: 0 !important; }
+  .ix-page .ix-content .adm-cal .adm-cal-dot.k-due { background: #f97316 !important; }
+  .ix-page .ix-content .adm-cal .adm-cal-day.event.k-due { background: #fff1ea !important; color: #c2410c !important; }
+  .ix-page .adm-cal-keys i.k-due { background: #f97316; }
+  .ix-page .adm-cal-next.due { background: #fff1ea; color: #9a3412; }
+  /* dashboard (coordinator, supervisor, admin): the calendar keeps its own size and the Announcements card sits right
+     under it and fills the rest of the column, so there is no empty block under the color guide.
+     (the intern dashboard has its own layout and is not touched) */
+  @media (min-width: 1251px) {
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:not(:has(> .dbx-mid > :nth-child(2))) > .dbx-side {
+      display: flex !important; flex-direction: column !important; gap: 12px; grid-column: 3 !important; grid-row: 1 / 3 !important; min-height: 0; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:not(:has(> .dbx-mid > :nth-child(2))) > .dbx-side > * { grid-column: auto !important; grid-row: auto !important; margin: 0 !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:not(:has(> .dbx-mid > :nth-child(2))) > .dbx-side > .ix-card.adm-cal { flex: none !important; }
+    .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right:not(:has(> .dbx-mid > :nth-child(2))) > .dbx-side > .adm-duty:last-child { flex: 1 1 auto !important; min-height: fit-content !important; }
+  }
 `;
 
 export function HomeCalendar() {
   const [events, setEvents] = useState([]);
+  const [deadlines, setDeadlines] = useState([]);   // [{ id, date, title, phase }] set by the OJT coordinator
   const [viewDate, setViewDate] = useState(new Date());
-  const [tip, setTip] = useState(null); // { ev, x, y, below } — the hover card for a holiday / non-working day
+  const [tip, setTip] = useState(null); // { k, evs, dues, el }: the hover card for a day (el = the day it points at)
+  const tipRef = useRef(null);
+  // put the hover card where it fits: above the day, or below it, never cut off by the window; follows the day while scrolling
+  const placeTip = () => {
+    const t = tipRef.current;
+    if (!t || !tip?.el || !tip.el.isConnected) return;
+    const z = currentFit();
+    const r = tip.el.getBoundingClientRect();
+    const vh = window.innerHeight / z, vw = window.innerWidth / z;
+    const top = r.top / z, bottom = r.bottom / z;
+    if (bottom < 0 || top > vh) { setTip(null); return; }   // the day scrolled out of view
+    t.style.maxHeight = ""; t.style.overflow = "";
+    const h = t.offsetHeight;
+    const roomAbove = top - 8 - 6, roomBelow = vh - bottom - 8 - 6;
+    const below = h <= roomAbove ? false : h <= roomBelow ? true : roomBelow > roomAbove;
+    const room = below ? roomBelow : roomAbove;
+    if (h > room) { t.style.maxHeight = Math.max(room, 120) + "px"; t.style.overflow = "hidden"; }
+    t.classList.toggle("below", below);
+    t.style.left = Math.min(Math.max((r.left + r.width / 2) / z, 150), vw - 150) + "px";
+    t.style.top = (below ? bottom + 8 : top - 8) + "px";
+    t.style.visibility = "visible";
+  };
+  useLayoutEffect(() => { placeTip(); });
+  useEffect(() => {
+    if (!tip?.el) return undefined;
+    const on = () => placeTip();
+    window.addEventListener("scroll", on, true);
+    window.addEventListener("resize", on);
+    return () => { window.removeEventListener("scroll", on, true); window.removeEventListener("resize", on); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tip?.el]);
+
+  const me = (() => { try { return JSON.parse(sessionStorage.getItem("user") || "{}"); } catch { return {}; } })();
+  const isIntern = me.role === "intern";
+  const isStaff = me.role === "admin" || me.role === "ojt_coordinator";
+  const seesDeadlines = me.role !== "supervisor";   // deadlines are for the CCIS interns (and the coordinator who sets them), not the HTE supervisors
 
   useEffect(() => {
-    const load = () =>
-      fetch(`${API}/calendar`, { headers: { Accept: "application/json" } })
-        .then((res) => res.json())
-        .then((data) => { if (Array.isArray(data)) setEvents(data); })
-        .catch((err) => console.error("Calendar error:", err));
+    const get = (p) => fetch(`${API}${p}`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null);
+    const load = async () => {
+      const [ev, dl, rp, movs, prof] = await Promise.all([
+        get("/calendar"),
+        seesDeadlines ? get("/requirement-deadlines") : null,   // due dates per requirement (pre / during / post)
+        seesDeadlines ? get("/reports") : null,                 // weekly / monthly reports the coordinator asked for
+        isIntern ? get(`/intern/my-movs?user_id=${me.id}`) : null,
+        isIntern ? get(`/me?user_id=${me.id}`) : null,
+      ]);
+      if (Array.isArray(ev)) setEvents(ev);
+
+      const sent = Array.isArray(movs) ? movs : [];
+      const handled = (m) => !!m && (m.status === "approved" || m.status === "pending");   // an intern doesn't need a reminder for these
+      const program = (prof?.user || prof)?.program;
+      const list = [];
+
+      if (Array.isArray(dl)) dl.forEach((x) => {
+        if (!x.due_date) return;
+        const phase = x.phase || "pre";
+        if (isIntern && handled(sent.find((m) => m.requirement === x.requirement && (m.phase || "pre") === phase))) return;
+        const label = (REQUIREMENTS_BY_PHASE[phase] || []).find((r) => r.key === x.requirement)?.label || x.requirement;
+        list.push({ id: `${phase}:${x.requirement}`, date: String(x.due_date).slice(0, 10), title: label, phase });
+      });
+
+      if (Array.isArray(rp)) rp.forEach((r) => {
+        if (!r.due_date) return;
+        const mine = !isIntern || (r.audience === "programs" ? (r.programs || []).includes(programKey(program))
+          : r.audience === "interns" ? (r.intern_ids || []).map(Number).includes(Number(me.id)) : true);
+        if (!mine) return;
+        if (isIntern && handled(sent.find((m) => Number(m.report_id) === Number(r.id)))) return;
+        list.push({ id: `report:${r.id}`, date: String(r.due_date).slice(0, 10), title: `Report: ${r.title}`, phase: "report" });
+      });
+      setDeadlines(list);
+    };
     load();
     return liveRefresh(load);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const year = viewDate.getFullYear();
@@ -440,24 +539,18 @@ export function HomeCalendar() {
   const keyOf = (d) => `${year}-${pad(month + 1)}-${pad(d)}`;
   // slice(0, 10) so both "2026-10-15" and "2026-10-15T00:00:00Z" work
   const eventsOf = (d) => events.filter((e) => String(e.date).slice(0, 10) === keyOf(d));
+  const duesOf = (d) => deadlines.filter((x) => x.date === keyOf(d));
   // the one event that sets the day's color: an HTE working day > an HTE day off > a university day
   const mainOf = (list) => list.find((e) => e.hte_key && e.type === "working") || list.find((e) => e.hte_key) || list[0];
   const kindOfEv = (e) => !e ? null : e.hte_key ? (e.type === "working" ? "work" : "hte")
     : (e.scope === "school_event" || e.off === false ? (e.scope === "school_event" ? "school" : "open") : "off");
-  // "next break": a day that really closes OJT for this viewer (staff: university No-OJT days)
-  const closesOJT = (e) => e.off !== false && (!e.hte_key || events.every((x) => !x.hte_key || x.hte_key === e.hte_key));
-
-  const upcoming = events
-    .filter(closesOJT)
-    .map((e) => ({ ...e, k: String(e.date).slice(0, 10) }))
-    .filter((e) => e.k >= todayKey)
-    .sort((a, b) => a.k.localeCompare(b.k))[0];
-  const upcomingLabel = upcoming
-    ? new Date(upcoming.k + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    : "";
+  // the text of one source of the day, always saying WHO set it
+  const uniTag = (x) => (x.scope === "school_event" ? ["School event only", ""] : ["No OJT", "red"]);
+  const hteTag = (x) => (x.type === "working" ? ["We're open", "green"] : [x.type === "holiday" ? "Holiday" : "Day off", "blue"]);
 
   return (
     <div className="ix-card adm-cal">
+      <style>{CAL_DAY_CSS}</style>
       <div className="adm-cal-head">
         <button className="adm-cal-nav" onClick={() => setViewDate(new Date(year, month - 1, 1))} aria-label="Previous month">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
@@ -476,84 +569,103 @@ export function HomeCalendar() {
         {Array.from({ length: daysInMonth }, (_, i) => {
           const d = i + 1;
           const evs = eventsOf(d);
+          const dues = duesOf(d);
           const ev = mainOf(evs);
-          const kind = kindOfEv(ev);
-          const cls = ["adm-cal-day", isToday(d) && "today", ev && "event", kind && `k-${kind}`].filter(Boolean).join(" ");
+          const has = !!(ev || dues.length);
+          const kind = ev ? kindOfEv(ev) : dues.length ? "due" : null;
+          const cls = ["adm-cal-day", isToday(d) && "today", has && "event", kind && `k-${kind}`].filter(Boolean).join(" ");
           // show the hover card above the day (or below it near the top of the screen)
           const showTip = (e) => {
-            if (!ev) return;
+            if (!has) return;
             // the page may be zoomed by fit.js: screen positions are divided by it to get page positions
-            const z = currentFit();
-            const r = e.currentTarget.getBoundingClientRect();
-            const below = r.top < 150;
-            setTip({ ev, evs, x: (r.left + r.width / 2) / z, y: (below ? r.bottom + 8 : r.top - 8) / z, below });
+            setTip({ k: keyOf(d), evs, dues, el: e.currentTarget });
           };
           return (
             <div
               key={d} className={cls}
-              tabIndex={ev ? 0 : undefined}
+              tabIndex={has ? 0 : undefined}
               onMouseEnter={showTip} onFocus={showTip}
               onMouseLeave={() => setTip(null)} onBlur={() => setTip(null)}
-              aria-label={`${monthName} ${d}${evs.length ? ", " + evs.map((x) => x.title).join(", ") : ""}`}
+              aria-label={`${monthName} ${d}${[...evs.map((x) => x.title), ...dues.map((x) => `Due: ${x.title}`)].length ? ", " + [...evs.map((x) => x.title), ...dues.map((x) => `Due: ${x.title}`)].join(", ") : ""}`}
             >
               {d}
-              {ev && <i className={`adm-cal-dot k-${kind}`} />}
+              {has && (
+                <span className="adm-cal-dots">
+                  {ev && <i className={`adm-cal-dot k-${kindOfEv(ev)}`} />}
+                  {dues.length > 0 && <i className="adm-cal-dot k-due" />}
+                </span>
+              )}
             </div>
           );
         })}
       </div>
 
-      {/* color guide: only the kinds that appear this month */}
-      {(() => {
-        const inMonth = events.filter((e) => String(e.date).slice(0, 7) === `${year}-${pad(month + 1)}`).map(kindOfEv);
-        const show = [["off", "No OJT"], ["school", "School event"], ["hte", "HTE day off"], ["work", "HTE open"]].filter(([k]) => inMonth.includes(k) || (k === "work" && inMonth.includes("open")));
-        return show.length > 0 && (
-          <div className="adm-cal-keys">{show.map(([k, l]) => <span key={k}><i className={`k-${k}`} />{l}</span>)}</div>
-        );
-      })()}
+      {/* color guide: always the same dots, so the calendar looks the same every month */}
+      <div className="adm-cal-keys">
+        {[["work", "HTE open"], ["due", "Deadline"], ["off", "Holiday / No OJT"], ["school", "School event"], ["hte", isIntern ? "Your HTE off" : "HTE day off"]]
+          .filter(([k]) => !(isStaff && (k === "work" || k === "hte")) && !(!seesDeadlines && k === "due"))   // admin / coordinator don't see an HTE's own days
+          .map(([k, l]) => <span key={k}><i className={`k-${k}`} />{l}</span>)}
+      </div>
+
       {tip && createPortal(
         <div
-          className={tip.below ? "cal-tip below" : "cal-tip"}
-          style={{ left: Math.min(Math.max(tip.x, 140), window.innerWidth / currentFit() - 140), top: tip.y }}
+          ref={tipRef} className="cal-tip"
+          style={{ visibility: "hidden" }}
           role="tooltip"
         >
-          {(tip.evs || [tip.ev]).map((x) => {
-            const k = kindOfEv(x);
-            const opened = !x.hte_key && x.off === false && x.scope !== "school_event";
-            const label = x.hte_key ? (x.type === "working" ? "HTE open" : "HTE day off") + (x.hte_name ? ` · ${x.hte_name}` : "")
-              : x.scope === "school_event" ? "School event" : x.type === "holiday" ? "Holiday" : "Non-working day";
-            const meaning = x.hte_key
-              ? (x.type === "working" ? "Your HTE is open: time in as usual." : "No OJT at this HTE: time-ins are closed.")
-              : x.scope === "school_event" ? "School event: interns still time in."
-              : opened ? "Your HTE is open this day: time in as usual." : "No OJT: time-ins are closed.";
+          <span className="ct-date">
+            {new Date(tip.k + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+          </span>
+
+          {/* the university's days: set by the OJT coordinator / admin */}
+          {tip.evs.filter((x) => !x.hte_key).map((x) => {
+            const [tag, tone] = uniTag(x);
+            const overridden = isIntern && x.off === false && x.scope !== "school_event";
             return (
-              <div key={x.id} className="cal-tip-ev">
-                <span className={`cal-tip-type k-${opened ? "open" : k}`}>{label}</span>
-                <strong>{x.title}</strong>
-                {x.description && <p>{x.description}</p>}
-                <em className={`cal-tip-mean k-${opened ? "work" : k}`}>{meaning}</em>
+              <div key={`u${x.id}`} className="ct-src">
+                <div className="ct-src-h"><span className="ct-lab uni">University</span><span className="ct-sub">OJT Coordinator / Admin</span></div>
+                <div className="ct-t"><b>{x.title}</b><span className={`ct-tag ${tone}`}>{tag}</span></div>
+                {x.description && <p className="ct-p">{x.description}</p>}
+                {overridden && <p className="ct-p ct-over">This does not apply to you. Your HTE works this day.</p>}
               </div>
             );
           })}
-          <small>
-            {new Date(String(tip.ev.date).slice(0, 10) + "T00:00:00")
-              .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-          </small>
+
+          {/* the HTE's days: set by the HTE supervisor */}
+          {tip.evs.filter((x) => x.hte_key).map((x) => {
+            const [tag, tone] = hteTag(x);
+            return (
+              <div key={`h${x.id}`} className="ct-src">
+                <div className="ct-src-h">
+                  <span className="ct-lab hte">{isIntern ? "Your HTE" : "HTE"}{x.hte_name ? ` · ${x.hte_name}` : ""}</span><span className="ct-sub">HTE supervisor</span>
+                </div>
+                <div className="ct-t"><b>{x.title}</b><span className={`ct-tag ${tone}`}>{tag}</span></div>
+                {x.description && <p className="ct-p">{x.description}</p>}
+              </div>
+            );
+          })}
+
+          {/* deadlines: set by the OJT coordinator */}
+          {tip.dues.map((x) => (
+            <div key={`d${x.id}`} className="ct-src">
+              <div className="ct-src-h"><span className="ct-lab due">Deadline</span><span className="ct-sub">OJT Coordinator</span></div>
+              <div className="ct-t"><b>{x.title}</b><span className="ct-tag orange">Due this day</span></div>
+              <p className="ct-p">{PHASE_LABEL[x.phase] ? `${PHASE_LABEL[x.phase]} requirement` : "Weekly / monthly report"}</p>
+            </div>
+          ))}
+
+          {/* one line for the intern: what to do that day */}
+          {isIntern && tip.evs.length > 0 && (() => {
+            const closer = tip.evs.find((x) => x.off);
+            return closer
+              ? <div className="ct-res bad"><b>Result:</b> No time in. {closer.hte_key ? "Your HTE is closed." : "The university has no OJT."}</div>
+              : <div className="ct-res ok"><b>Result:</b> Time in as usual.</div>;
+          })()}
           <style>{CAL_TIP_CSS}</style>
         </div>,
         document.body
       )}
-      {upcoming ? (
-        <div className="adm-cal-next">
-          <Icon name="calendar" size={15} />
-          <span>Next break: <strong>{upcoming.title}</strong> on {upcomingLabel}</span>
-        </div>
-      ) : (
-        <div className="adm-cal-next none">
-          <Icon name="calendar" size={15} />
-          <span>No upcoming break yet.</span>
-        </div>
-      )}
+
     </div>
   );
 }
@@ -601,10 +713,9 @@ export function Records({ records, loading }) {
           <Icon name="search" size={15} />
           <input type="text" placeholder="Search intern..." value={search} onChange={(e) => { setSearch(e.target.value); setLimit(60); }} />
         </div>
-        {[["all", "All"], ["onsite", "Onsite"], ["online", "Online"]].map(([k, l]) => (
-          <button key={k} type="button" className={type === k ? "mon-chip on" : "mon-chip"} onClick={() => { setType(k); setLimit(60); }}>{l} · {counts[k]}</button>
-        ))}
-        <span className="mon-sep" />
+        <select className="ix-select mon-filter" value={type} onChange={(e) => { setType(e.target.value); setLimit(60); }} aria-label="Filter by type">
+          {[["all", "All records"], ["onsite", "Onsite"], ["online", "Online"]].map(([k, l]) => <option key={k} value={k}>{l} ({counts[k]})</option>)}
+        </select>
         <input type="date" className="ix-input rec-date" value={dateFilter} aria-label="Filter by date" onChange={(e) => { setDateFilter(e.target.value); setLimit(60); }} />
         {(dateFilter || search) && <button type="button" className="ix-b ghost sm" onClick={() => { setDateFilter(""); setSearch(""); }}>Clear</button>}
         <span className="rec-count">{filtered.length} record{filtered.length === 1 ? "" : "s"}</span>
@@ -652,13 +763,15 @@ const BLANK_FORM = {
   email: "", password: "", date_of_birth: "", role: "intern",
   student_id: "", contact_number: "", address: "",
   placement: "", semester: "1st Semester", program: "BSIT - 4",
-  uid: "", work_mode: "onsite", tracking_type: "hours", dtr_mode: "two", supervisor_id: "", photo: null,
+  uid: "", work_mode: "onsite", tracking_type: "hours", modality: "onsite", scope: "local", dtr_mode: "two", supervisor_id: "", photo: null,
   emergency_contact_name: "", emergency_contact_relation: "",
   emergency_contact_number: "", emergency_contact_address: "",
 };
 const ROLE_NAME = { intern: "Intern", supervisor: "Supervisor", admin: "Admin", ojt_coordinator: "OJT Coordinator" };
 
-function Accounts({ users, onRefresh }) {
+// limited = the OJT coordinator's version: she can add interns and HTE supervisors (one by one or from Excel)
+// and look at them, but not edit, deactivate or delete accounts (the admin does that).
+export function Accounts({ users, onRefresh, limited = false }) {
   // HTE supervisors the admin can assign to an intern
   const supervisors = users.filter((u) => u.role === "supervisor").sort((a, b) => a.name.localeCompare(b.name));
   const [form, setForm] = useState(BLANK_FORM);
@@ -806,6 +919,8 @@ function Accounts({ users, onRefresh }) {
       placement: u.placement || "",
       work_mode: u.work_mode || "onsite",
       tracking_type: u.tracking_type || "hours",
+      modality: u.modality || "onsite",
+      scope: u.scope || "local",
       dtr_mode: dtrModeOf(u),
       supervisor_id: u.supervisor_id ? String(u.supervisor_id) : "",
       uid: u.nfc_uid || "",
@@ -904,7 +1019,7 @@ function Accounts({ users, onRefresh }) {
     { key: "supervisor", label: "Supervisors" },
     { key: "ojt_coordinator", label: "Coordinators" },
     { key: "inactive", label: "Deactivated" },
-  ];
+  ].filter((t) => !limited || ["all", "intern", "supervisor"].includes(t.key));
   const sq = search.trim().toLowerCase();
   const wide = typeof window !== "undefined" && !window.matchMedia("(max-width: 900px)").matches;
   const shownUsers = users
@@ -929,7 +1044,7 @@ function Accounts({ users, onRefresh }) {
         .ix-drawer .acc-detail .acc-detail-bar { position: sticky; top: -16px; z-index: 2; background: #fff; padding: 4px 0 10px; margin: 0; display: flex; gap: 8px; justify-content: flex-start; }
         .ix-drawer .acc-detail :is(.ipv-grid, .uf-grid).c3, .ix-drawer .acc-detail .uf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }`}</style>
       {importing && <ImportInterns onClose={() => setImporting(false)} onDone={onRefresh} />}
-      <PageHeader title="Manage Accounts" sub="Click a user to see their profile, then Edit to change it." />
+      <PageHeader title={limited ? "Add Accounts" : "Manage Accounts"} sub={limited ? "Add an intern or an HTE supervisor, or import your Excel list. To change or deactivate an account, ask the admin." : "Click a user to see their profile, then Edit to change it."} />
 
       {!showForm && !editUser && <Msg msg={msg} />}
 
@@ -953,6 +1068,7 @@ function Accounts({ users, onRefresh }) {
                 set={(k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }))}
                 isIntern={form.role === "intern"}
                 supervisors={supervisors}
+                roles={limited ? ["intern", "supervisor"] : null}
                 header={<PhotoPicker file={form.photo} onChange={(file) => setForm((s) => ({ ...s, photo: file }))} />}
                 actions={
                   <>
@@ -1005,7 +1121,7 @@ function Accounts({ users, onRefresh }) {
               title={cur.name} onClose={() => { if (!savingEdit) backToList(); }}>
               {(
                 <div className="acc-detail">
-                  {!editUser && (
+                  {!editUser && !limited && (
                     <div className="acc-detail-bar">
                       <button type="button" className="ix-b primary sm" onClick={() => openEdit(cur)}>
                         <Icon name="pencil" size={14} /> Edit
@@ -1224,7 +1340,8 @@ export function DTR({ interns, records, canCertify = false }) {
     setShown({ id: picked.id, year, mon, period });
   };
 
-  const holidays = useHolidays(shown?.id || null);   // that intern's days off (university + their HTE)
+  const excusedDays = useExcused(shown?.id || null);   // that intern's approved school-event days
+  const holidays = { ...excusedLabels(excusedDays), ...useHolidays(shown?.id || null) };   // days off (university + their HTE)
 
   // everything below is for the DTR that was displayed (not the fields being changed)
   const intern = shown ? interns.find((u) => u.id === shown.id) : null;
@@ -1433,9 +1550,34 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0
 const kindOf = (e) => e.hte_key
   ? (e.type === "working" ? "work" : "hte")
   : (e.scope === "school_event" ? "school" : e.type === "holiday" ? "h" : "n");
-const KIND_LABEL = { h: "Holiday", n: "Non-working", school: "School event", hte: "HTE day off", work: "HTE working day", uni: "University", unischool: "School event" };
+const KIND_LABEL = { h: "Holiday", n: "Non-working", school: "School event", hte: "HTE day off", work: "HTE working day", uni: "University", unischool: "School event", due: "Deadline" };
 // a supervisor sees the university's days in gray (for reference only)
-const kindFor = (e, sup) => (sup && !e.hte_key ? (e.scope === "school_event" ? "unischool" : "uni") : kindOf(e));
+const kindFor = (e, sup) => (e._due ? "due" : sup && !e.hte_key ? (e.scope === "school_event" ? "unischool" : "uni") : kindOf(e));
+
+/* an intern's deadlines (requirements + reports the coordinator set), as calendar rows */
+async function loadInternDeadlines(me) {
+  const get = (p) => fetch(`${API}${p}`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null);
+  const [dl, rp, movs, prof] = await Promise.all([get("/requirement-deadlines"), get("/reports"), get(`/intern/my-movs?user_id=${me.id}`), get(`/me?user_id=${me.id}`)]);
+  const sent = Array.isArray(movs) ? movs : [];
+  const handled = (m) => !!m && (m.status === "approved" || m.status === "pending");
+  const program = (prof?.user || prof)?.program;
+  const list = [];
+  if (Array.isArray(dl)) dl.forEach((x) => {
+    if (!x.due_date) return;
+    const phase = x.phase || "pre";
+    if (handled(sent.find((m) => m.requirement === x.requirement && (m.phase || "pre") === phase))) return;
+    const label = (REQUIREMENTS_BY_PHASE[phase] || []).find((r) => r.key === x.requirement)?.label || x.requirement;
+    list.push({ id: `due:${phase}:${x.requirement}`, _due: true, date: String(x.due_date).slice(0, 10), title: label, description: `${PHASE_LABEL[phase] || ""} requirement. Send it in Submit MOV.` });
+  });
+  if (Array.isArray(rp)) rp.forEach((r) => {
+    if (!r.due_date) return;
+    const mine = r.audience === "programs" ? (r.programs || []).includes(programKey(program))
+      : r.audience === "interns" ? (r.intern_ids || []).map(Number).includes(Number(me.id)) : true;
+    if (!mine || handled(sent.find((m) => Number(m.report_id) === Number(r.id)))) return;
+    list.push({ id: `due:report:${r.id}`, _due: true, date: String(r.due_date).slice(0, 10), title: `Report: ${r.title}`, description: "Set by the OJT coordinator. Send it in Submit MOV." });
+  });
+  return list;
+}
 
 /* Two calendars:
    - staff (OJT coordinator / admin): the university calendar. Each day is either "No OJT" (time-ins closed
@@ -1444,6 +1586,7 @@ const kindFor = (e, sup) => (sup && !e.hte_key ? (e.scope === "school_event" ? "
      for that HTE's interns only; "We work this day" keeps time-ins open on a university No-OJT day. */
 export function Calendar({ mode = "staff" }) {
   const sup = mode === "supervisor";
+  const intern = mode === "intern";   // read only: the university + your HTE + your deadlines
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null);
@@ -1464,10 +1607,17 @@ export function Calendar({ mode = "staff" }) {
     }
   };
   useEffect(() => { fetchEvents(); }, []);
+  const [dues, setDues] = useState([]);
+  useEffect(() => {
+    if (!intern) return;
+    let me = {}; try { me = JSON.parse(sessionStorage.getItem("user") || "{}"); } catch { /* none */ }
+    loadInternDeadlines(me).then(setDues).catch(() => {});
+  }, [intern]);
 
   const today = ymd(new Date());
   const htes = [...new Map(events.filter((e) => e.hte_key).map((e) => [e.hte_key, e.hte_name || e.hte_key])).entries()];
-  const shownEvents = sup || hteFilter === "all" ? events
+  const allEvents = intern ? [...events, ...dues] : events;
+  const shownEvents = sup || intern || hteFilter === "all" ? allEvents
     : hteFilter === "uni" ? events.filter((e) => !e.hte_key)
     : events.filter((e) => !e.hte_key || e.hte_key === hteFilter);
   const byDay = {};
@@ -1485,6 +1635,7 @@ export function Calendar({ mode = "staff" }) {
 
   // clicking a day: a supervisor opens their HTE's event (or the university one to see it); staff open the university one
   const clickDay = (iso, evs) => {
+    if (intern) { if (evs.length) setOpen({ _view: true, date: iso, evs }); return; }
     const mine = evs.find((e) => e.hte_key);
     const uni = evs.find((e) => !e.hte_key);
     if (sup) setOpen(mine || (uni ? { ...uni, _uni: true } : { date: iso }));
@@ -1493,8 +1644,8 @@ export function Calendar({ mode = "staff" }) {
 
   return (
     <>
-      <PageHeader title={sup ? "HTE Calendar" : "Calendar Management"}
-        sub={sup ? "Your HTE's own calendar. Days off here apply only to the interns placed at your HTE. The university's days show for reference."
+      <PageHeader title={intern ? "Calendar" : sup ? "HTE Calendar" : "Calendar Management"}
+        sub={intern ? "University days, your HTE's days and your deadlines. Click a day to see who set it." : sup ? "Your HTE's own calendar. Days off here apply only to the interns placed at your HTE. The university's days show for reference."
           : "The university calendar. Click a day to add a holiday, a suspension or a school event. Each HTE keeps its own calendar too."} />
       <Msg msg={msg} />
       {loading ? <Spinner /> : (
@@ -1506,7 +1657,7 @@ export function Calendar({ mode = "staff" }) {
                 <b>{monthLabel}</b>
                 <button type="button" className="cm-nb" onClick={() => shift(1)} aria-label="Next month">›</button>
                 <button type="button" className="ix-b ghost sm cm-today" onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); }}>Today</button>
-                {!sup && htes.length > 0 && (
+                {!sup && !intern && htes.length > 0 && (
                   <select className="ix-select cm-filter" value={hteFilter} onChange={(e) => setHteFilter(e.target.value)} aria-label="Show">
                     <option value="all">University + all HTEs</option>
                     <option value="uni">University only</option>
@@ -1515,11 +1666,13 @@ export function Calendar({ mode = "staff" }) {
                 )}
               </div>
               <div className="cm-leg">
-                {sup ? (<>
+                {intern ? (<>
+                  <span><i className="h" />Holiday</span><span><i className="n" />No OJT</span><span><i className="school" />School event</span>
+                  <span><i className="hte" />Your HTE off</span><span><i className="work" />Your HTE open</span><span><i className="due" />Deadline</span>
+                </>) : sup ? (<>
                   <span><i className="hte" />Your HTE's day off</span><span><i className="work" />Your HTE works</span><span><i className="uni" />University (reference)</span>
                 </>) : (<>
                   <span><i className="h" />Holiday</span><span><i className="n" />Non-working</span><span><i className="school" />School event</span>
-                  <span><i className="hte" />HTE day off</span><span><i className="work" />HTE working</span>
                 </>)}
               </div>
             </header>
@@ -1534,11 +1687,11 @@ export function Calendar({ mode = "staff" }) {
                   <button key={iso} type="button"
                     className={`cm-day${other ? " other" : ""}${we ? " we" : ""}${iso === today ? " today" : ""}`}
                     onClick={() => clickDay(iso, evs)}
-                    title={evs.length ? evs.map((e) => `${e.title}${e.hte_key && !sup ? ` (${e.hte_name})` : ""}`).join(", ") : sup ? "Add a day to your HTE calendar" : "Add a university event"}>
+                    title={evs.length ? evs.map((e) => `${e.title}${e.hte_key && !sup ? ` (${e.hte_name})` : ""}`).join(", ") : intern ? "" : sup ? "Add a day to your HTE calendar" : "Add a university event"}>
                     <b>{d.getDate()}</b>
-                    {evs.slice(0, 3).map((e) => <span key={e.id} className={`cm-tag ${kindFor(e, sup)}`}>{e.hte_key && !sup ? `${e.hte_name}: ` : ""}{e.title}</span>)}
+                    {evs.slice(0, 3).map((e) => <span key={e.id} className={`cm-tag ${kindFor(e, sup)}`}>{e.hte_key && !sup && !intern ? `${e.hte_name}: ` : ""}{e.title}</span>)}
                     {evs.length > 3 && <span className="cm-more">+{evs.length - 3} more</span>}
-                    {!evs.length && !other && <span className="cm-plus">+</span>}
+                    {!evs.length && !other && !intern && <span className="cm-plus">+</span>}
                   </button>
                 );
               })}
@@ -1548,17 +1701,17 @@ export function Calendar({ mode = "staff" }) {
           <section className="ix-card flush cm-list">
             <header className="cm-hd"><b>Upcoming</b><span className="cm-cnt">{upcoming.length} event{upcoming.length === 1 ? "" : "s"}</span></header>
             <div className="cm-items">
-              {upcoming.length === 0 && <div className="cm-empty">Nothing coming up.<small>Click a day on the calendar to add one.</small></div>}
+              {upcoming.length === 0 && <div className="cm-empty">Nothing coming up.<small>{intern ? "Days off and deadlines will show here." : "Click a day on the calendar to add one."}</small></div>}
               {[...upcoming, ...past.slice(0, 5)].map((e) => {
                 const iso = String(e.date).slice(0, 10);
                 const t = dayTile(iso);
                 const k = kindFor(e, sup);
                 return (
                   <button key={e.id} type="button" className={`cm-item${iso < today ? " past" : ""}`}
-                    onClick={() => { setOpen(sup && !e.hte_key ? { ...e, _uni: true } : e); setMonth(new Date(iso.slice(0, 4), Number(iso.slice(5, 7)) - 1, 1)); }}>
+                    onClick={() => { setOpen(intern ? { _view: true, date: iso, evs: (byDay[iso] || [e]) } : sup && !e.hte_key ? { ...e, _uni: true } : e); setMonth(new Date(iso.slice(0, 4), Number(iso.slice(5, 7)) - 1, 1)); }}>
                     <span className={`cm-tile ${k}`}><b>{t.d}</b><small>{t.m}</small></span>
                     <span className="cm-tx"><b>{e.title}</b>
-                      <small>{t.w}{e.hte_key ? (sup ? " · your HTE" : ` · ${e.hte_name}`) : " · University"}{iso < today ? " · past" : ""}</small></span>
+                      <small>{t.w}{e._due ? " · Deadline" : e.hte_key ? (sup || intern ? " · your HTE" : ` · ${e.hte_name}`) : " · University"}{iso < today ? " · past" : ""}</small></span>
                     <span className={`cm-pill ${k}`}>{KIND_LABEL[k]}</span>
                   </button>
                 );
@@ -1567,9 +1720,44 @@ export function Calendar({ mode = "staff" }) {
           </section>
         </div>
       )}
-      {open && <CalDrawer key={(open.id || open.date) + (open._uni ? "u" : "")} ev={open.id ? open : null} date={open.date} sup={sup} workFrom={open._work} events={events} onClose={() => setOpen(null)} onDone={done} onWorkDay={(uni) => setOpen({ date: String(uni.date).slice(0, 10), _work: uni })} />}
+      {open?._view && <CalDayView date={open.date} evs={open.evs} onClose={() => setOpen(null)} />}
+      {open && !open._view && <CalDrawer key={(open.id || open.date) + (open._uni ? "u" : "")} ev={open.id ? open : null} date={open.date} sup={sup} workFrom={open._work} events={events} onClose={() => setOpen(null)} onDone={done} onWorkDay={(uni) => setOpen({ date: String(uni.date).slice(0, 10), _work: uni })} />}
       <style>{CM_CSS}</style>
     </>
+  );
+}
+
+/* read-only day card for interns */
+function CalDayView({ date, evs, onClose }) {
+  const d = new Date(date + "T00:00:00");
+  const title = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const uni = evs.filter((e) => !e.hte_key && !e._due);
+  const hte = evs.filter((e) => e.hte_key);
+  const due = evs.filter((e) => e._due);
+  const blocks = [["University", "Set by the OJT coordinator / admin", uni], ["Your HTE", "Set by your supervisor", hte], ["Deadline", "Set by the OJT coordinator", due]];
+  const off = evs.find((e) => e.off !== undefined && !e._due)?.off;
+  return (
+    <Drawer inPage title={title} kicker="Calendar" icon="calendar" onClose={onClose}>
+      <div style={{ display: "grid", gap: 14, padding: "4px 2px" }}>
+        {blocks.filter(([, , l]) => l.length).map(([name, by, list]) => (
+          <div key={name}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: ".04em" }}>{name} <span style={{ fontWeight: 500, textTransform: "none" }}>· {by}</span></div>
+            {list.map((e) => (
+              <div key={e.id} style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span className={`cm-pill ${kindFor(e, false)}`}>{KIND_LABEL[kindFor(e, false)]}</span>
+                <div><b style={{ fontSize: 14 }}>{e.title}</b>{e.description ? <div style={{ fontSize: 13, color: "#4b5563", marginTop: 2 }}>{e.description}</div> : null}</div>
+              </div>
+            ))}
+          </div>
+        ))}
+        {off !== undefined && (uni.length || hte.length) ? (
+          <div style={{ fontSize: 13, padding: "10px 12px", borderRadius: 10, background: off ? "#fef2f2" : "#ecfdf3", color: off ? "#b91c1c" : "#15803d", fontWeight: 600 }}>
+            {off ? "No time-in on this day." : "You can still time in on this day."}
+          </div>
+        ) : null}
+      </div>
+      <style>{CM_CSS}</style>
+    </Drawer>
   );
 }
 
@@ -1686,8 +1874,8 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
         </div>
         {canWork && !isWork && <small className="cm-note">The university has no OJT this day. If your office is open, choose “We're open” so your interns can time in.</small>}
         <small className="cm-note">{isWork
-          ? "The university has no OJT this day, but your office is open: your interns can time in as usual. The OJT coordinator is notified."
-          : hteEvent ? "Only the interns placed at this HTE can't time in this day. They and the OJT coordinator are notified."
+          ? "The university has no OJT this day, but your office is open: your interns can time in as usual. Only your interns see this."
+          : hteEvent ? "Only the interns placed at this HTE can't time in this day. Only your interns see this."
           : scope === "school_event" ? "Shown on everyone's calendar. Interns still time in at their HTE."
           : "No intern can time in this day (unless their HTE marks it as a working day). It shows on the DTR."}</small>
       </form>
@@ -1696,7 +1884,7 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
 }
 
 const CM_CSS = `
-.ix-page .cm-cols { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: stretch; }
+.ix-page .cm-cols { display: grid; grid-template-columns: minmax(0, 1fr) 330px; grid-template-rows: minmax(0, 1fr); gap: 14px; align-items: stretch; }
 .ix-page .ix-card.cm-cal, .ix-page .ix-card.cm-list { margin: 0 !important; padding: 0 !important; overflow: hidden; display: flex; flex-direction: column; }
 .ix-page .cm-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid #eef0f3; min-height: 56px; box-sizing: border-box; }
 .ix-page .cm-hd > b { font-size: 15px; font-weight: 600; color: #111827; }
@@ -1715,7 +1903,8 @@ const CM_CSS = `
 .ix-page .cm-tag.work, .ix-page .cm-pill.work { background: #ecfdf3; color: #15803d; }
 .ix-page .cm-tile.school { background: #f3efff; color: #6d28d9; } .ix-page .cm-tile.hte { background: #eef4ff; color: #1d4ed8; } .ix-page .cm-tile.work { background: #ecfdf3; color: #15803d; }
 .ix-page .cm-more { font-size: 10.5px; color: #6b7280; padding-left: 2px; }
-.ix-page .cm-leg i.uni { background: #9ca3af; }
+.ix-page .cm-leg i.uni { background: #9ca3af; } .ix-page .cm-leg i.due { background: #f97316; }
+.ix-page :is(.cm-tag, .cm-pill, .cm-tile).due { background: #fff1e6; color: #c2410c; }
 .ix-page :is(.cm-tag, .cm-pill, .cm-tile).uni, .ix-page :is(.cm-tag, .cm-pill, .cm-tile).unischool { background: #f3f4f6; color: #4b5563; }
 .ix-page .cm-filter { height: 32px !important; font-size: 12px !important; padding: 0 28px 0 10px !important; width: auto !important; margin-left: 4px; }
 .ix-page .cm-seg.two button { height: auto !important; min-height: 52px !important; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 6px 8px !important; }
@@ -1759,21 +1948,34 @@ const CM_CSS = `
 .ix-page .cm-seg button.on.h { border-color: #ef4444; background: #fef2f2; color: #b91c1c; }
 .ix-page .cm-seg button.on.n { border-color: #f59e0b; background: #fff7ed; color: #c2410c; }
 .ix-page .cm-note { font-size: 12px; color: #6b7280; line-height: 1.5; }
-/* computers: the page fits the window */
-@media (min-width: 1001px) and (min-height: 600px) {
-  .ix-page.lay2 .ix-main:has(.cm-cols) { display: flex !important; flex-direction: column !important; overflow-y: auto !important; }
-  .ix-page.lay2 .ix-main:has(.cm-cols) > .ix-content { flex: 1 0 auto !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+/* every device: the page fits the window (no page scroll). The month squeezes to the space left; only "Upcoming" scrolls inside its card. */
+@media (min-height: 480px) {
+  .ix-page.lay2 .ix-main:has(.cm-cols) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.cm-cols) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main:has(.cm-cols) > .ix-content > * { flex: none; }
-  .ix-page .ix-content > .cm-cols { flex: 1 0 auto !important; min-height: 460px; }
-  .ix-page .cm-day { min-height: 0; }
+  .ix-page .ix-content > .cm-cols { flex: 1 1 0 !important; min-height: 0; margin-bottom: 0 !important; }
+  .ix-page .cm-cols > .ix-card { min-height: 0; }
+  .ix-page .cm-day { min-height: 0; padding: 4px 6px !important; gap: 2px; }
+  .ix-page .cm-grid { min-height: 0; padding: 8px 12px 12px; gap: 4px; }
+  .ix-page .cm-hd { padding: 8px 14px; min-height: 0; }
 }
 @media (max-width: 1000px) {
-  .ix-page .cm-cols { grid-template-columns: 1fr; }
+  .ix-page .cm-cols { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 30%); gap: 10px; }
   .ix-page .cm-leg { display: none; }
-  .ix-page .cm-day { min-height: 48px; padding: 4px 5px !important; }
-  .ix-page .cm-tag { font-size: 0; padding: 0; height: 5px; border-radius: 3px; }
-  .ix-page .cm-tag.h { background: #ef4444; } .ix-page .cm-tag.n { background: #f59e0b; } .ix-page .cm-tag.school { background: #8b5cf6; } .ix-page .cm-tag.hte { background: #3b82f6; } .ix-page .cm-tag.work { background: #22c55e; }
-  .ix-page .cm-grid { gap: 4px; padding: 10px; }
+  .ix-page .cm-day { padding: 3px 4px !important; }
+  .ix-page .cm-day > b { font-size: 11.5px; }
+  .ix-page .cm-tag { font-size: 0; padding: 0; height: 5px; border-radius: 3px; flex: none; }
+  .ix-page .cm-tag.h { background: #ef4444; } .ix-page .cm-tag.n { background: #f59e0b; } .ix-page .cm-tag.school { background: #8b5cf6; } .ix-page .cm-tag.hte { background: #3b82f6; } .ix-page .cm-tag.work { background: #22c55e; } .ix-page .cm-tag.due { background: #f97316; }
+  .ix-page .cm-more { display: none; }
+  .ix-page .cm-grid { gap: 3px; padding: 6px 8px 8px; }
+  .ix-page .cm-item { padding: 8px 12px !important; }
+  .ix-page .cm-nav > b { min-width: 0; font-size: 14px; }
+  .ix-page .cm-filter { display: none; }
+}
+/* very short windows: scroll instead of squashing the month */
+@media (max-height: 479px) {
+  .ix-page .cm-cols { grid-template-rows: none; }
+  .ix-page .cm-cal { min-height: 380px; }
 }
 `;
 
@@ -2357,6 +2559,9 @@ export const adminCss = `
 .ix-page .ix-content .adm-cal .adm-cal-dot.k-off { background: #ef4444 !important; } .ix-page .ix-content .adm-cal .adm-cal-dot.k-school { background: #8b5cf6 !important; }
 .ix-page .ix-content .adm-cal .adm-cal-dot.k-hte { background: #3b82f6 !important; } .ix-page .adm-cal-dot:is(.k-work, .k-open) { background: #22c55e !important; }
 .ix-page .adm-cal-day.today .adm-cal-dot { background: #fff !important; }
+.ix-page .ix-content .adm-cal .adm-cal-day.today.event .adm-cal-dot.k-off { background: #ef4444 !important; } .ix-page .ix-content .adm-cal .adm-cal-day.today.event .adm-cal-dot.k-school { background: #8b5cf6 !important; }
+.ix-page .ix-content .adm-cal .adm-cal-day.today.event .adm-cal-dot.k-hte { background: #3b82f6 !important; } .ix-page .ix-content .adm-cal .adm-cal-day.today.event .adm-cal-dot:is(.k-work, .k-open) { background: #22c55e !important; }
+.ix-page .ix-content .adm-cal .adm-cal-day.today.event .adm-cal-dot.k-due { background: #f97316 !important; }
 .ix-page .adm-cal-keys { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 2px 0; font-size: 10.5px; color: #6b7280; line-height: 1.3; }
 .ix-page .adm-cal-keys span { display: inline-flex; align-items: center; gap: 4px; }
 .ix-page .adm-cal-keys i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
@@ -2458,6 +2663,9 @@ function Kiosks() {
   const [adding, setAdding] = useState(false);
   const [kq, setKq] = useState("");
   const [kf, setKf] = useState("all");
+  const [sel, setSel] = useState(null);           // the picked kiosk
+  const [open, setOpen] = useState(false);        // phones: the details replace the list
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   const load = () => fetch(`${API}/admin/kiosks`, { headers: { Accept: "application/json" } })
     .then((r) => r.json()).then((d) => setData(d && Array.isArray(d.kiosks) ? d : { kiosks: [], placements: [] }))
@@ -2480,12 +2688,12 @@ function Kiosks() {
   const add = async (e) => {
     e.preventDefault();
     const d = await call(`${API}/admin/kiosks`, "POST", { name: form.name.trim(), placement: form.placement || null }, "add");
-    if (d?.key) { setShown({ name: form.name.trim(), key: d.key }); setCopied(false); setForm({ name: "", placement: "" }); setAdding(false); }
+    if (d?.key) { setShown({ id: d.id, name: form.name.trim(), key: d.key }); setSel(d.id); setOpen(true); setKf("all"); setCopied(false); setForm({ name: "", placement: "" }); setAdding(false); }
   };
   const newKey = async (k) => {
     if (!window.confirm(`Make a new key for "${k.name}"? The old key stops working right away, so you'll need to set up the kiosk again.`)) return;
     const d = await call(`${API}/admin/kiosks/${k.id}`, "PATCH", { new_key: true }, "key" + k.id);
-    if (d?.key) { setShown({ name: k.name, key: d.key }); setCopied(false); }
+    if (d?.key) { setShown({ id: k.id, name: k.name, key: d.key }); setCopied(false); }
   };
   // show the setup link of a kiosk again (the key is kept encrypted on the server)
   const showLink = async (k) => {
@@ -2494,89 +2702,123 @@ function Kiosks() {
       const res = await fetch(`${API}/admin/kiosks/${k.id}/key`, { headers: { Accept: "application/json" } });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.message || "Couldn't get the key.");
-      setShown({ name: k.name, key: d.key }); setCopied(false);
-      const m = document.querySelector(".ix-main"); if (m) m.scrollTo({ top: 0, behavior: "smooth" });
+      setShown({ id: k.id, name: k.name, key: d.key }); setCopied(false);
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
     } finally { setBusy(null); }
   };
   const toggle = (k) => call(`${API}/admin/kiosks/${k.id}`, "PATCH", { active: !k.active }, "on" + k.id);
-  const remove = (k) => window.confirm(`Remove "${k.name}"? Its key stops working.`) && call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id);
+  const remove = async (k) => window.confirm(`Remove "${k.name}"? Its key stops working.`) && !!(await call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id));
   const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}${readerPick !== "auto" ? `&reader=${readerPick}` : ""}` : "";
   const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select it by hand */ } };
   const seen = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Never");
   const kqs = kq.trim().toLowerCase();
   const kiosksShown = (data?.kiosks || [])
-    .filter((k) => kf === "all" || (kf === "on" && k.active) || (kf === "off" && !k.active) || (kf === "ccis" && !k.placement)
-      || (kf === "hte" && k.placement) || (kf === "never" && !k.last_seen_at))
+    .filter((k) => kf === "all" || (kf === "on" && k.active) || (kf === "off" && !k.active))
     .filter((k) => !kqs || `${k.name} ${k.placement || ""}`.toLowerCase().includes(kqs))
     .sort((a, b) => (b.active - a.active) || String(a.name).localeCompare(String(b.name)));
 
+  const cur = kiosksShown.find((k) => k.id === sel) || null;
+  const pickK = (k) => { setSel(k.id); setOpen(true); if (!shown || shown.id !== k.id) { setShown(null); } };
+
   return (
     <div className="ks-wrap">
+      <style>{OA_CSS}</style>
       <style>{KIOSK_CSS}</style>
       <Msg msg={msg} />
-      {shown && (
-        <div className="ix-card ks-key">
-          <div className="ks-key-h"><Icon name="key" size={18} /><b>Set up "{shown.name}"</b><button type="button" className="ix-b ghost sm" onClick={() => setShown(null)}>Done</button></div>
-          <p>Open this link <b>once</b> on the kiosk device. It saves the key there. You can see this link again any time with <b>Show link</b>. Keep it private: anyone with it can set up a kiosk.</p>
-          <div className="ks-reader">
-            <label htmlFor="ks-reader">Card reader on this kiosk</label>
-            <select id="ks-reader" className="ix-select" value={readerPick} onChange={(e) => { setReaderPick(e.target.value); setCopied(false); }}>
-              <option value="auto">Find it automatically</option>
-              <option value="phone">Android phone / tablet (NFC)</option>
-              <option value="acr122u">ACR122U (with the helper program)</option>
-              <option value="usb">Old USB reader (can't protect cards)</option>
-            </select>
+      <div className={open && cur ? "oa ks2 oa-open" : "oa ks2"}>
+        {/* kiosks */}
+        <div className="oa-list">
+          <div className="oa-switch" role="tablist" aria-label="Show">
+            {[["all", "All", (data?.kiosks || []).length], ["on", "On", (data?.kiosks || []).filter((k) => k.active).length], ["off", "Off", (data?.kiosks || []).filter((k) => !k.active).length]].map(([k, l, n]) => (
+              <button key={k} type="button" role="tab" aria-selected={kf === k} className={kf === k ? "on" : ""} onClick={() => { setKf(k); }}>
+                {l} <span className="oa-n">{n}</span>
+              </button>
+            ))}
           </div>
-          <div className="ks-link"><code>{link}</code><button type="button" className="ix-b primary sm" onClick={copy}>{copied ? "Copied" : "Copy link"}</button></div>
-        </div>
-      )}
-      <div className="ix-card ks-list">
-        <div className="ks-bar">
-          <h3>Kiosks <span className="ks-n">{data?.kiosks?.length ?? 0}</span></h3>
-          <div className="ix-search ks-search"><Icon name="search" size={15} />
-            <input type="text" placeholder="Search kiosk or HTE..." value={kq} onChange={(e) => setKq(e.target.value)} /></div>
-          <select className="ix-select ks-filter" value={kf} onChange={(e) => setKf(e.target.value)} aria-label="Filter kiosks">
-            <option value="all">All kiosks</option>
-            <option value="on">On</option>
-            <option value="off">Off</option>
-            <option value="ccis">CCIS (every intern)</option>
-            <option value="hte">HTE kiosks</option>
-            <option value="never">Never used</option>
-          </select>
-          <button type="button" className="ix-b primary sm ks-addbtn" onClick={() => setAdding(true)}><Icon name="plus" size={14} /> Add kiosk</button>
-        </div>
-        {!data ? <Spinner /> : kiosksShown.length === 0 ? (
-          <div className="ks-empty">{data.kiosks.length ? "No kiosk matches." : "No kiosks yet. The main kiosk key in the server's .env still works as a CCIS kiosk."}</div>
-        ) : (
-          <div className="ks-scroll">
-            <table className="ks-t">
-              <thead><tr><th>Kiosk</th><th>Who can tap</th><th>Last used</th><th>Status</th><th className="r">Actions</th></tr></thead>
-              <tbody>
-                {kiosksShown.map((k) => (
-                  <tr key={k.id} className={k.active ? "" : "off"}>
-                    <td><b>{k.name}</b></td>
-                    <td>{k.placement ? <span className="ks-hte">{k.placement}</span> : <span className="ks-ccis">Every intern (CCIS)</span>}</td>
-                    <td className="ks-seen">{seen(k.last_seen_at)}</td>
-                    <td>
-                      <button type="button" className={k.active ? "ks-sw on" : "ks-sw"} role="switch" aria-checked={k.active} disabled={!!busy}
-                        onClick={() => toggle(k)} title={k.active ? "Turn off" : "Turn on"}><i /><span>{k.active ? "On" : "Off"}</span></button>
-                    </td>
-                    <td className="r">
-                      <span className="ks-acts">
-                        <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => showLink(k)} title="Show the setup link of this kiosk again"><Icon name="eye" size={13} /> {busy === "show" + k.id ? "..." : "Show link"}</button>
-                        <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => newKey(k)} title="Make a new key: the old link stops working (use it if the link was shared by mistake)"><Icon name="key" size={13} /> New key</button>
-                        <button type="button" className="ix-b danger sm ks-del" disabled={!!busy} onClick={() => remove(k)} aria-label={`Remove ${k.name}`} title="Remove"><Icon name="trash" size={15} /></button>
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="oa-search"><Icon name="search" size={14} />
+            <input type="search" placeholder="Search kiosk or HTE" value={kq} onChange={(e) => setKq(e.target.value)} aria-label="Search kiosk" /></div>
+          <div className="oa-items" role="list">
+            {!data ? <Spinner /> : kiosksShown.length === 0 ? (
+              <div className="oa-none">
+                <span className="oa-none-ic"><Icon name="tap" size={18} /></span>
+                <b>{data.kiosks.length ? "No match" : "No kiosks yet"}</b>
+                <small>{data.kiosks.length ? "Try another name or filter." : "Add one below. The main kiosk key in the server's .env still works as a CCIS kiosk."}</small>
+              </div>
+            ) : kiosksShown.map((k) => (
+              <button key={k.id} type="button" role="listitem" className={cur && cur.id === k.id ? "oa-item on" : "oa-item"} onClick={() => pickK(k)}>
+                <span className={k.active ? "ks-ic on" : "ks-ic"}><Icon name="tap" size={16} /></span>
+                <span className="oa-who"><b>{k.name}</b><small>{k.placement ? `Interns at ${k.placement}` : "Every intern (CCIS)"} · {seen(k.last_seen_at)}</small></span>
+                <span className={k.active ? "ks-dot on" : "ks-dot"} title={k.active ? "On" : "Off"} />
+              </button>
+            ))}
           </div>
-        )}
+          <button type="button" className="ix-b primary sm ks-addbtn2" onClick={() => setAdding(true)}><Icon name="plus" size={14} /> Add kiosk</button>
+          <button type="button" className="nfcr-alerts" onClick={() => setAlertsOpen(true)}>
+            <Icon name="warn" size={14} /> Card alerts
+          </button>
+        </div>
+
+        {/* the picked kiosk */}
+        <div className="oa-detail">
+          {!cur ? (
+            <div className="oa-blank">
+              <span className="oa-none-ic"><Icon name="tap" size={20} /></span>
+              <b>Pick a kiosk</b>
+              <small>Its details, setup link and key show here.</small>
+            </div>
+          ) : (
+            <>
+              <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
+              <div className="oa-head">
+                <span className={cur.active ? "ks-ic big on" : "ks-ic big"}><Icon name="tap" size={22} /></span>
+                <div className="oa-hn"><b>{cur.name}</b><small>{cur.placement ? `HTE kiosk · only interns placed at ${cur.placement}` : "CCIS kiosk · every intern can tap here"}</small></div>
+                <button type="button" className={cur.active ? "ks-sw on" : "ks-sw"} role="switch" aria-checked={cur.active} disabled={!!busy}
+                  onClick={() => toggle(cur)} title={cur.active ? "Turn off" : "Turn on"}><i /><span>{cur.active ? "On" : "Off"}</span></button>
+              </div>
+              <div className="oa-kv">
+                <div><small>Who can tap</small><b>{cur.placement || "Every intern"}</b></div>
+                <div><small>Last used</small><b>{seen(cur.last_seen_at)}</b></div>
+                <div><small>Added</small><b>{cur.created_at ? new Date(String(cur.created_at).replace(" ", "T")).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}</b></div>
+                <div><small>Status</small><b className={cur.active ? "ks-ok" : "ks-off"}>{cur.active ? "Accepting taps" : "Turned off"}</b></div>
+              </div>
+
+              {/* setup link */}
+              <div className="ks-setup">
+                <div className="ks-setup-h"><Icon name="key" size={16} /><b>Setup link</b>
+                  {!(shown && shown.id === cur.id) && (
+                    <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => showLink(cur)}>
+                      <Icon name="eye" size={13} /> {busy === "show" + cur.id ? "..." : "Show link"}</button>
+                  )}
+                </div>
+                {shown && shown.id === cur.id ? (
+                  <>
+                    <p>Open this link <b>once</b> on the kiosk device. It saves the key there. Keep it private: anyone with it can set up a kiosk.</p>
+                    <div className="ks-reader">
+                      <label htmlFor="ks-reader">Card reader on this kiosk</label>
+                      <select id="ks-reader" className="ix-select" value={readerPick} onChange={(e) => { setReaderPick(e.target.value); setCopied(false); }}>
+                        <option value="auto">Find it automatically</option>
+                        <option value="phone">Android phone / tablet (NFC)</option>
+                        <option value="acr122u">ACR122U (with the helper program)</option>
+                        <option value="usb">Old USB reader (can't protect cards)</option>
+                      </select>
+                    </div>
+                    <div className="ks-link"><code>{link}</code><button type="button" className="ix-b primary sm" onClick={copy}>{copied ? "Copied" : "Copy link"}</button></div>
+                  </>
+                ) : <p>Click <b>Show link</b> to see it again and copy it to the kiosk device.</p>}
+              </div>
+
+              <div className="ks-foot">
+                <button type="button" className="ix-b ghost" disabled={!!busy} onClick={() => newKey(cur)} title="The old link stops working: use it if the link was shared by mistake or a device was lost">
+                  <Icon name="key" size={14} /> {busy === "key" + cur.id ? "..." : "Make a new key"}</button>
+                <button type="button" className="ix-b danger" disabled={!!busy} onClick={async () => { if (await remove(cur)) { setSel(null); setOpen(false); } }}>
+                  <Icon name="trash" size={14} /> Remove kiosk</button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
+
       {adding && (
         <Drawer inPage title="Add a kiosk" kicker="Kiosks" icon="tap" onClose={() => setAdding(false)}
           footer={(close) => (
@@ -2585,7 +2827,7 @@ function Kiosks() {
               <button type="submit" form="ks-add-form" className="ix-b primary" disabled={busy === "add" || !form.name.trim()}>{busy === "add" ? "Adding..." : "Add kiosk"}</button>
             </>
           )}>
-          <form id="ks-add-form" className="ks-form" onSubmit={async (e) => { await add(e); }}>
+          <form id="ks-add-form" className="ks-form" onSubmit={add}>
             <div className="ix-field">
               <label htmlFor="ks-name">Kiosk name</label>
               <input id="ks-name" className="ix-input" required maxLength={120} placeholder="e.g. CCIS lobby, City Hall IT office" autoFocus
@@ -2599,16 +2841,44 @@ function Kiosks() {
               </select>
               <small className="ks-hint">The HTE list comes from the interns' OJT placement.</small>
             </div>
-            <p className="ks-hint">After adding, a setup link shows at the top of the page. Open it once on the kiosk device.</p>
+            <p className="ks-hint">After adding, the new kiosk opens with its setup link ready to copy.</p>
           </form>
         </Drawer>
       )}
-      <CardAlerts />
+      {alertsOpen && (
+        <Drawer inPage title="Card alerts" kicker="Kiosks" icon="warn" onClose={() => setAlertsOpen(false)}>
+          <div className="nfcr-ca"><CardAlerts /></div>
+        </Drawer>
+      )}
     </div>
   );
 }
 
 const KIOSK_CSS = `
+  /* fill the window: only the kiosk list scrolls */
+  .ix-page.lay2 .ix-main:has(.ks2) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.ks2) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.ks2) > .ix-content > * { flex: none; }
+  .ix-page.lay2 .ix-main:has(.ks2) > .ix-content > .ks-wrap { flex: 1 1 auto; min-height: 0; }
+  .ix-page .ks-wrap:has(.ks2) > .ks2 { flex: 1 1 auto; min-height: 420px; }
+  @media (max-width: 760px) { .ix-page.lay2 .ix-main:has(.ks2) { overflow: auto !important; } .ix-page.lay2 .ix-main:has(.ks2) > .ix-content, .ix-page .ks-wrap:has(.ks2) > .ks2 { flex: none !important; } }
+  .ix-page .ks2 .oa-switch button { padding: 8px 6px; }
+  .ix-page .ks-ic { flex: none; width: 34px; height: 34px; border-radius: 10px; background: #f1f5f9; color: #94a3b8; display: inline-flex; align-items: center; justify-content: center; }
+  .ix-page .ks-ic.on { background: #fff1ea; color: #ea580c; }
+  .ix-page .ks-ic.big { width: 46px; height: 46px; border-radius: 12px; }
+  .ix-page .ks-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #cbd5e1; }
+  .ix-page .ks-dot.on { background: #16a34a; box-shadow: 0 0 0 3px #dcfce7; }
+  .ix-page .ks-ok { color: #15803d !important; } .ix-page .ks-off { color: #94a3b8 !important; }
+  .ix-page .ks-addbtn2 { flex: none; margin: 6px 6px 0; justify-content: center; }
+  .ix-page .ks-setup { border: 1px solid #fbcfb5; background: #fff7f2; border-radius: 12px; padding: 12px 14px; flex: none; }
+  .ix-page .ks-setup-h { display: flex; align-items: center; gap: 8px; color: #c2410c; }
+  .ix-page .ks-setup-h b { flex: 1; color: #111827; font-size: 14px; }
+  .ix-page .ks-setup p { margin: 6px 0 10px; font-size: 12.5px; color: #4b5563; }
+  .ix-page .ks-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; padding-top: 12px; border-top: 1px solid #eef0f4; flex: none; }
+  .ix-page .nfcr-alerts { flex: none; display: flex; align-items: center; gap: 8px; margin: 6px; padding: 9px 12px; border: 1px dashed #f3c48b; border-radius: 10px;
+    background: #fffaf2; font: inherit; font-size: 12.5px; font-weight: 700; color: #92400e; cursor: pointer; }
+  .ix-drawer:has(.nfcr-ca) { width: min(960px, calc(100vw - 24px)); }
+  .nfcr-ca .ix-card { margin: 0 !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
   .ix-page .ks-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
   .ix-page .ks-bar h3 { margin: 0 6px 0 0 !important; }
   .ix-page .ks-search { flex: 1 1 220px; max-width: 340px; }

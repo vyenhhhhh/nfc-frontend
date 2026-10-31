@@ -189,7 +189,7 @@ export function NeedsAttention({ interns, records, monitorPath, limit = 6 }) {
   const items = [];
   interns.forEach((u) => {
     const recs = records.filter((r) => r.user_id === u.id);
-    const output = u.tracking_type === "output";
+    const output = false;   // every intern renders the required hours of their program
     const name = u.name || "Intern";
     // time in with no time out on an earlier day
     const open = recs.filter((r) => r.date < today && r.date >= weekAgo && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at)
@@ -535,8 +535,10 @@ export const dbCss = `
   .ix-page .ix-content .dbx-sum:not(.has-lead) > :nth-child(2) { border-top: 0; }
 }
 @media (max-width: 640px) {
-  .ix-page .ix-content .dbx .ix-ph-right .dbx-act span { display: none; }
-  .ix-page .ix-content .dbx .ix-ph-right .dbx-act { padding: 0 9px; }
+  /* quick buttons: full width, equal size, with their names (icons alone were hard to understand) */
+  .ix-page .ix-content .dbx .ix-ph-right { width: 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; margin: 4px 0 0; }
+  .ix-page .ix-content .dbx .ix-ph-right .dbx-act { height: 54px !important; padding: 0 6px !important; font-size: 11.5px !important; gap: 4px; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.15 !important; }
+  .ix-page .ix-content .dbx .ix-ph-right .dbx-act span { display: inline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ix-page .ix-content .dbx-status { display: none; }
   .ix-page .ix-content .dbx-sum > * { padding: 9px 12px; }
   .ix-page .ix-content .dbx-num b { font-size: 16px; }

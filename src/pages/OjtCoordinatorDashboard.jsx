@@ -10,13 +10,14 @@ import Shell, {
   InternMonitor, AnnouncementManager, AnnouncementBoard, OnlineReview, OvertimeBoard, OA_CSS, calcHours, requiredHoursFor, todayManila, fmtTime, greeting,
   PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, SCHEDULE, fmtMinutes, Modal, liveRefresh,
 } from "../components/DashKit.jsx";
-import NfcCards from "../components/NfcCards.jsx";
+import { NfcReview } from "../components/NfcCards.jsx";
 import {
-  HomeCalendar, Records, DTR, AdminProfile, adminCss, adminMatch, Calendar,
+  HomeCalendar, Records, DTR, AdminProfile, adminCss, adminMatch, Calendar, Accounts,
 } from "./AdminDashboard.jsx";
 import { internCss, cardUnify, preStatusOf } from "./InternDashboard.jsx";
 import QuarterlyReport from "../components/QuarterlyReport.jsx";
 import Evaluations from "../components/Evaluations.jsx";
+import SchoolEventReview, { schoolEventIsMine } from "./SchoolEventReview.jsx";
 import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
@@ -27,7 +28,7 @@ const NAV = [
   { path: "/coordinator/approvals",     label: "Approvals",     icon: "inbox" },
   { path: "/coordinator/interns",       label: "Interns",       icon: "users" },
   { path: "/coordinator/supervisors",   label: "Supervisors",   icon: "briefcase" },
-  { path: "/coordinator/nfc",           label: "NFC Cards",     icon: "card" },
+  { path: "/coordinator/accounts",      label: "Add Accounts",  icon: "plus" },
   { path: "/coordinator/reports",       label: "Reports",       icon: "chart" },
   { path: "/coordinator/announcements", label: "Announcements", icon: "bell" },
   { path: "/coordinator/calendar",      label: "Calendar",      icon: "calendar" },
@@ -44,6 +45,8 @@ const GROUPS = {
       { key: "online",      label: "Online Attendance", icon: "inbox",  sub: "Remote workdays: the supervisor confirms first, then you give the final decision." },
       { key: "movs",        label: "MOV Submissions",   icon: "folder", sub: "Review intern-submitted documents (MOVs, forms, certificates)." },
       { key: "overtime",    label: "Overtime",          icon: "clock",  sub: "Time after 5:00 PM: the supervisor approves first, then you give the final decision." },
+      { key: "event",       label: "School Events",     icon: "calendar", sub: "Interns attending a CSU event: the supervisor confirms first, then you decide. An approved day is excused: no hours counted, not absent." },
+      { key: "nfc",         label: "NFC Cards",         icon: "card",   sub: "ID card requests: approve or reject. The admin prints the card and links it when the intern claims it." },
     ],
   },
   "/coordinator/interns": {
@@ -52,8 +55,7 @@ const GROUPS = {
     tabs: [
       { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of all interns." },
       { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete attendance log of every intern." },
-      // Evaluation tab hidden for now (waiting for the OJT coordinator's answer on who submits the evaluation form):
-      // { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Upload the signed paper evaluation form of each intern." },
+      { key: "evaluation", label: "Grades", icon: "chart", sub: "Internship grade: the HTE supervisor's appraisal (60%) + your evaluation (40%). Release it when it's final." },
     ],
   },
   "/coordinator/reports": {
@@ -74,6 +76,7 @@ const OLD_PATHS = {
   "/coordinator/records":     "/coordinator/interns?tab=records",
   "/coordinator/dtr":         "/coordinator/reports?tab=dtr",
   "/coordinator/hours":       "/coordinator",
+  "/coordinator/nfc":         "/coordinator/approvals?tab=nfc",
 };
 
 export default function OjtCoordinatorDashboard() {
@@ -88,6 +91,8 @@ export default function OjtCoordinatorDashboard() {
   const [interns, setInterns] = useState([]);
   const [supervisors, setSupervisors] = useState([]);   // HTE supervisor accounts (for assigning)
   const [loading, setLoading] = useState(true);
+  const [events, setEvents] = useState([]);       // school-event (excused) requests
+  const [nfcWaiting, setNfcWaiting] = useState(0);   // card requests waiting for approval
 
   useEffect(() => {
     fetchAll();
@@ -96,13 +101,17 @@ export default function OjtCoordinatorDashboard() {
 
   const fetchAll = async () => {
     try {
-      const [p, m, r, u, ot] = await Promise.all([
+      const [p, m, r, u, ot, nr, se] = await Promise.all([
         fetch(`${API}/supervisor/pending`).then((r) => r.json()),
         fetch(`${API}/coordinator/movs`).then((r) => r.json()),
         fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
         fetch(`${API}/admin/users`).then((r) => r.json()),
         fetch(`${API}/coordinator/overtime`).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/supervisor/nfc-requests`).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/supervisor/school-events`).then((r) => r.json()).catch(() => []),
       ]);
+      if (Array.isArray(se)) setEvents(se);
+      if (Array.isArray(nr)) setNfcWaiting(nr.filter((x) => x.status === "pending").length);
       if (Array.isArray(p)) setPending(p);
       if (Array.isArray(m)) setMovs([...m]);
       if (Array.isArray(r)) setRecords([...r]);
@@ -139,7 +148,7 @@ export default function OjtCoordinatorDashboard() {
   const asked = new URLSearchParams(search).get("tab");
   const tab = group ? (group.tabs.find((t) => t.key === asked) || group.tabs[0]) : null;
   const pickTab = (key) => navigate(`${path}?tab=${key}`, { replace: true });
-  const counts = { online: onlineForMe.length, movs: pendingMovs, overtime: pendingOt };
+  const counts = { online: onlineForMe.length, movs: pendingMovs, overtime: pendingOt, nfc: nfcWaiting, event: events.filter((e) => schoolEventIsMine(e, "ojt_coordinator")).length };
 
   return (
     <Shell navItems={navWithTabs(NAV, GROUPS, {}, { "/coordinator/approvals": counts })} user={user}>
@@ -153,7 +162,7 @@ export default function OjtCoordinatorDashboard() {
       <style>{coordCss}</style>
       {path === "/coordinator" && (
         <Home
-          user={user} pending={onlineForMe} pendingMovs={pendingMovs} pendingOt={pendingOt} records={records}
+          user={user} pending={onlineForMe} pendingMovs={pendingMovs} pendingOt={pendingOt} pendingNfc={nfcWaiting} pendingEv={counts.event} records={records}
           interns={interns} loading={loading} go={navigate}
         />
       )}
@@ -164,32 +173,36 @@ export default function OjtCoordinatorDashboard() {
           {tab.key === "online" && <Pending pending={onlineForMe} waiting={onlineWaiting} interns={interns} user={user} onRefresh={fetchAll} />}
           {tab.key === "movs" && <MovReview movs={movs} user={user} interns={interns} onRefresh={fetchAll} />}
           {tab.key === "overtime" && <OvertimeReview overtime={overtime} onRefresh={fetchAll} />}
+          {tab.key === "event" && <SchoolEventReview user={{ role: "ojt_coordinator" }} embedded />}
+          {tab.key === "nfc" && (
+            <>
+              <PageHeader title="NFC Cards" sub="ID card requests." live />
+              <NfcReview user={user} onRefresh={fetchAll}
+                // match by user id, or by email in case the request list has no user_id
+                preOf={(r) => preStatusOf(movs.filter((m) =>
+                  (r.user_id != null && String(m.user_id) === String(r.user_id)) || (!!r.intern_email && m.intern_email === r.intern_email)))} />
+            </>
+          )}
           {/* Interns */}
           {tab.key === "monitor" && (
             <InternMonitor
               interns={interns} records={records} loading={loading} onRefresh={fetchAll}
               recordsPath="/coordinator/interns?tab=records"
+              movsPath="/coordinator/approvals?tab=movs"   // "Review files" opens that intern in MOV Submissions
               canViewFiles   // only the coordinator can open the files interns upload
             />
           )}
           {tab.key === "records" && <Records records={records} loading={loading} />}
-          {tab.key === "evaluation" && <Evaluations interns={interns} user={user} />}
+          {tab.key === "evaluation" && <Evaluations user={user} />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} />}
           {tab.key === "quarterly" && <QuarterlyReport user={user} />}
         </GroupPage>
       )}
 
-      {path === "/coordinator/nfc" && (
-        <NfcCards
-          user={user} interns={interns} onRefresh={fetchAll}
-          // match by user id, or by email in case the request list has no user_id
-          preOf={(r) => preStatusOf(movs.filter((m) =>
-            (r.user_id != null && String(m.user_id) === String(r.user_id)) || (!!r.intern_email && m.intern_email === r.intern_email)))}
-        />
-      )}
       {path === "/coordinator/announcements" && <AnnouncementManager user={user} />}
       {path === "/coordinator/calendar" && <Calendar />}
+      {path === "/coordinator/accounts" && <Accounts users={[...interns, ...supervisors]} onRefresh={fetchAll} limited />}
       {path === "/coordinator/supervisors" && <AssignSupervisors interns={interns} supervisors={supervisors} records={records} online={pending} overtime={overtime} onRefresh={fetchAll} />}
       {path === "/coordinator/profile" && <AdminProfile user={user} />}
     </Shell>
@@ -227,7 +240,7 @@ function GroupPage({ group, tab, onPick, counts, children }) {
 }
 
 /* ───────────────────────── Dashboard ───────────────────────── */
-function Home({ user, pending, pendingMovs, pendingOt = 0, records, interns, loading, go }) {
+function Home({ user, pending, pendingMovs, pendingOt = 0, pendingNfc = 0, pendingEv = 0, records, interns, loading, go }) {
   const today = todayManila();
   const todayRecs = records.filter((r) => r.date === today);
   const inNowAll = todayRecs.filter((r) => r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
@@ -235,7 +248,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, records, interns, loa
   const inNow = inNowAll.filter((r, i, a) => a.findIndex((x) => (x.user_id ?? x.name) === (r.user_id ?? r.name)) === i);
   const checkedIn = inNow.length;
   const seenToday = new Set(todayRecs.map((r) => r.user_id ?? r.name)).size;
-  const toReview = pending.length + pendingMovs + pendingOt;
+  const toReview = pending.length + pendingMovs + pendingOt + pendingEv;
   const noSup = interns.filter((i) => !i.supervisor_id);
   const first = user.name?.split(" ")[0] || "there";
   const dateLabel = new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" });
@@ -244,6 +257,8 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, records, interns, loa
     { key: "online", icon: "inbox", tone: "blue", title: "Online attendance", sub: "Remote workdays to approve", n: pending.length, to: "/coordinator/approvals?tab=online" },
     { key: "movs", icon: "folder", tone: "purple", title: "MOV submissions", sub: "Documents and certificates", n: pendingMovs, to: "/coordinator/approvals?tab=movs" },
     { key: "ot", icon: "clock", tone: "amber", title: "Overtime", sub: "Approved by the supervisor, your final say", n: pendingOt, to: "/coordinator/approvals?tab=overtime" },
+    { key: "nfc", icon: "card", tone: "green", title: "NFC card requests", sub: "Approve or reject ID cards", n: pendingNfc, to: "/coordinator/approvals?tab=nfc" },
+    { key: "event", icon: "calendar", tone: "green", title: "School events", sub: "Excused days for CSU events", n: pendingEv, to: "/coordinator/approvals?tab=event" },
   ];
 
   return (
@@ -259,7 +274,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, records, interns, loa
       strip={[
         { icon: "users", tone: "t-orange", label: "Total interns", value: interns.length, sub: "under your watch" },
         { icon: "tap", tone: "t-green", label: "On duty now", value: checkedIn, sub: `${Math.max(interns.length - seenToday, 0)} not in yet` },
-        { icon: "inbox", tone: "t-amber", label: "To review", value: toReview, sub: "online · MOV · overtime", onClick: () => go("/coordinator/approvals") },
+        { icon: "inbox", tone: "t-amber", label: "To review", value: toReview, sub: "online · MOV · overtime · events", onClick: () => go("/coordinator/approvals") },
         { icon: "list", tone: "t-blue", label: "Logged today", value: seenToday, sub: `${todayRecs.length} taps and logs` },
         { icon: "briefcase", tone: "t-purple", label: "No supervisor", value: noSup.length, sub: noSup.length ? "assign one" : "everyone has one", onClick: () => go("/coordinator/supervisors") },
       ]}
@@ -272,7 +287,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, records, interns, loa
           ))}
           {noSup.length > 0 && (
             <DashRow icon="warn" tone="red" title={`${noSup.length} intern${noSup.length > 1 ? "s have" : " has"} no HTE supervisor`}
-              sub="They can't send time corrections or WFH requests" tag="Assign" tagTone="red" onClick={() => go("/coordinator/supervisors")} />
+              sub="They can't send time corrections" tag="Assign" tagTone="red" onClick={() => go("/coordinator/supervisors")} />
           )}
         </Panel>
         {/* interns who need a follow-up */}
@@ -416,7 +431,7 @@ function AssignSupervisors({ interns, supervisors, records = [], online = [], ov
           <div className="oa-items" role="list">
             <button type="button" role="listitem" className={curKey === "none" ? "oa-item on sv2-none" : "oa-item sv2-none"} onClick={() => pick("none")}>
               <span className={noSup.length ? "sv2-warn-ic hot" : "sv2-warn-ic"}><Icon name={noSup.length ? "warn" : "check"} size={16} /></span>
-              <span className="oa-who"><b>Without a supervisor</b><small>{noSup.length ? "Can't send corrections or WFH requests" : "Every intern has a supervisor"}</small></span>
+              <span className="oa-who"><b>Without a supervisor</b><small>{noSup.length ? "Can't send time corrections" : "Every intern has a supervisor"}</small></span>
               <span className={noSup.length ? "oa-n hot" : "oa-n"}>{noSup.length}</span>
             </button>
             {supsShown.map((x) => {
@@ -818,15 +833,17 @@ const MV_CHIP = { approved: ["Approved", "ok"], pending: ["Waiting", "wait"], re
 
 function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, onReview, undoCell }) {
   // opens on "Waiting" when something waits, otherwise on "All interns"
-  const [view, setView] = useState(() => (movs.some((m) => m.status === "pending") ? "waiting" : "all"));
-  const [picked, setPicked] = useState(false);      // the coordinator chose a view themselves
+  // "Review files" in Monitor Interns sends the intern's id here, so that intern opens straight away
+  const fromMonitor = useLocation().state?.movIntern ?? null;
+  const [view, setView] = useState(() => (fromMonitor != null ? "all" : movs.some((m) => m.status === "pending") ? "waiting" : "all"));
+  const [picked, setPicked] = useState(fromMonitor != null);      // the coordinator chose a view themselves
   const anyWaiting = movs.some((m) => m.status === "pending");
   useEffect(() => { if (!picked) setView(anyWaiting ? "waiting" : "all"); }, [anyWaiting, picked]);
   const [q, setQ] = useState("");
-  const [who, setWho] = useState(null);
+  const [who, setWho] = useState(fromMonitor);
   const [docId, setDocId] = useState(null);
   const [phase, setPhase] = useState("all");
-  const [open, setOpen] = useState(false);         // phones: details replace the list
+  const [open, setOpen] = useState(fromMonitor != null);         // phones: details replace the list
 
   // every intern with their documents (also interns who sent documents but are not in the list)
   const people = (() => {

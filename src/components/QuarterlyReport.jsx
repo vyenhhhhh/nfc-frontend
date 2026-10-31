@@ -193,8 +193,10 @@ export default function QuarterlyReport({ user }) {
       const byHte = new Map();
       mine.forEach((i) => { const h = i.placement.trim(); if (!byHte.has(h)) byHte.set(h, []); byHte.get(h).push(i); });
       const rows = [...byHte.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([h, arr]) => {
-        const off = arr.filter((i) => i.work_mode === "offsite").length;
-        const autoMod = off === 0 ? "On-site" : off === arr.length ? "Virtual" : "Hybrid";
+        // the coordinator's modality per intern (On-site / Hybrid / Virtual); older data falls back to the work mode
+        const LBL = { onsite: "On-site", hybrid: "Hybrid", virtual: "Virtual" };
+        const mods = [...new Set(arr.map((i) => LBL[i.modality] || (i.work_mode === "offsite" ? "Virtual" : "On-site")))];
+        const autoMod = ["On-site", "Hybrid", "Virtual"].filter((m) => mods.includes(m)).join(", ");
         return { hte: h, n: arr.length, cat: d.hte_cat?.[h] || "", mod: d.hte_mod?.[h] || autoMod };
       });
       return { p, rows };

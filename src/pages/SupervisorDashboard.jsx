@@ -14,10 +14,11 @@ import {
 } from "./AdminDashboard.jsx";
 import { internCss, cardUnify } from "./InternDashboard.jsx";
 import Evaluations from "../components/Evaluations.jsx";
+import SchoolEventReview, { schoolEventIsMine } from "./SchoolEventReview.jsx";
 import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
-import { API, STORAGE } from "../config.js";
+import { API } from "../config.js";
 
 const NAV = [
   { path: "/supervisor",           label: "Dashboard",  icon: "dashboard" },
@@ -37,8 +38,7 @@ const GROUPS = {
     tabs: [
       { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of your interns." },
       { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete attendance log of your interns." },
-      // Evaluation tab hidden for now (waiting for the OJT coordinator's answer on who submits the evaluation form):
-      // { key: "evaluation", label: "Evaluation", icon: "pencil", sub: "Upload the signed paper evaluation form of each intern." },
+      { key: "evaluation", label: "Appraisal", icon: "pencil", sub: "Rate your interns' attendance, performance and attitude. This is 60% of their internship grade." },
     ],
   },
   "/supervisor/reports": {
@@ -64,7 +64,7 @@ export default function SupervisorDashboard() {
   const [overtime, setOvertime] = useState([]);        // my interns' overtime
   const [corrections, setCorrections] = useState([]);  // my interns' forgotten time-outs
   const [online, setOnline] = useState([]);            // my interns' online workdays
-  const [wfhReqs, setWfhReqs] = useState([]);          // my interns' work arrangement requests
+  const [events, setEvents] = useState([]);            // my interns' school-event (excused) requests
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -75,20 +75,20 @@ export default function SupervisorDashboard() {
 
   const fetchAll = async () => {
     try {
-      const [r, u, ot, tc, on, wm] = await Promise.all([
+      const [r, u, ot, tc, on, se] = await Promise.all([
         fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
         fetch(`${API}/admin/users`).then((r) => r.json()),
         fetch(`${API}/supervisor/overtime`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/supervisor/time-corrections`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/supervisor/online`).then((r) => r.json()).catch(() => []),
-        fetch(`${API}/supervisor/work-mode-requests`).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/supervisor/school-events`).then((r) => r.json()).catch(() => []),
       ]);
+      if (Array.isArray(se)) setEvents(se);
       if (Array.isArray(r)) setRecords([...r]);
       if (Array.isArray(u)) setInterns(u.filter((x) => x.role === "intern"));
       if (Array.isArray(ot)) setOvertime(ot);
       if (Array.isArray(tc)) setCorrections(tc);
       if (Array.isArray(on)) setOnline(on);
-      if (Array.isArray(wm)) setWfhReqs(wm);
     } catch (err) {
       console.error("Poll error:", err);
     } finally {
@@ -113,11 +113,11 @@ export default function SupervisorDashboard() {
     online: online.filter((o) => o.status === "pending").length,
     overtime: overtime.filter((o) => o.ot_status === "pending").length,
     fix: corrections.filter(fixIsMine).length,
-    wfh: wfhReqs.filter((w) => w.status === "pending").length,
+    event: events.filter((e) => schoolEventIsMine(e, "supervisor")).length,
   };
 
   return (
-    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime" }, { key: "fix", label: "Time Corrections" }, { key: "wfh", label: "Work Arrangement" }] }, { "/supervisor/approvals": counts })} user={user}>
+    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime" }, { key: "fix", label: "Time Corrections" }, { key: "event", label: "School Events" } ] }, { "/supervisor/approvals": counts })} user={user}>
       {/* same order as the admin dashboard so every page looks identical */}
       <style>{adminCss}</style>
       <style>{internCss}</style>
@@ -133,7 +133,7 @@ export default function SupervisorDashboard() {
         />
       )}
       {path === "/supervisor/approvals" && (
-        <Approvals overtime={overtime} corrections={corrections} online={online} wfhReqs={wfhReqs} onRefresh={fetchAll} />
+        <Approvals overtime={overtime} corrections={corrections} online={online} events={events} onRefresh={fetchAll} />
       )}
       {group && (
         <GroupPage group={group} tab={tab} onPick={pickTab}>
@@ -145,7 +145,7 @@ export default function SupervisorDashboard() {
             />
           )}
           {tab.key === "records" && <Records records={records} loading={loading} />}
-          {tab.key === "evaluation" && <Evaluations interns={interns} user={user} />}
+          {tab.key === "evaluation" && <Evaluations user={user} />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} canCertify />}
         </GroupPage>
@@ -172,7 +172,7 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
     { key: "online", icon: "inbox", tone: "blue", title: "Online attendance", sub: "Confirm remote workdays", n: counts.online || 0 },
     { key: "overtime", icon: "clock", tone: "amber", title: "Overtime", sub: "Time after 5:00 PM", n: counts.overtime || 0 },
     { key: "fix", icon: "pencil", tone: "purple", title: "Time corrections", sub: "Forgot to time in or out, or a missed day", n: counts.fix || 0 },
-    { key: "wfh", icon: "globe", tone: "green", title: "Work arrangement", sub: "Onsite / work from home", n: counts.wfh || 0 },
+    { key: "event", icon: "calendar", tone: "green", title: "School events", sub: "Interns attending a CSU event (excused)", n: counts.event || 0 },
   ];
   const toReview = review.reduce((s, r) => s + r.n, 0);
 
@@ -227,22 +227,21 @@ const STATUS = {
 };
 // a time correction still open for the supervisor ("endorsed" = left over from the old two-step flow)
 const fixIsMine = (c) => c.status === "pending" || c.status === "endorsed";
-const modeLabel = (m) => (m === "offsite" ? "Work from home" : "Onsite");
 const statusBadge = (st) => <Badge label={(STATUS[st] || [st])[0]} type={(STATUS[st] || [null, "none"])[1]} />;
 
-function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh }) {
+function Approvals({ overtime, corrections, online = [], events = [], onRefresh }) {
   // a notification can open a specific tab: /supervisor/approvals?tab=fix
   const { search: qs } = useLocation();
   const asked = new URLSearchParams(qs).get("tab");
-  const [tab, setTab] = useState(["online", "overtime", "fix", "wfh"].includes(asked) ? asked : "online");
-  useEffect(() => { if (["online", "overtime", "fix", "wfh"].includes(asked)) setTab(asked); }, [asked]);
+  const TABS = ["online", "overtime", "fix", "event"];
+  const [tab, setTab] = useState(TABS.includes(asked) ? asked : "online");
+  useEffect(() => { if (TABS.includes(asked)) setTab(asked); }, [asked]);
   const [remarks, setRemarks] = useState({});
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
 
   const otPending = overtime.filter((o) => o.ot_status === "pending");
   const fixPending = corrections.filter(fixIsMine);
-  const wfhPending = wfhReqs.filter((w) => w.status === "pending");
   const onPending = online.filter((o) => o.status === "pending");
 
   const send = async (url, body, key) => {
@@ -275,14 +274,6 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
   };
   const reviewFix = (c, status) =>
     send(`/supervisor/time-corrections/${c.id}/review`, { status, remarks: remarks["c" + c.id] || "" }, "c" + c.id + status);
-  const reviewWfh = (w, status) =>
-    send(`/supervisor/work-mode-requests/${w.id}/review`, { status, remarks: remarks["w" + w.id] || "" }, "w" + w.id + status);
-  // the HTE letter (or why there is none)
-  const proof = (w) => w.file_path
-    ? <a className="ix-link sv-file" href={`${STORAGE}${w.file_path}`} target="_blank" rel="noopener noreferrer"><Icon name="clip" size={13} /> {w.original_name || "HTE letter"}</a>
-    : w.in_moa ? <span className="sv-note">WFH is stated in the MOA / Student Contract</span>
-    : <span className="sv-note muted">No letter (going back onsite)</span>;
-
   const remarkInput = (key) => (
     <input type="text" className="ix-input" placeholder="Remarks (optional)"
       value={remarks[key] || ""} onChange={(e) => setRemarks((r) => ({ ...r, [key]: e.target.value }))} />
@@ -305,13 +296,13 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
     <>
       <style>{grpCss}</style>
       {/* same tabs as the coordinator's Approvals page, inside the page header */}
-      <PageHeader title="Approvals" sub="Online days and overtime go on to the OJT coordinator. Time corrections and work arrangement are your final decision." live tabs={(
+      <PageHeader title="Approvals" sub="Online days and overtime go on to the OJT coordinator. Time corrections are your final decision." live tabs={(
       <div className="grp-tabs" role="tablist" aria-label="Approvals">
         {[
           { key: "online", label: "Online Attendance", icon: "inbox", n: onPending.length },
           { key: "overtime", label: "Overtime", icon: "clock", n: otPending.length },
           { key: "fix", label: "Time Corrections", icon: "pencil", n: fixPending.length },
-          { key: "wfh", label: "Work Arrangement", icon: "globe", n: wfhPending.length },
+          { key: "event", label: "School Events", icon: "calendar", n: events.filter((e) => schoolEventIsMine(e, "supervisor")).length },
         ].map((t) => (
           <button
             key={t.key} type="button" role="tab" aria-selected={tab === t.key}
@@ -333,12 +324,11 @@ function Approvals({ overtime, corrections, online = [], wfhReqs = [], onRefresh
       ) : tab === "overtime" ? (
         <OvertimeBoard role="supervisor" waiting={otPending} reviewed={overtime.filter((o) => o.ot_status !== "pending")} all={overtime}
           capOf={(o) => o.ot_minutes} onReview={reviewOt} />
-      ) : tab === "fix" ? (
+      ) : tab === "event" ? (
+        <SchoolEventReview user={{ role: "supervisor" }} embedded />
+      ) : (
         <FixBoard waiting={fixPending} reviewed={corrections.filter((c) => !fixIsMine(c))}
           onReview={(c, status, rm) => send(`/supervisor/time-corrections/${c.id}/review`, { status, remarks: rm || "" }, "c" + c.id + status)} />
-      ) : (
-        <WfhBoard waiting={wfhPending} reviewed={wfhReqs.filter((w) => w.status !== "pending")}
-          onReview={(w, status, rm) => send(`/supervisor/work-mode-requests/${w.id}/review`, { status, remarks: rm || "" }, "w" + w.id + status)} />
       )}
     </>
   );
@@ -545,160 +535,6 @@ const FX_CSS = `
   .fx-cmp { grid-template-columns: 1fr; }
   .fx-kv { grid-template-columns: 1fr 1fr !important; }
 }
-`;
-
-/* Work arrangement: waiting / reviewed list on the left, the picked request on the right
-   ("from -> to", reason, HTE letter). The supervisor's decision is final. */
-function WfhBoard({ waiting = [], reviewed = [], onReview }) {
-  const [view, setView] = useState("waiting");
-  const [sel, setSel] = useState(null);
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const [remarks, setRemarks] = useState({});
-  const [busy, setBusy] = useState(null);
-  const sq = q.trim().toLowerCase();
-  const list = (view === "waiting" ? waiting : reviewed).filter((w) => !sq || String(w.intern_name || "").toLowerCase().includes(sq));
-  const cur = list.find((w) => w.id === sel) || list[0] || null;
-  const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
-  const to = (w) => (w.requested_mode === "offsite" ? "offsite" : "onsite");
-  const from = (w) => (to(w) === "offsite" ? "onsite" : "offsite");
-  const short = (m) => (m === "offsite" ? "WFH" : "Onsite");
-  const decide = async (w, status) => {
-    setBusy(w.id + status);
-    const ok = await onReview(w, status, remarks[w.id] || "");
-    setBusy(null);
-    if (ok) { setSel(null); setOpen(false); }
-  };
-  const badge = (w, long) => w.status === "approved" ? <Badge label="Approved" type="approved" />
-    : w.status === "rejected" ? <Badge label="Rejected" type="rejected" />
-    : <Badge label={long ? "Waiting for you" : "Waiting"} type="pending" />;
-  const range = (w) => w.start_date ? `${fxDay(w.start_date)}${w.end_date && w.end_date !== w.start_date ? ` – ${fxDay(w.end_date)}` : ""}` : null;
-
-  return (
-    <div className={open && cur ? "oa wf2 oa-open" : "oa wf2"}>
-      <style>{OA_CSS}</style>
-      <style>{FX_CSS}</style>
-      <style>{WF_CSS}</style>
-      <div className="oa-list">
-        <div className="oa-switch" role="tablist" aria-label="Show">
-          <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
-            Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
-          </button>
-          <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
-            Reviewed <span className="oa-n">{reviewed.length}</span>
-          </button>
-        </div>
-        {(view === "waiting" ? waiting : reviewed).length > 6 && (
-          <div className="oa-search"><Icon name="search" size={14} />
-            <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" /></div>
-        )}
-        <div className="oa-items" role="list">
-          {list.length === 0 ? (
-            <div className="oa-none">
-              <span className="oa-none-ic"><Icon name="check" size={18} /></span>
-              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
-              <small>{sq ? "Try another name." : view === "waiting" ? "No work arrangement requests waiting for you." : "Requests you approve or reject show here."}</small>
-            </div>
-          ) : list.map((w) => (
-            <button key={w.id} type="button" role="listitem" className={cur && cur.id === w.id ? "oa-item on" : "oa-item"}
-              onClick={() => { setSel(w.id); setOpen(true); }}>
-              <Avatar name={w.intern_name} photo={w.intern_photo} size={34} />
-              <span className="oa-who"><b>{w.intern_name}</b><small>{short(from(w))} → {short(to(w))}{w.created_at ? ` · ${fxWhen(w.created_at).replace(/, \d{4}$/, "")}` : ""}</small></span>
-              {view === "reviewed" && badge(w)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="oa-detail">
-        {!cur ? (
-          <div className="oa-blank">
-            <span className="oa-none-ic"><Icon name="globe" size={20} /></span>
-            <b>{view === "waiting" ? "No requests waiting" : "Nothing to show yet"}</b>
-            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the requests already checked." : "When an intern asks to work from home or go back onsite, it shows here."}</small>
-          </div>
-        ) : (
-          <>
-            <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
-            <div className="oa-head">
-              <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
-              <div className="oa-hn"><b>{cur.intern_name}</b><small>Work arrangement{cur.placement ? ` · ${cur.placement}` : ""}</small></div>
-              {badge(cur, true)}
-            </div>
-            <div className="fx-cmp">
-              <div className="fx-side">
-                <span className="fx-lbl">{cur.status === "approved" ? "Was" : "Now"}</span>
-                <span className={`wf-mode ${from(cur)}`}><Icon name={from(cur) === "offsite" ? "home" : "briefcase"} size={16} /> {modeLabel(from(cur))}</span>
-              </div>
-              <div className="fx-side ask">
-                <span className="fx-lbl">{cur.status === "approved" ? "Now" : "Asks for"}</span>
-                <span className={`wf-mode ${to(cur)}`}><Icon name={to(cur) === "offsite" ? "home" : "briefcase"} size={16} /> {modeLabel(to(cur))}</span>
-              </div>
-            </div>
-            <div className="oa-kv fx-kv">
-              <div><small>{range(cur) ? "Dates" : "Sent"}</small><b>{range(cur) || fxWhen(cur.created_at)}</b></div>
-              <div><small>{view === "waiting" ? (range(cur) ? "Sent" : "Proof") : "Reviewed"}</small>
-                <b>{view === "waiting" ? (range(cur) ? fxWhen(cur.created_at) : (cur.file_path ? "HTE letter" : cur.in_moa ? "In the MOA" : "None")) : fxWhen(cur.reviewed_at || cur.updated_at)}</b></div>
-            </div>
-            <div className="oa-tasks">
-              <span>Reason</span>
-              <p>{cur.reason || "—"}</p>
-            </div>
-            <div className="wf-proof">
-              <span className="fx-lbl">Proof</span>
-              {cur.file_path ? (
-                <a className="wf-file" href={`${STORAGE}${cur.file_path}`} target="_blank" rel="noopener noreferrer">
-                  <Icon name="file" size={15} /> <span>{cur.original_name || "HTE letter"}</span> <em>Open</em>
-                </a>
-              ) : cur.in_moa ? <span className="wf-note ok"><Icon name="check" size={13} /> Work from home is stated in the MOA / Student Contract</span>
-                : <span className="wf-note">{to(cur) === "onsite" ? "No letter needed (going back onsite)" : "No letter attached"}</span>}
-            </div>
-            <ol className="oa-steps fx-steps">
-              <li className="done"><i><Icon name="check" size={11} /></i><span>Intern asked</span></li>
-              <li className={cur.status === "approved" ? "done" : cur.status === "rejected" ? "bad" : "now"}>
-                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : cur.status === "rejected" ? <Icon name="x" size={11} /> : 2}</i>
-                <span>{cur.status === "rejected" ? "Rejected" : "You decide"}</span></li>
-              <li className={cur.status === "approved" ? "done" : ""}>
-                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : 3}</i><span>Arrangement changed</span></li>
-            </ol>
-            <OaHistory name={cur.intern_name}
-              rows={[...waiting, ...reviewed].filter((w) => w.id !== cur.id && (w.user_id ? w.user_id === cur.user_id : w.intern_name === cur.intern_name))
-                .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).slice(0, 12)
-                .map((w) => ({ id: w.id, when: fxWhen(w.created_at), text: `${short(from(w))} → ${short(to(w))} · ${w.reason || ""}`, badge: badge(w) }))}
-              onPick={(r) => { const wt = waiting.some((x) => x.id === r.id); setView(wt ? "waiting" : "reviewed"); setQ(""); setSel(r.id); }} />
-            {view === "waiting" ? (
-              <div className="oa-act">
-                <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[cur.id] || ""}
-                  onChange={(e) => setRemarks((r) => ({ ...r, [cur.id]: e.target.value }))} />
-                <button className="ix-b danger" onClick={() => decide(cur, "rejected")} disabled={!!busy}>{busy === cur.id + "rejected" ? "..." : "Reject"}</button>
-                <button className="ix-b ok" onClick={() => decide(cur, "approved")} disabled={!!busy}>{busy === cur.id + "approved" ? "..." : "Approve"}</button>
-              </div>
-            ) : (
-              <div className={cur.status === "rejected" ? "oa-done bad" : "oa-done ok"}>
-                <Icon name={cur.status === "rejected" ? "x" : "check"} size={14} />
-                <span>{cur.status === "rejected" ? "Rejected. The arrangement stays the same." : `Approved. Now ${modeLabel(to(cur)).toLowerCase()}.`}
-                  {cur.remarks ? <> Remarks: <em>{cur.remarks}</em></> : null}
-                  {cur.reviewer_name ? <small> · {cur.reviewer_name}</small> : null}</span>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-const WF_CSS = `
-.wf-mode { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #0f172a; }
-.wf-mode.offsite { color: #15803d; }
-.fx-side:not(.ask) .wf-mode { color: #334155; }
-.wf-proof { display: flex; align-items: center; gap: 12px; flex: none; padding: 0 2px; }
-.wf-file { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid #e2e8f0; border-radius: 9px; font-size: 13px; color: #0f172a; text-decoration: none !important; min-width: 0; }
-.wf-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
-.wf-file em { font-style: normal; font-weight: 700; color: #ea580c; margin-left: 4px; }
-.wf-file:hover { border-color: #fdba74; background: #fff8f3; }
-.wf-note { font-size: 13px; color: #64748b; display: inline-flex; align-items: center; gap: 6px; }
-.wf-note.ok { color: #15803d; font-weight: 600; }
 `;
 
 const svCss = `

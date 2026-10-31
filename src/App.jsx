@@ -1,4 +1,3 @@
-//App.jsx
 import { useState, useEffect, useRef } from "react";
 import schoolLogo from "./assets/logo.png";      // CCIS logo
 import csuLogo from "./assets/csu-logo.png";      // CSU seal
@@ -340,6 +339,7 @@ export default function App() {
   const dateLabel = time.toLocaleDateString("en-PH", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Manila" });
 
   const ampm = time.toLocaleTimeString("en-US", { hour: "numeric", timeZone: "Asia/Manila" }).slice(-2);
+  const secs = time.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Manila" }).slice(-2);
   const hour12 = time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" }).replace(/\s?[AP]M$/, "");
   const mode = loading ? "reading" : status ? (status.action === "OFFLINE" ? "saved" : isIn ? "in" : "out") : warning ? "warn" : error ? "err" : "idle";
   const first = (n) => String(n || "?").trim().charAt(0).toUpperCase();
@@ -351,45 +351,62 @@ export default function App() {
       <div className="kq-shade" /><div className="kq-grain" />
 
       <div className="kq-wrap">
-        {/* ───────── top bar: school · this kiosk · online ───────── */}
-        <header className="kq-top kq-glass">
-          <div className="kq-logos"><img src={csuLogo} alt="CSU" /><img src={schoolLogo} alt="CCIS" /></div>
-          <div className="kq-brand"><b>Caraga State University</b><small>College of Computing and Information Sciences · MYTRACK</small></div>
-          {kiosk?.error ? (
-            <div className="kq-where bad"><span>{kiosk.error}. Ask the admin for this kiosk's setup link.</span></div>
-          ) : kiosk ? (
-            <div className="kq-where">
-              <i><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z" /><circle cx="12" cy="9" r="2.5" /></svg></i>
-              <div><b>{kiosk.name}</b><small>{kiosk.who} can tap here</small></div>
-            </div>
-          ) : null}
-          <div className={`kq-reader ${reader.state}`} title={reader.text}><i />{reader.text}</div>
-          {online ? <div className="kq-live">Online</div> : <div className="kq-live off">Offline</div>}
-          <button type="button" className="kq-full" onClick={toggleFull} title={isFull ? "Exit full screen (Esc)" : "Full screen (F11)"} aria-label={isFull ? "Exit full screen" : "Full screen"}>
-            {isFull ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
-            ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
-            )}
-          </button>
-        </header>
-
-        {/* ───────── left: clock, then the reader or the result ───────── */}
+        {/* ───────── left: the reader or the result ───────── */}
         <section className="kq-left">
-          <div className="kq-clock">{hour12}<span>{ampm}</span></div>
-          <div className="kq-date">{dateLabel}</div>
-
+          {/* school, then where this kiosk is */}
+          <header className="kq-head">
+            <div className="kq-cta-brand">
+              <div className="kq-logos"><img src={csuLogo} alt="Caraga State University" /><img src={schoolLogo} alt="CCIS" /></div>
+              <div className="kq-brand"><b>Caraga State University</b><small>College of Computing and Information Sciences</small></div>
+            </div>
+            {kiosk?.error ? (
+              <div className="kq-where bad"><span>{kiosk.error}. Ask the admin for this kiosk's setup link.</span></div>
+            ) : (
+              <div className="kq-where">
+                <i><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z" /><circle cx="12" cy="9" r="2.5" /></svg></i>
+                <div><b>{kiosk?.name || "OJT kiosk"}</b><small>{kiosk?.who ? `${kiosk.who} can tap here` : "Time in and time out"}</small></div>
+              </div>
+            )}
+            {/* the clock (with seconds), always on screen */}
+            <div className="kq-time">
+              <div className="kq-clock">{hour12}<em>:{secs}</em><span>{ampm}</span></div>
+              <div className="kq-date">{dateLabel}</div>
+            </div>
+          </header>
           <div className="kq-stage">
             {(mode === "idle" || mode === "reading") && (
               <div className="kq-idle">
-                <div className={mode === "reading" ? "kq-scene reading" : "kq-scene"}>
-                  <span className="kq-ring r3" /><span className="kq-ring r2" /><span className="kq-ring r1" />
-                  <div className="kq-pad">
-                    {mode === "reading" ? <div className="kq-spin" /> : (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" /></svg>
-                    )}
-                    <span className="kq-led" />
+                <div className="kq-mid">
+                {/* white NFC reader on a desk with an ID card tapping it (same drawing as the login page) */}
+                <div className={mode === "reading" ? "kq-scene reading" : "kq-scene"} aria-hidden="true">
+                  {/* USB wire from the back of the reader */}
+                  <svg className="kq-cable" viewBox="0 0 1000 560">
+                    <defs>
+                      <linearGradient id="kqCable" x1="0" x2="1"><stop offset="0" stopColor="#d9d3cd" /><stop offset=".5" stopColor="#fff" /><stop offset="1" stopColor="#cfc8c1" /></linearGradient>
+                    </defs>
+                    <path d="M834 256 C 800 210, 730 185, 685 235 S 590 560, 530 1000" fill="none" stroke="rgba(40,12,4,.35)" strokeWidth="13" strokeLinecap="round" transform="translate(4,8)" />
+                    <path d="M834 256 C 800 210, 730 185, 685 235 S 590 560, 530 1000" fill="none" stroke="url(#kqCable)" strokeWidth="11" strokeLinecap="round" />
+                    <path d="M834 256 C 800 210, 730 185, 685 235 S 590 560, 530 1000" fill="none" stroke="rgba(255,255,255,.75)" strokeWidth="2" strokeLinecap="round" transform="translate(-2,-2)" />
+                  </svg>
+                  <div className="kq-rd">
+                    <span className="kq-rd-shadow" />
+                    <div className="kq-rd-3d">
+                      <div className="kq-rd-top">
+                        <span className="kq-rd-ring" /><span className="kq-rd-ring r2" />
+                        <span className="kq-rd-led" />
+                        <span className="kq-rd-waves">
+                          {mode === "reading" ? <span className="kq-spin" /> : (
+                            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" /></svg>
+                          )}
+                        </span>
+                      </div>
+                    </div>
                   </div>
+                  <div className="kq-tapcard">
+                    <div className="kq-tapcard-top"><img src={schoolLogo} alt="" /><span className="kq-chip" /></div>
+                    <div className="kq-tapcard-lines"><span /><span /></div>
+                  </div>
+                </div>
                 </div>
                 <div className="kq-cta">
                   {mode === "reading" ? (
@@ -479,47 +496,64 @@ export default function App() {
           </div>
 
           <footer className="kq-foot">
-            <span>MYTRACK · CSU CCIS OJT</span>
-            {/* only while developing (npm run dev); it never appears in the built site */}
-            {import.meta.env.DEV && (
-              <button type="button" className="kq-test" onClick={(e) => { e.currentTarget.blur(); handleTap(import.meta.env.VITE_TEST_UID || "1248158722"); }} disabled={loading}>
-                Simulate tap (test)
-              </button>
-            )}
+            <span className="kq-foot-l">
+              MYTRACK · CSU CCIS OJT
+              {/* only while developing (npm run dev); it never appears in the built site */}
+              {import.meta.env.DEV && (
+                <button type="button" className="kq-test" onClick={(e) => { e.currentTarget.blur(); handleTap(import.meta.env.VITE_TEST_UID || "1248158722"); }} disabled={loading}>
+                  Simulate tap (test)
+                </button>
+              )}
+            </span>
             <span>Tapping for someone else is not allowed</span>
           </footer>
         </section>
 
-        {/* ───────── right: taps on this kiosk ───────── */}
+        {/* ───────── right: school, this kiosk, clock and the taps ───────── */}
         <aside className="kq-side kq-glass">
-          <div className="kq-side-h">
-            <h3>Recent taps<small>On this kiosk since it was opened</small></h3>
-            {log.length > 0 && <button type="button" className="kq-clear" onClick={(e) => { e.currentTarget.blur(); setLog([]); }}>Clear</button>}
+          {/* counts */}
+          <div className="kq-nums">
+            <div className="in"><i /><b>{ins}</b><small>Time in</small></div>
+            <div className="out"><i /><b>{outs}</b><small>Time out</small></div>
           </div>
           {queued > 0 && (
             <div className="kq-queue"><b>{queued}</b> tap{queued === 1 ? "" : "s"} saved while offline · sent automatically when the internet is back</div>
           )}
-          <div className="kq-nums">
-            <div className="in"><b>{ins}</b><small>Time in</small></div>
-            <div className="out"><b>{outs}</b><small>Time out</small></div>
+
+          <div className="kq-side-h">
+            <h3>Recent taps{log.length > 0 && <em>{log.length}</em>}</h3>
+            {log.length > 0 && <button type="button" className="kq-clear" onClick={(e) => { e.currentTarget.blur(); setLog([]); }}>Clear</button>}
           </div>
           <div className="kq-list">
             {log.length === 0 ? (
               <div className="kq-empty">
-                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" /></svg>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" /></svg>
                 <b>No taps yet</b><small>Taps show up here as interns arrive.</small>
               </div>
             ) : log.map((e, i) => (
               <div key={e.token + i} className="kq-row">
                 <span className="kq-av">{first(e.name)}</span>
-                <div className="kq-row-t"><b>{e.name || e.uid}</b><small>{e.date}</small></div>
-                <span className={e.action === "CHECK_IN" ? "kq-tag in" : e.action === "CHECK_OUT" ? "kq-tag out" : e.action === "OFFLINE" ? "kq-tag wait" : "kq-tag bad"}
-                  title={e.reason || undefined}>
-                  {e.action === "CHECK_IN" ? "IN" : e.action === "CHECK_OUT" ? "OUT" : e.action === "OFFLINE" ? "SAVED" : "NOT RECORDED"}
-                </span>
-                <time>{e.time}</time>
+                <div className="kq-row-t">
+                  <b>{e.name || "Card ····" + String(e.uid || "").slice(-4)}</b>
+                  <small>{e.action === "CHECK_IN" ? "Time in" : e.action === "CHECK_OUT" ? "Time out" : e.action === "OFFLINE" ? "Saved offline" : "Not recorded"}</small>
+                </div>
+                <time className={e.action === "CHECK_IN" ? "in" : e.action === "CHECK_OUT" ? "out" : e.action === "OFFLINE" ? "wait" : "bad"} title={e.reason || undefined}>
+                  {String(e.time || "").replace(/(\d{1,2}:\d\d):\d\d/, "$1")}
+                </time>
               </div>
             ))}
+          </div>
+
+          <div className="kq-status">
+            <div className={`kq-reader ${reader.state}`} title={reader.text}><i />{reader.text}</div>
+            {online ? <div className="kq-live">Online</div> : <div className="kq-live off">Offline</div>}
+            <button type="button" className="kq-full" onClick={toggleFull} title={isFull ? "Exit full screen (Esc)" : "Full screen (F11)"} aria-label={isFull ? "Exit full screen" : "Full screen"}>
+              {isFull ? (
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
+              ) : (
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+              )}
+            </button>
           </div>
         </aside>
       </div>
@@ -528,6 +562,7 @@ export default function App() {
 }
 
 const css = `
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
 .kq-page { --o: #f2733a; --o2: #e8582a; --peach: #ffb48f;
@@ -542,8 +577,8 @@ html, body, #root { margin: 0; height: 100%; }
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.6'/></svg>"); }
 .kq-glass { background: rgba(255,255,255,.12); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
   border: 1px solid rgba(255,255,255,.24); border-radius: 18px; box-shadow: 0 18px 40px rgba(0,0,0,.25); }
-.kq-wrap { position: relative; z-index: 2; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: auto minmax(0, 1fr);
-  gap: 24px 28px; padding: 24px 36px 26px; }
+.kq-wrap { position: relative; z-index: 2; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: minmax(0, 1fr);
+  gap: 24px 28px; padding: 24px 24px 24px 44px; }
 
 /* top bar */
 .kq-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 18px; min-width: 0; }
@@ -578,6 +613,28 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-full:focus-visible { outline: 2px solid var(--peach); outline-offset: 2px; }   /* no kiosk name yet */
 .kq-live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 10px #4ade80; animation: kq-blink 1.6s ease-in-out infinite; }
 
+
+/* right panel: school, kiosk, clock, counts, taps, status */
+.kq-side-top { display: flex; align-items: center; gap: 10px; }
+.kq-side-title { flex: 1; min-width: 0; }
+.kq-side-title b { display: block; font-size: 16px; font-weight: 700; }
+.kq-side-title small { font-size: 11.5px; color: rgba(255,255,255,.7); }
+.kq-side .kq-where { margin-left: 0; width: 100%; }
+.kq-mid { margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
+.kq-time { text-align: center; position: relative; z-index: 3; margin-bottom: -6px; }
+.kq-time .kq-clock { font-size: clamp(54px, 5.6vw, 84px); letter-spacing: -2px; }
+.kq-clock em { font-style: normal; font-size: .5em; letter-spacing: -1px; color: rgba(255,255,255,.75); margin-left: 2px; }
+.kq-time .kq-clock span { font-size: .34em; margin-left: 10px; }
+.kq-time .kq-date { font-size: 16px; margin-top: 8px; }
+.kq-cta-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.kq-cta-brand .kq-logos img { width: 54px; height: 54px; border-radius: 14px; padding: 4px; }
+.kq-cta-brand .kq-brand b { font-size: 18px; }
+.kq-cta-brand .kq-brand small { display: block; font-size: 12.5px; }
+.kq-side .kq-side-h { padding-top: 12px; border-top: 1px solid rgba(255,255,255,.16); }
+.kq-status { display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.16); }
+.kq-status .kq-reader { flex: 1; min-width: 0; max-width: none; }
+.kq-stage { padding: 10px 0 0; }
+
 /* left */
 .kq-left { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .kq-clock { font-size: clamp(64px, 7vw, 104px); font-weight: 800; letter-spacing: -3px; line-height: 1; text-shadow: 0 4px 30px rgba(0,0,0,.35); font-variant-numeric: tabular-nums; }
@@ -585,24 +642,36 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-date { font-size: 18px; font-weight: 600; color: var(--peach); margin-top: 8px; }
 .kq-stage { flex: 1; display: flex; align-items: center; min-height: 0; padding: 10px 0; }
 .kq-idle { display: flex; align-items: center; gap: clamp(28px, 5vw, 64px); }
-.kq-scene { position: relative; width: 300px; height: 300px; flex: none; }
-/* no backdrop blur on the pad: the rings animate behind it and a blur would be redrawn every frame (that was the lag) */
-.kq-pad { position: absolute; left: 55px; top: 55px; width: 190px; height: 190px; border-radius: 52px; display: grid; place-items: center;
-  background: linear-gradient(150deg, rgba(255,214,196,.34), rgba(255,255,255,.10)); border: 1px solid rgba(255,255,255,.45);
-  box-shadow: 0 30px 60px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.5);
-  transition: transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s, border-color .35s; will-change: transform; }
-.kq-scene.reading .kq-pad { transform: scale(.95); border-color: var(--peach); box-shadow: 0 18px 40px rgba(0,0,0,.35), 0 0 0 6px rgba(255,180,143,.18), inset 0 1px 0 rgba(255,255,255,.5); }
-.kq-pad svg { transition: opacity .2s; }
-.kq-pad svg { width: 70px; height: 70px; }
-.kq-led { position: absolute; right: 20px; bottom: 20px; width: 11px; height: 11px; border-radius: 50%; background: var(--peach); box-shadow: 0 0 14px var(--peach); animation: kq-blink 2.4s ease-in-out infinite; }
-.kq-ring { position: absolute; border: 2px solid rgba(255,255,255,.55); will-change: transform, opacity; backface-visibility: hidden; }
-.kq-ring.r1 { left: 43px; top: 43px; width: 214px; height: 214px; border-radius: 62px; animation: kq-pulse 2.6s ease-out infinite; }
-.kq-ring.r2 { left: 28px; top: 28px; width: 244px; height: 244px; border-radius: 74px; animation: kq-pulse 2.6s ease-out .35s infinite; }
-.kq-ring.r3 { left: 12px; top: 12px; width: 276px; height: 276px; border-radius: 86px; animation: kq-pulse 2.6s ease-out .7s infinite; }
-.kq-scene.reading .kq-ring { border-color: var(--peach); transition: border-color .3s; }
-.kq-spin { width: 56px; height: 56px; border-radius: 50%; border: 5px solid rgba(255,255,255,.3); border-top-color: #fff; animation: kq-spin .8s linear infinite, kq-fade .2s ease-out; will-change: transform; }
+.kq-scene { position: relative; width: 300px; height: 330px; flex: none; }
+.kq-idle { width: 100%; }
+.kq-cta { order: -1; }
+.kq-cable { position: absolute; left: -710px; top: -60px; width: 1000px; height: 560px; z-index: 0; overflow: visible; pointer-events: none; }
+.kq-rd { position: absolute; left: 48px; top: 142px; width: 210px; height: 240px; z-index: 1; perspective: 760px; }
+.kq-rd-shadow { position: absolute; left: 6px; right: -16px; bottom: -4px; height: 64px; border-radius: 50%; background: rgba(40,12,4,.55); filter: blur(18px); }
+.kq-rd-3d { position: absolute; left: 18px; top: 0; width: 174px; height: 234px; transform: rotateX(52deg) rotateZ(-18deg); transform-style: preserve-3d; }
+.kq-rd-top { position: absolute; inset: 0; border-radius: 24px; background: linear-gradient(160deg, #fff 0%, #f4f1ee 45%, #e4dfda 100%);
+  box-shadow: inset 0 1px 0 #fff, inset 0 -3px 8px rgba(0,0,0,.06), 0 3px 0 #d9d3cd, 0 6px 0 #cfc8c1, 0 9px 0 #c4bcb5, 0 12px 0 #b8afa7, 0 34px 40px rgba(40,12,4,.45); }
+.kq-rd-top::before { content: ""; position: absolute; inset: 11px; border-radius: 16px; border: 1.5px solid rgba(0,0,0,.07); }
+.kq-rd-waves { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #e8582a; }
+.kq-rd-led { position: absolute; top: 18px; left: 50%; margin-left: -15px; width: 30px; height: 6px; border-radius: 3px; background: var(--peach); box-shadow: 0 0 12px var(--peach); animation: kq-led 6s ease-in-out infinite; }
+.kq-rd-ring { position: absolute; inset: 0; border-radius: 24px; border: 2px solid rgba(232,88,42,.7); opacity: 0; animation: kq-ring 6s ease-out infinite; }
+.kq-rd-ring.r2 { animation-delay: .35s; }
+.kq-tapcard { position: absolute; left: 50px; top: 78px; width: 200px; height: 124px; z-index: 2; border-radius: 18px; padding: 14px 16px;
+  background: linear-gradient(135deg, #fff 0%, #ffe6d9 100%); box-shadow: 0 28px 50px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.7);
+  display: flex; flex-direction: column; justify-content: space-between; transform: translate(70px,-90px) rotate(10deg); opacity: 0;
+  animation: kq-card 6s cubic-bezier(.4,0,.2,1) infinite; will-change: transform, opacity; }
+.kq-tapcard-top { display: flex; align-items: center; justify-content: space-between; }
+.kq-tapcard-top img { height: 34px; width: auto; object-fit: contain; }
+.kq-chip { width: 32px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #f9c46b, #e3902b); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.kq-tapcard-lines span { display: block; height: 7px; border-radius: 99px; background: rgba(232,88,42,.28); }
+.kq-tapcard-lines span + span { width: 55%; margin-top: 7px; background: rgba(27,20,16,.12); }
+/* while a real card is being read: the card stays on the reader, the rings pulse fast, the light blinks */
+.kq-scene.reading .kq-tapcard { animation: none; opacity: 1; transform: translate(0,-2px) rotate(-5deg); }
+.kq-scene.reading .kq-rd-ring { animation: kq-ring-fast 1.2s ease-out infinite; }
+.kq-scene.reading .kq-rd-led { animation: kq-blink .8s ease-in-out infinite; }
+.kq-spin { width: 46px; height: 46px; border-radius: 50%; border: 5px solid rgba(232,88,42,.25); border-top-color: #e8582a; animation: kq-spin .8s linear infinite, kq-fade .2s ease-out; will-change: transform; }
 .kq-cta h1 { margin: 0; font-size: clamp(36px, 3.6vw, 52px); font-weight: 800; letter-spacing: -1px; line-height: 1.05; text-shadow: 0 2px 24px rgba(0,0,0,.35); }
-.kq-cta h2 { margin: 12px 0 0; font-size: 17px; font-weight: 600; color: var(--peach); }
+.kq-cta h2 { margin: 12px 0 0; font-size: 17px; font-weight: 600; color: #fff; }
 .kq-cta p { margin: 8px 0 0; font-size: 14px; color: rgba(255,255,255,.82); max-width: 380px; line-height: 1.6; }
 .kq-steps { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 .kq-steps > div { padding: 10px 14px; font-size: 12.5px; line-height: 1.35; border-radius: 14px; }
@@ -692,22 +761,42 @@ html, body, #root { margin: 0; height: 100%; }
 @keyframes kq-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes kq-badge { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: scale(1); } }
 @keyframes kq-fade { from { opacity: 0; } }
+@keyframes kq-card {
+  0% { transform: translate(70px,-90px) rotate(10deg); opacity: 0; }
+  14% { opacity: 1; }
+  30% { transform: translate(0,-8px) rotate(-5deg); opacity: 1; }
+  37% { transform: translate(0,12px) rotate(-5deg); opacity: 1; }
+  45% { transform: translate(0,-2px) rotate(-5deg); opacity: 1; }
+  78% { transform: translate(0,-2px) rotate(-5deg); opacity: 1; }
+  92%, 100% { transform: translate(-70px,-80px) rotate(-14deg); opacity: 0; }
+}
+@keyframes kq-ring { 0%, 36% { transform: scale(1); opacity: 0; } 38% { transform: scale(1); opacity: .8; } 62%, 100% { transform: scale(1.7); opacity: 0; } }
+@keyframes kq-ring-fast { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(1.6); opacity: 0; } }
+@keyframes kq-led { 0%, 36% { background: #ffb48f; box-shadow: 0 0 12px #ffb48f; } 38%, 82% { background: #3ddc97; box-shadow: 0 0 14px #3ddc97; } 92%, 100% { background: #ffb48f; box-shadow: 0 0 12px #ffb48f; } }
 
 /* smaller screens: the recent taps go under; phones (Android kiosk) show only the essentials */
 @media (max-width: 1100px) {
-  .kq-wrap { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); padding: 18px 20px; overflow-y: auto; }
+  .kq-wrap { grid-template-columns: 1fr; grid-template-rows: auto auto; padding: 18px 20px; overflow-y: auto; }
+  .kq-stage { min-height: 420px; }
+  .kq-list { max-height: 360px; }
   .kq-side { min-height: 260px; }
   .kq-brand small { display: none; }
 }
 @media (max-width: 700px) {
-  .kq-top { flex-wrap: wrap; }
-  .kq-where { margin-left: 0; order: 3; width: 100%; }
-  .kq-reader { order: 4; max-width: 100%; }
   .kq-idle { flex-direction: column; text-align: center; gap: 10px; }
-  .kq-scene { transform: scale(.72); margin: -40px 0; }
+  .kq-cta-brand { justify-content: center; text-align: left; margin-bottom: 14px; }
+  .kq-cta-brand .kq-logos img { width: 42px; height: 42px; border-radius: 11px; }
+  .kq-cta-brand .kq-brand b { font-size: 15px; }
+  .kq-cta-brand .kq-brand small { display: none; }
+  .kq-cta { max-width: 100%; }
+  .kq-time .kq-clock { font-size: 52px; }
+  .kq-scene { transform: scale(.72); margin: -40px 0 10px; }
+  .kq-cta { order: 0; }
+  .kq-cable { display: none; }
   .kq-left { min-height: auto; }
   .kq-stage { flex: none; padding: 26px 0 10px; }
-  .kq-clock { font-size: 56px; }
+  .kq-wrap { padding: 12px; gap: 12px; }
+  .kq-stage { min-height: 0; }
   .kq-steps { justify-content: center; }
   .kq-result { flex-direction: column; text-align: center; padding: 24px 20px 28px; }
   .kq-meta { justify-content: center; }
@@ -715,7 +804,151 @@ html, body, #root { margin: 0; height: 100%; }
   .kq-foot { margin-top: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .kq-ring, .kq-led, .kq-live::before, .kq-result, .kq-result *, .kq-row { animation: none !important; }
+  .kq-rd-ring, .kq-rd-led, .kq-live::before, .kq-result, .kq-result *, .kq-row { animation: none !important; }
+  .kq-tapcard { animation: none !important; opacity: 1; transform: translate(0,-2px) rotate(-5deg); }
   .kq-count i { animation: kq-shrink linear forwards !important; }
+}
+
+/* ═══ Clean-up pass: own fonts and colors (not the project's global h1/p styles), calmer panel ═══ */
+.kq-page, .kq-page button { font-family: 'Poppins', 'Segoe UI', system-ui, sans-serif; }
+.kq-page h1, .kq-page h2, .kq-page h3, .kq-page p { color: inherit; font-family: inherit; }
+.kq-cta h1, .kq-res-text h1 { color: #fff !important; margin: 0 !important; }
+.kq-cta h2 { color: #fff !important; margin: 14px 0 0 !important; font-size: 17px !important; line-height: 1.4 !important; }
+.kq-cta p { color: rgba(255,255,255,.78) !important; margin: 6px 0 0 !important; line-height: 1.6 !important; }
+.kq-shade { background:
+  radial-gradient(circle at 52% 58%, rgba(242,115,58,.42), rgba(242,115,58,0) 34%),
+  linear-gradient(90deg, rgba(22,9,4,.90) 0%, rgba(22,9,4,.70) 38%, rgba(22,9,4,.55) 62%, rgba(22,9,4,.72) 100%),
+  linear-gradient(0deg, rgba(22,9,4,.85) 0%, rgba(22,9,4,0) 40%) !important; }
+
+/* right panel */
+.kq-side { background: rgba(24,10,5,.52) !important; border-color: rgba(255,255,255,.16) !important; backdrop-filter: blur(22px) saturate(130%); -webkit-backdrop-filter: blur(22px) saturate(130%);
+  gap: 14px; padding: 18px; border-radius: 22px; }
+.kq-side-top { display: flex; align-items: stretch; gap: 8px; }
+.kq-side .kq-where { flex: 1; min-width: 0; width: auto; margin: 0; padding: 10px 12px; gap: 12px; border-radius: 14px; background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); }
+.kq-side .kq-where i { width: 36px; height: 36px; border-radius: 11px; }
+.kq-side .kq-where b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kq-side .kq-where small { display: block; font-size: 11.5px; line-height: 1.35; }
+.kq-side .kq-full { width: 44px; height: auto; border-radius: 14px; background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); }
+.kq-nums { gap: 8px; }
+.kq-nums div { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 12px 14px; border-radius: 14px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); }
+.kq-nums i { grid-row: 1 / 3; width: 10px; height: 34px; border-radius: 99px; background: #4ade80; }
+.kq-nums .out i { background: #ff9a68; }
+.kq-nums b { font-size: 26px; line-height: 1.05; color: #fff !important; }
+.kq-nums small { font-size: 11.5px; color: rgba(255,255,255,.65); }
+.kq-side .kq-side-h { align-items: center; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.12); }
+.kq-side .kq-side-h h3 { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.7); }
+.kq-clear { background: none !important; border: 0 !important; padding: 4px 6px !important; color: var(--peach) !important; font-size: 12px !important; }
+.kq-clear:hover { text-decoration: underline; }
+.kq-list { gap: 6px; }
+.kq-row { gap: 12px; padding: 10px 12px; border-radius: 14px; background: rgba(255,255,255,.06); border: 1px solid transparent; }
+.kq-row:first-child { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.16); }
+.kq-av { width: 36px; height: 36px; font-size: 14px; }
+.kq-row-t b { font-size: 13.5px; font-weight: 600; }
+.kq-row-t small { display: block; font-size: 11.5px; color: rgba(255,255,255,.6); margin-top: 1px; }
+.kq-row time { font-size: 13px; font-weight: 700; padding: 5px 10px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+.kq-row time.in { background: rgba(34,197,94,.18); color: #bbf7d0; }
+.kq-row time.out { background: rgba(255,154,104,.18); color: #ffd5c0; }
+.kq-row time.wait { background: rgba(251,191,36,.18); color: #fde68a; }
+.kq-row time.bad { background: rgba(248,113,113,.2); color: #fecaca; }
+.kq-empty { border: 0; background: rgba(255,255,255,.04); color: rgba(255,255,255,.75); }
+.kq-status { padding-top: 14px; border-top: 1px solid rgba(255,255,255,.12); }
+.kq-status .kq-reader, .kq-status .kq-live { height: 34px; padding: 0 14px; }
+.kq-status .kq-reader { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); }
+
+/* footer: the test button sits with the label, away from the reader */
+.kq-result { margin: 0 auto; }
+.kq-foot-l { display: flex; align-items: center; gap: 12px; }
+.kq-foot { position: relative; z-index: 3; }
+
+/* top of the left side: school + this kiosk */
+.kq-head { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+.kq-head .kq-cta-brand { margin: 0; }
+.kq-head .kq-where { margin: 0; padding: 8px 16px 8px 8px; gap: 12px; border-radius: 14px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.18); max-width: 520px; }
+.kq-head .kq-where i { width: 34px; height: 34px; border-radius: 10px; }
+.kq-head .kq-where b { font-size: 15px; }
+.kq-head .kq-where small { display: block; font-size: 12px; }
+.kq-left { gap: 8px; }
+/* the taps list scrolls inside the panel when there are many */
+.kq-side h3 em { font-style: normal; margin-left: 8px; padding: 1px 8px; border-radius: 99px; background: rgba(255,255,255,.14); color: #fff; font-size: 11px; letter-spacing: 0; }
+.kq-list { overflow-y: auto; padding-right: 4px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.35) transparent; }
+.kq-list::-webkit-scrollbar { width: 6px; }
+.kq-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.3); border-radius: 99px; }
+.kq-status .kq-full { width: 34px; height: 34px; border-radius: 10px; flex: none; background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); }
+@media (max-width: 700px) {
+  .kq-head { align-items: center; text-align: center; }
+  .kq-head .kq-where { text-align: left; }
+  .kq-status .kq-full { display: none; }
+}
+
+/* clock on the left under the kiosk place; smaller "Tap your NFC card" text */
+.kq-head .kq-time { text-align: left; margin: 6px 0 0; }
+.kq-head .kq-time .kq-clock { font-size: clamp(56px, 5.4vw, 88px); letter-spacing: -2.5px; line-height: .95; }
+.kq-head .kq-time .kq-date { font-size: 16px; margin-top: 10px; }
+.kq-cta h1 { font-size: clamp(28px, 2.5vw, 38px) !important; letter-spacing: -.6px !important; line-height: 1.08 !important; }
+.kq-cta h2 { font-size: 14.5px !important; margin-top: 10px !important; }
+.kq-cta p { font-size: 13px !important; max-width: 340px !important; }
+.kq-steps { margin-top: 16px; gap: 8px; }
+.kq-steps > div { padding: 8px 12px; font-size: 11.5px; border-radius: 12px; }
+.kq-steps b { font-size: 12.5px; }
+.kq-stage { align-items: center; }
+/* a little wider list of taps */
+.kq-wrap { grid-template-columns: minmax(0, 1fr) 420px !important; }
+@media (max-width: 1100px) { .kq-wrap { grid-template-columns: 1fr !important; } }
+@media (max-width: 700px) {
+  .kq-head .kq-time { text-align: center; }
+  .kq-head .kq-time .kq-clock { font-size: 52px; }
+}
+
+/* spacing: university → kiosk → big clock → "Tap your NFC card" right under it; the reader beside the text */
+.kq-head { gap: 12px; }
+.kq-head .kq-time { margin: 10px 0 0; }
+.kq-head .kq-time .kq-clock { font-size: clamp(76px, 7.4vw, 136px); letter-spacing: -4px; line-height: .9; }
+.kq-head .kq-time .kq-clock em { font-size: .42em; letter-spacing: -1px; margin-left: 4px; }
+.kq-head .kq-time .kq-clock span { font-size: .3em; margin-left: 12px; letter-spacing: 0; }
+.kq-head .kq-time .kq-date { font-size: clamp(16px, 1.15vw, 21px); margin-top: 14px; }
+.kq-stage { align-items: flex-start; padding: clamp(24px, 4vh, 48px) 0 0; }
+.kq-stage:has(.kq-result) { align-items: center; padding-top: 0; }
+.kq-idle { align-items: flex-start; }
+.kq-cta { padding-top: 4px; }
+.kq-mid { margin-top: clamp(-60px, -5vh, -20px); }
+@media (max-height: 760px) and (min-width: 1101px) {
+  .kq-head .kq-time .kq-clock { font-size: 72px; }
+  .kq-stage { padding-top: 18px; }
+}
+@media (max-width: 700px) {
+  .kq-head .kq-time .kq-clock { font-size: 56px; letter-spacing: -2px; }
+  .kq-mid { margin-top: 0; }
+  .kq-idle { align-items: center; }
+}
+
+/* big screens (1080p TVs / monitors): a bigger reader */
+@media (min-width: 1700px) and (min-height: 950px) {
+  .kq-mid { transform: scale(1.22); transform-origin: center top; margin-top: 0; }
+}
+
+/* "Tap your NFC card" a bit lower: lined up with the middle of the reader */
+.kq-stage { padding-top: clamp(32px, 6vh, 72px); }
+.kq-idle { align-items: center; }
+.kq-cta { padding-top: 0; margin-top: clamp(20px, 4vh, 60px); }
+@media (max-width: 700px) { .kq-cta { margin-top: 0; } }
+
+/* tablets and phones: no wire (it would cross the taps panel below) */
+@media (max-width: 1100px) { .kq-cable { display: none; } }
+
+/* ═══ FIX: same layout in every state (idle ↔ reading ↔ ...) ═══
+   The text slot has a fixed width and height, so the reader and the text never move when the text changes. */
+.kq-idle { align-items: flex-start; }
+.kq-cta {
+  flex: none;
+  width: clamp(380px, 31vw, 500px);      /* fixed width: the reader stops sliding sideways */
+  min-height: 300px;                     /* fixed height: the text stops jumping */
+  margin-top: clamp(40px, 8vh, 110px);   /* the heading always starts at the same y */
+  padding-top: 0;
+}
+.kq-mid { flex: none; }
+@media (max-width: 700px) {
+  .kq-idle { align-items: center; }
+  .kq-cta { width: 100%; min-height: 0; margin-top: 0; }
 }
 `;
