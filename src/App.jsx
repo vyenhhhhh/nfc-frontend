@@ -3,7 +3,7 @@ import schoolLogo from "./assets/logo.png";      // CCIS logo
 import csuLogo from "./assets/csu-logo.png";      // CSU seal
 import campus from "./assets/campus.jpg";        // same photo as the login page
 import { API, STORAGE } from "./config.js";
-import { createHelperReader } from "./kioskReaders.js";
+import { createPhoneReader, createHelperReader, phoneNfcSupported } from "./kioskReaders.js";
 
 const RESET_MS = 6000; // how long the result stays on screen
 const MIN_READING_MS = 650; // the shortest time "Reading your card..." shows (smooth, no flash)
@@ -21,9 +21,9 @@ const kioskKey = () => {
       url.searchParams.delete("kiosk_key");                          // don't leave the key in the address bar
       window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
-    return localStorage.getItem(KIOSK_STORE) || import.meta.env.VITE_KIOSK_KEY || "";
+    return localStorage.getItem(KIOSK_STORE) || "";   // no built-in key: only devices set up with the admin's kiosk link
   } catch {
-    return import.meta.env.VITE_KIOSK_KEY || "";
+    return "";
   }
 };
 const KIOSK_KEY = kioskKey();
@@ -31,22 +31,21 @@ const KIOSK_KEY = kioskKey();
 // so a gap longer than this between keys means someone is typing by hand → ignore it.
 const MAX_KEY_GAP_MS = 60;
 
-// Which card reader this kiosk uses. Saved on the device; a link can set it: …/?reader=acr122u
-//   auto    = ACR122U helper if it is running, else the old USB reader
-//   acr122u = ACR122U with the helper program
+// Which card reader this kiosk uses. Saved on the device; a link can set it: …/?reader=phone
+//   auto    = ACR122U helper if it is running, the phone's NFC on an Android phone, else the old USB reader
+//   phone   = Android phone/tablet NFC (Chrome)      acr122u = ACR122U with the helper program
 //   usb     = only the old USB reader (types the UID, can't write the one-time code)
 const READER_STORE = "mytrack.reader";
 const readerMode = () => {
   try {
     const url = new URL(window.location.href);
     const fromLink = url.searchParams.get("reader");
-    if (fromLink && ["auto", "acr122u", "usb"].includes(fromLink)) {
+    if (fromLink && ["auto", "phone", "acr122u", "usb"].includes(fromLink)) {
       localStorage.setItem(READER_STORE, fromLink);
       url.searchParams.delete("reader");
       window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
-    const saved = localStorage.getItem(READER_STORE) || "auto";
-    return saved === "phone" ? "auto" : saved;   // the phone reader is not offered any more
+    return localStorage.getItem(READER_STORE) || "auto";
   } catch {
     return "auto";
   }
@@ -83,12 +82,13 @@ export default function App() {
   const [time, setTime] = useState(new Date());
   const [photoBad, setPhotoBad] = useState(false);
 
-  // card readers that can also write the one-time code (ACR122U)
+  // card readers that can also write the one-time code (phone NFC / ACR122U)
   const [reader, setReader] = useState({ state: "idle", text: READER_MODE === "usb" ? "USB reader" : "Starting the card reader..." });
   const [readerFlash, setReaderFlash] = useState("");
-  const writers = useRef({});        // { acr122u: helperReader }
+  const writers = useRef({});        // { webnfc: phoneReader, acr122u: helperReader }
   const lastCard = useRef({ uid: "", at: 0 });
   const tapRef = useRef(null);       // the newest handleTap (the readers are set up once)
+  const phoneRef = useRef(null);
 
   const [online, setOnline] = useState(true);
   const [queued, setQueued] = useState(() => loadQueue().length);
@@ -152,7 +152,7 @@ export default function App() {
 
   useEffect(() => () => clearTimeout(resetTimer.current), []);
 
-  // start the ACR122U reader
+  // start the phone NFC / ACR122U reader
   useEffect(() => {
     if (READER_MODE === "usb") return undefined;
     const onCard = ({ uid, card, writer }) => {
@@ -166,8 +166,14 @@ export default function App() {
       setReader((r) => ({ ...r, ...st }));
       if (st.flash) { setReaderFlash(st.flash); setTimeout(() => setReaderFlash(""), 4000); }
     };
-    const useHelper = true;   // "auto" and "acr122u" both use the helper (the old USB reader still works without it)
+    const usePhone = READER_MODE === "phone" || (READER_MODE === "auto" && phoneNfcSupported());
+    const useHelper = READER_MODE === "acr122u" || (READER_MODE === "auto" && !phoneNfcSupported());
     const started = [];
+    if (usePhone) {
+      const r = createPhoneReader({ onCard, onStatus });
+      writers.current.webnfc = r; phoneRef.current = r; started.push(r);
+      r.start();
+    }
     if (useHelper) {
       const r = createHelperReader({ onCard, onStatus: (st) => {
         // in "auto" on a PC, no helper simply means the old USB reader is used
@@ -177,8 +183,19 @@ export default function App() {
       writers.current.acr122u = r; started.push(r);
       r.start();
     }
-    return () => { started.forEach((r) => r.stop()); };
+    // keep the phone's screen on while it is the kiosk
+    let lock = null;
+    const wake = async () => { try { lock = await navigator.wakeLock?.request("screen"); } catch { /* not allowed */ } };
+    if (usePhone) { wake(); document.addEventListener("visibilitychange", wake); }
+    return () => {
+      started.forEach((r) => r.stop());
+      document.removeEventListener("visibilitychange", wake);
+      try { lock?.release(); } catch { /* ignore */ }
+    };
   }, []);
+
+  // Chrome asks for NFC permission only after a button press
+  const startPhoneNfc = async (e) => { e.currentTarget.blur(); await phoneRef.current?.start(); };
 
   // write the next one-time code on the card that is still on the reader, then tell the server
   const writeNextCode = async (writer, cw, uid) => {
@@ -284,7 +301,7 @@ export default function App() {
       if (res.status >= 500) throw new TypeError("server down");   // the database can't be reached: keep the tap
       setOnline(true);
       const data = await res.json().catch(() => ({}));
-      // ACR122U: put the next one-time code on the card (the intern still holds it there)
+      // phone / ACR122U: put the next one-time code on the card (the intern still holds it there)
       if (res.ok && data.card_write && extra.writer) {
         const w = await writeNextCode(extra.writer, data.card_write, uid);
         if (!w.ok) {
@@ -402,11 +419,14 @@ export default function App() {
                     <>
                       <h1>Tap your<br />NFC card.</h1>
                       <h2>Time in when you arrive, time out when you leave.</h2>
-                      <p>Hold your ID card flat on the reader until you see your name.</p>
+                      <p>{writers.current.webnfc ? "Hold your ID card flat on the back of this phone until you see your name." : "Hold your ID card flat on the reader until you see your name."}</p>
                       <div className="kq-steps">
                         <div className="kq-glass"><b><em>1</em>Arrive</b>Tap to time in</div>
                         <div className="kq-glass"><b><em>2</em>Leave</b>Tap to time out</div>
                       </div>
+                      {reader.state === "needs-permission" && (
+                        <button type="button" className="kq-start" onClick={startPhoneNfc}>Start NFC</button>
+                      )}
                       {readerFlash && <div className="kq-flash">{readerFlash}</div>}
                     </>
                   )}
@@ -580,7 +600,7 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-live { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; padding: 7px 13px; border-radius: 99px;
   background: rgba(34,197,94,.18); border: 1px solid rgba(134,239,172,.45); color: #bbf7d0; }
 .kq-brand + .kq-live, .kq-brand + .kq-reader { margin-left: auto; }
-/* which card reader this kiosk uses (ACR122U / USB) */
+/* which card reader this kiosk uses (phone NFC / ACR122U / USB) */
 .kq-reader { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 7px 13px; border-radius: 99px; max-width: 320px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff; }
 .kq-reader i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; }
