@@ -7,7 +7,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   navWithTabs,
   Spinner, Badge, Table, Section, Avatar, Icon, PageHeader, Msg, Inbox,
-  InternMonitor, AnnouncementBoard, OnlineReview, OvertimeBoard, OaHistory, OA_CSS, todayManila, fmtTime, greeting, liveRefresh, fmtMinutes,
+  InternMonitor, AnnouncementBoard, OnlineReview, OvertimeBoard, OaHistory, OA_CSS, todayManila, fmtTime, greeting, liveRefresh, fmtMinutes, calcHours, requiredHoursFor,
 } from "../components/DashKit.jsx";
 import {
   Records, DTR, AdminProfile, adminCss, adminMatch, GroupPage, grpCss, HomeCalendar, Calendar,
@@ -15,7 +15,7 @@ import {
 import { internCss, cardUnify } from "./InternDashboard.jsx";
 import Evaluations from "../components/Evaluations.jsx";
 import SchoolEventReview, { schoolEventIsMine } from "./SchoolEventReview.jsx";
-import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
+import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API } from "../config.js";
@@ -84,6 +84,7 @@ export default function SupervisorDashboard() {
         fetch(`${API}/supervisor/school-events`).then((r) => r.json()).catch(() => []),
       ]);
       if (Array.isArray(se)) setEvents(se);
+      // the server already sends only the interns assigned to me
       if (Array.isArray(r)) setRecords([...r]);
       if (Array.isArray(u)) setInterns(u.filter((x) => x.role === "intern"));
       if (Array.isArray(ot)) setOvertime(ot);
@@ -117,7 +118,7 @@ export default function SupervisorDashboard() {
   };
 
   return (
-    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime" }, { key: "fix", label: "Time Corrections" }, { key: "event", label: "School Events" } ] }, { "/supervisor/approvals": counts })} user={user}>
+    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime" }, { key: "fix", label: "Time Corrections" }, { key: "event", label: "Excused" } ] }, { "/supervisor/approvals": counts })} user={user}>
       {/* same order as the admin dashboard so every page looks identical */}
       <style>{adminCss}</style>
       <style>{internCss}</style>
@@ -140,11 +141,11 @@ export default function SupervisorDashboard() {
           {/* Interns */}
           {tab.key === "monitor" && (
             <InternMonitor
-              interns={interns} records={records} loading={loading} onRefresh={fetchAll}
+              interns={interns} records={records} loading={loading} onRefresh={fetchAll} hideHte hideArr
               recordsPath="/supervisor/interns?tab=records"
             />
           )}
-          {tab.key === "records" && <Records records={records} loading={loading} />}
+          {tab.key === "records" && <Records records={records} loading={loading} interns={interns} />}
           {tab.key === "evaluation" && <Evaluations user={user} />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} canCertify />}
@@ -172,7 +173,7 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
     { key: "online", icon: "inbox", tone: "blue", title: "Online attendance", sub: "Confirm remote workdays", n: counts.online || 0 },
     { key: "overtime", icon: "clock", tone: "amber", title: "Overtime", sub: "Time after 5:00 PM", n: counts.overtime || 0 },
     { key: "fix", icon: "pencil", tone: "purple", title: "Time corrections", sub: "Forgot to time in or out, or a missed day", n: counts.fix || 0 },
-    { key: "event", icon: "calendar", tone: "green", title: "School events", sub: "Interns attending a CSU event (excused)", n: counts.event || 0 },
+    { key: "event", icon: "calendar", tone: "green", title: "Excused absences", sub: "Sick days and school events", n: counts.event || 0 },
   ];
   const toReview = review.reduce((s, r) => s + r.n, 0);
 
@@ -194,17 +195,35 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
       ]}
       left={(
         <>
-        <Panel title="Needs your review" count={toReview} link="Open approvals" onLink={() => go("/supervisor/approvals")}>
-          {review.map((r) => (
-            <DashRow key={r.key} icon={r.icon} tone={r.tone} title={r.title} sub={r.sub}
-              tag={r.n > 0 ? String(r.n) : "None"} tagTone={r.n > 0 ? "orange" : ""} onClick={() => go(`/supervisor/approvals?tab=${r.key}`)} />
-          ))}
+        <Panel title="Intern progress" count={interns.length} link="Monitor" onLink={() => go("/supervisor/interns")}>
+          {interns.length === 0 ? <DashEmpty title="No interns assigned yet" /> : (
+            <div className="dbx-fill">
+              {[...interns].map((u) => {
+                const h = Math.round(calcHours(records.filter((r) => r.user_id === u.id)) * 10) / 10;
+                const req = requiredHoursFor(u.program);
+                return { u, h, req, pct: Math.min(Math.round((h / req) * 100), 100) };
+              }).sort((a, b) => a.pct - b.pct).slice(0, 3).map(({ u, h, req, pct }) => (
+                <DashRow key={u.id} avatar={{ name: u.name, photo: u.photo }} title={u.name} sub={`${h}h of ${req}h`}
+                  tag={`${pct}%`} tagTone={pct >= 100 ? "green" : pct >= 50 ? "blue" : ""} onClick={() => go("/supervisor/interns", { state: { search: u.name } })} />
+              ))}
+            </div>
+          )}
         </Panel>
         {/* interns who need a follow-up */}
-        <NeedsAttention interns={interns} records={records} monitorPath="/supervisor/interns" />
+        <NeedsAttention interns={interns} records={records} monitorPath="/supervisor/interns" limit={3} />
         </>
       )}
-      right={<><HomeCalendar /><AnnouncementBoard limit={3} /></>}
+      right={<>
+        <HomeCalendar />
+        <Panel title="Needs your review" count={toReview} link="Open approvals" onLink={() => go("/supervisor/approvals")}>
+          <div className="dbx-fill">
+            {review.map((r) => (
+              <DashRow key={r.key} icon={r.icon} tone={r.tone} title={r.title} sub={r.sub}
+                tag={r.n > 0 ? String(r.n) : "None"} tagTone={r.n > 0 ? "orange" : ""} onClick={() => go(`/supervisor/approvals?tab=${r.key}`)} />
+            ))}
+          </div>
+        </Panel>
+      </>}
     >
       <Panel title="Today's attendance" count={seenToday} link="Monitor" onLink={() => go("/supervisor/interns")} grow>
         {loading ? <Spinner /> : <TodayPeople records={todayRecs} limit={10} />}
@@ -302,7 +321,7 @@ function Approvals({ overtime, corrections, online = [], events = [], onRefresh 
           { key: "online", label: "Online Attendance", icon: "inbox", n: onPending.length },
           { key: "overtime", label: "Overtime", icon: "clock", n: otPending.length },
           { key: "fix", label: "Time Corrections", icon: "pencil", n: fixPending.length },
-          { key: "event", label: "School Events", icon: "calendar", n: events.filter((e) => schoolEventIsMine(e, "supervisor")).length },
+          { key: "event", label: "Excused", icon: "calendar", n: events.filter((e) => schoolEventIsMine(e, "supervisor")).length },
         ].map((t) => (
           <button
             key={t.key} type="button" role="tab" aria-selected={tab === t.key}

@@ -21,6 +21,7 @@ const NAV = [
   { path: "/admin",          label: "Dashboard",  icon: "dashboard" },
   { path: "/admin/interns",  label: "Interns",    icon: "users" },
   { path: "/admin/accounts", label: "Accounts",   icon: "settings" },
+  { path: "/admin/cards",    label: "Card Requests", icon: "card" },
   { path: "/admin/kiosks",   label: "Kiosks",     icon: "tap" },
   // no Reports: the DTR and the quarterly report belong to the OJT coordinator (and the supervisor certifies DTRs)
   { path: "/admin/calendar", label: "Calendar",   icon: "calendar" },
@@ -29,7 +30,7 @@ const NAV = [
   { path: "/admin/profile",  label: "My Profile", icon: "user" },
 ];
 
-/* Pages that hold several tabs. The open tab is in the address, e.g. /admin/accounts?tab=cards,
+/* Pages that hold several tabs. The open tab is in the address, e.g. /admin/cards,
    so a link can open the right tab directly. The first tab is the default. */
 const GROUPS = {
   "/admin/interns": {
@@ -44,7 +45,6 @@ const GROUPS = {
     title: "Accounts",
     tabs: [
       { key: "users", label: "Manage Accounts", icon: "settings", sub: "Add, view, edit or remove users from the system." },
-      { key: "cards", label: "Card Requests",   icon: "card",     sub: "Approved ID cards: download the details for your printing app, then mark them as printed." },
       { key: "term",     label: "End of Term",  icon: "download", sub: "At the end of a term: export a batch's records to Excel, then deactivate their accounts (records are kept)." },
     ],
   },
@@ -53,7 +53,6 @@ const GROUPS = {
 // The old addresses still work (bookmarks): they open the matching tab.
 const OLD_PATHS = {
   "/admin/records": "/admin/interns?tab=records",
-  "/admin/cards":   "/admin/accounts?tab=cards",
   "/admin/dtr":     "/admin",
   "/admin/reports": "/admin",
   "/admin/hours":   "/admin",
@@ -143,6 +142,20 @@ export const grpCss = `
 .ix-page .rec-rows li:last-child { border-bottom: 0; }
 .ix-page .rec-rows li:hover { background: #fffaf7; }
 .ix-page .rec-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ix-page .ix-content .rec-rng { display: inline-flex; align-items: center; gap: 8px; font-size: 13px !important; font-weight: 500 !important; line-height: 1; color: #6b7280 !important; }
+.ix-page .ix-content .rec-dt { width: auto !important; min-width: 150px; }
+.ix-page .rec-pg { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.ix-page .rec-more.rec-more-c { display: flex; flex-direction: column; align-items: center; gap: 6px; justify-content: center; }
+.ix-page .rec-more-c small { font-size: 11.5px; color: #6b7280; }
+.ix-page .rec-pn { min-width: 32px; justify-content: center; padding-left: 0; padding-right: 0; }
+.ix-page .rec-pn.on { background: #e8582a; border-color: #e8582a; color: #fff; }
+.ix-page .rec-pm { display: flex; flex-direction: column; gap: 14px; }
+.ix-page .rec-pm .ix-select, .ix-page .rec-pm .ix-input { width: 100%; box-sizing: border-box; }
+.ix-page .rec-pm-d { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ix-page .rec-pm-d .ix-field, .ix-page .rec-pm .ix-field { margin: 0; min-width: 0; }
+.ix-page .rec-pm-n { margin: 4px 0 0; font-size: 12.5px; color: #6b7280; }
+.ix-page .rec-pm-n b { color: #1f2430; }
+.ix-page .rec-place { display: block; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #4b5563; }
 .ix-page .rec-who strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
 .ix-page .rec-times { font-size: 12px; color: #334155; white-space: nowrap; }
 .ix-page .rec-in { font-style: normal; color: #15803d; font-weight: 600; }
@@ -207,7 +220,7 @@ export default function AdminDashboard() {
   // the old Accounts tabs for kiosks, end of term and backups open their own pages now
   useEffect(() => {
     const t = new URLSearchParams(search).get("tab");
-    const moved = { kiosks: "/admin/kiosks", activity: "/admin/activity", backup: "/admin/backups" };
+    const moved = { kiosks: "/admin/kiosks", activity: "/admin/activity", backup: "/admin/backups", cards: "/admin/cards" };
     if (path === "/admin/accounts" && moved[t]) navigate(moved[t], { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, search]);
@@ -237,16 +250,19 @@ export default function AdminDashboard() {
               recordsPath="/admin/interns?tab=records"
             />
           )}
-          {tab.key === "records" && <Records records={records} loading={loading} />}
+          {tab.key === "records" && <Records records={records} loading={loading} interns={interns} />}
           {/* Accounts */}
           {tab.key === "users" && <Accounts users={users} onRefresh={fetchAll} />}
-          {tab.key === "cards" && <PrintIdCards interns={interns} />}
           {tab.key === "term" && <EndOfTerm users={users} records={records} onRefresh={fetchAll} />}
           {/* Reports */}
         </GroupPage>
       )}
 
       {/* their own pages (moved out of Accounts) */}
+      {path === "/admin/cards" && (<>
+        <PageHeader title="Card Requests" sub="Approved ID cards: download the details for your printing app, then mark them as printed." />
+        <PrintIdCards interns={interns} />
+      </>)}
       {path === "/admin/kiosks" && (<>
         <PageHeader title="Kiosks" sub="Each kiosk has its own key. An HTE kiosk only accepts the interns placed at that HTE." />
         <Kiosks />
@@ -307,6 +323,30 @@ function Home({ user, records, interns, coordinators, loading }) {
     load();
     return liveRefresh(load);
   }, []);
+  // kiosks and the latest activity (the admin's own duties)
+  const [kiosks, setKiosks] = useState(null);
+  const [acts, setActs] = useState(null);
+  useEffect(() => {
+    const load = () => {
+      fetch(`${API}/admin/kiosks`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json()).then((d) => setKiosks(d && Array.isArray(d.kiosks) ? d.kiosks : [])).catch(() => setKiosks([]));
+      fetch(`${API}/admin/activity?page=1`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json()).then((d) => setActs(d && Array.isArray(d.rows) ? d.rows.slice(0, 5) : [])).catch(() => setActs([]));
+    };
+    load();
+    return liveRefresh(load);
+  }, []);
+  const ago = (v) => {
+    if (!v) return "Never used";
+    const m = Math.max(0, Math.round((Date.now() - new Date(String(v).replace(" ", "T")).getTime()) / 60000));
+    return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+  };
+  const kioskState = (k) => {
+    if (!k.active) return { tag: "Off", tone: "" };
+    const m = k.last_seen_at ? (Date.now() - new Date(String(k.last_seen_at).replace(" ", "T")).getTime()) / 60000 : Infinity;
+    return m < 10 ? { tag: "Online", tone: "green" } : { tag: "Idle", tone: "amber" };
+  };
+  const actTone = (a) => (/refused|locked|failed|deleted|removed/i.test(a) ? "red" : /approved|signed in|added|agreed/i.test(a) ? "green" : "");
   const approved = (cards || []).filter((r) => r.status === "approved");
   const stages = [
     { key: "print", icon: "print", tone: "", title: "To print", sub: "Approved, download and print", n: approved.filter((r) => !r.printed_at).length },
@@ -322,7 +362,7 @@ function Home({ user, records, interns, coordinators, loading }) {
       status={{ text: checkedIn > 0 ? `${checkedIn} on the clock now` : "Nobody timed in yet", tone: checkedIn > 0 ? "live" : "" }}
       actions={[
         { icon: "list", label: "Records", run: () => go("/admin/interns?tab=records") },
-        { icon: "card", label: "Card Requests", run: () => go("/admin/accounts?tab=cards") },
+        { icon: "card", label: "Card Requests", run: () => go("/admin/cards") },
         { icon: "users", label: "Monitor", run: () => go("/admin/interns"), primary: true },
       ]}
       strip={[
@@ -330,24 +370,49 @@ function Home({ user, records, interns, coordinators, loading }) {
         { icon: "briefcase", tone: "t-purple", label: "OJT coordinators", value: coordinators.length, sub: "on the program" },
         { icon: "tap", tone: "t-green", label: "On duty now", value: checkedIn, sub: `of ${interns.length} interns` },
         { icon: "list", tone: "t-blue", label: "Today's records", value: todayRecs.length, sub: "taps and logs" },
-        { icon: "card", tone: "t-amber", label: "ID cards", value: cardWork, sub: "to print, link or release", onClick: () => go("/admin/accounts?tab=cards") },
+        { icon: "card", tone: "t-amber", label: "ID cards", value: cardWork, sub: "to print, link or release", onClick: () => go("/admin/cards") },
       ]}
       left={(
         <>
-        <Panel title="ID cards" count={cardWork} link="Card requests" onLink={() => go("/admin/accounts?tab=cards")}>
-          {stages.map((s) => (
-            <DashRow key={s.key} icon={s.icon} tone={s.tone} title={s.title} sub={s.sub}
-              tag={s.n > 0 ? String(s.n) : "None"} tagTone={s.n > 0 ? "orange" : ""} onClick={() => go("/admin/accounts?tab=cards")} />
-          ))}
+        <Panel title="ID cards" count={cardWork} link="Card requests" onLink={() => go("/admin/cards")}>
+          <div className="dbx-fill">
+            {stages.map((s) => (
+              <DashRow key={s.key} icon={s.icon} tone={s.tone} title={s.title} sub={s.sub}
+                tag={s.n > 0 ? String(s.n) : "None"} tagTone={s.n > 0 ? "orange" : ""} onClick={() => go("/admin/cards")} />
+            ))}
+          </div>
         </Panel>
-        {/* interns who need a follow-up */}
-        <NeedsAttention interns={interns} records={records} monitorPath="/admin/interns" />
+        <Panel title="Kiosks" count={kiosks ? kiosks.length : undefined} link="Manage" onLink={() => go("/admin/kiosks")}>
+          {!kiosks ? <Spinner /> : kiosks.length === 0 ? <DashEmpty title="No kiosks yet" sub="Add one in Kiosks." /> : (
+            <div className="dbx-fill">
+              {kiosks.slice(0, 4).map((k) => {
+                const st = kioskState(k);
+                return <DashRow key={k.id} icon="tap" tone={st.tone === "green" ? "green" : ""} title={k.name}
+                  sub={`${k.placement ? `Interns at ${k.placement}` : "Every intern (CCIS)"} · ${ago(k.last_seen_at)}`}
+                  tag={st.tag} tagTone={st.tone} onClick={() => go("/admin/kiosks")} />;
+              })}
+            </div>
+          )}
+        </Panel>
         </>
       )}
-      right={<><HomeCalendar /><AnnouncementBoard limit={3} /></>}
+      right={<>
+        <HomeCalendar />
+        <Panel title="Recent activity" link="Activity log" onLink={() => go("/admin/activity")}>
+          {!acts ? <Spinner /> : acts.length === 0 ? <DashEmpty title="Nothing logged yet" /> : (
+            <div className="dbx-fill">
+              {acts.map((r, i) => (
+                <DashRow key={r.id ?? i} icon="list" title={r.user_name || "Not signed in"}
+                  sub={`${r.action}${r.details ? " · " + r.details : ""}`}
+                  tag={ago(r.created_at)} onClick={() => go("/admin/activity")} />
+              ))}
+            </div>
+          )}
+        </Panel>
+      </>}
     >
       <Panel title="Today's attendance" count={seenToday} link="Monitor" onLink={() => go("/admin/interns")} grow>
-        {loading ? <Spinner /> : <TodayPeople records={todayRecs} limit={10} />}
+        {loading ? <Spinner /> : <TodayPeople records={todayRecs} limit={10} interns={interns} />}
       </Panel>
     </DashLayout>
   );
@@ -673,25 +738,38 @@ export function HomeCalendar() {
 /* ───────────────────────── Records ───────────────────────── */
 /* Attendance Records: the days on the left, that day's taps on the right
    (each row shows when the intern was in on a 7 AM – 7 PM line). */
-export function Records({ records, loading }) {
+export function Records({ records, loading, interns = [] }) {
+  const placeOf = (r) => r.placement || interns.find((i) => String(i.id) === String(r.user_id))?.placement || "—";
   // One list of every tap: search an intern, filter by date or type.
   // "View all records" on Monitor Interns opens this list already searched for that intern.
   const location = useLocation();
   const [search, setSearch] = useState("");
   const [type, setType] = useState("all");               // all | onsite | online
-  const [dateFilter, setDateFilter] = useState("");
-  const [limit, setLimit] = useState(60);
+  const [dateFilter, setDateFilter] = useState("");     // from
+  const [dateTo, setDateTo] = useState("");
+  const [hte, setHte] = useState("all");
+  const [prog, setProg] = useState("all");               // BSIT | BSCS | BSIS
+  const [limit, setLimit] = useState(60);        // (kept so the filters below can reset the page)
+  const [page, setPage] = useState(1);
+  const PAGE = 10;
+  const [printing, setPrinting] = useState(false);
+  const [pp, setPp] = useState({ from: todayManila(), to: todayManila(), prog: "all", hte: "all" });
+  useEffect(() => { setPage(1); }, [search, type, prog, hte, limit]);
   useEffect(() => {
-    setSearch(location.state?.search || ""); setType("all"); setDateFilter(""); setLimit(60);
+    setSearch(location.state?.search || ""); setType("all"); setDateFilter(""); setDateTo(""); setHte("all"); setProg("all"); setLimit(60);
     /* eslint-disable-next-line */
   }, [location.key, location.state?.search]);
 
   const sq = search.trim().toLowerCase();
   const filtered = records
-    .filter((r) => !dateFilter || r.date === dateFilter)
+    .filter((r) => !dateFilter || String(r.date).slice(0, 10) >= dateFilter)
+    .filter((r) => !dateTo || String(r.date).slice(0, 10) <= dateTo)
+    .filter((r) => prog === "all" || programKey(interns.find((i) => String(i.id) === String(r.user_id))?.program) === prog)
+    .filter((r) => hte === "all" || placeOf(r) === hte)
     .filter((r) => type === "all" || (type === "online" ? r.uid === "ONLINE" : r.uid !== "ONLINE"))
     .filter((r) => !sq || String(r.name || "").toLowerCase().includes(sq))
     .sort((a, b) => String(b.checked_in_at || b.date).localeCompare(String(a.checked_in_at || a.date)));
+  const htes = [...new Set(records.map(placeOf).filter((x) => x && x !== "—"))].sort((a, b) => a.localeCompare(b));
   const counts = {
     all: records.length,
     onsite: records.filter((r) => r.uid !== "ONLINE").length,
@@ -705,6 +783,39 @@ export function Records({ records, loading }) {
     return h > 0 ? `${Math.round(h * 100) / 100}h` : "—";
   };
 
+  // ── Print / export: pick a period, program and HTE ──
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const periodRange = (p) => [p.from || "0000-01-01", p.to || "9999-12-31"];
+  const printList = () => {
+    const [f, t] = periodRange(pp);
+    return records
+      .filter((r) => String(r.date).slice(0, 10) >= f && String(r.date).slice(0, 10) <= t)
+      .filter((r) => pp.prog === "all" || programKey(interns.find((i) => String(i.id) === String(r.user_id))?.program) === pp.prog)
+      .filter((r) => pp.hte === "all" || placeOf(r) === pp.hte)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.name).localeCompare(String(b.name)));
+  };
+  const printRows = (list) => list.map((r) => [
+    r.name || "", placeOf(r) === "—" ? "" : placeOf(r), day(r.date), r.uid === "ONLINE" ? "Online" : "Onsite",
+    r.checked_out_at ? "Time out" : "Time in", hm(r.checked_in_at) === "—" ? "" : hm(r.checked_in_at),
+    r.checked_out_at ? hm(r.checked_out_at) : "No time out yet", hrs(r) === "—" ? "" : hrs(r),
+  ]);
+  const EXP_HEAD = ["Intern", "Placement", "Date", "Type", "Action", "Time in", "Time out", "Hours"];
+  const periodLabel = () => {
+    const nice = (v) => new Date(v + "T00:00:00").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+    const base = pp.from && pp.to && pp.from === pp.to ? nice(pp.from) : `${pp.from ? nice(pp.from) : "the start"} to ${pp.to ? nice(pp.to) : "today"}`;
+    return `${base}${pp.prog !== "all" ? " · " + pp.prog : ""}${pp.hte !== "all" ? " · " + pp.hte : ""}`;
+  };
+  const exportExcel = () => {
+    const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    const csv = "\uFEFF" + [EXP_HEAD, ...printRows(printList())].map((row) => row.map(q).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `attendance-${pp.from || "start"}-to-${pp.to || "today"}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const setP = (k) => (e) => setPp((x) => ({ ...x, [k]: e.target.value }));
+
   return (
     <>
       <PageHeader title="Attendance Records" sub="Complete attendance log: every time in and time out." live />
@@ -716,16 +827,58 @@ export function Records({ records, loading }) {
         <select className="ix-select mon-filter" value={type} onChange={(e) => { setType(e.target.value); setLimit(60); }} aria-label="Filter by type">
           {[["all", "All records"], ["onsite", "Onsite"], ["online", "Online"]].map(([k, l]) => <option key={k} value={k}>{l} ({counts[k]})</option>)}
         </select>
-        <input type="date" className="ix-input rec-date" value={dateFilter} aria-label="Filter by date" onChange={(e) => { setDateFilter(e.target.value); setLimit(60); }} />
-        {(dateFilter || search) && <button type="button" className="ix-b ghost sm" onClick={() => { setDateFilter(""); setSearch(""); }}>Clear</button>}
-        <span className="rec-count">{filtered.length} record{filtered.length === 1 ? "" : "s"}</span>
+        <select className="ix-select mon-filter" value={prog} onChange={(e) => { setProg(e.target.value); setLimit(60); }} aria-label="Filter by program">
+          <option value="all">All programs</option>
+          {[["BSIT", "BSIT (IT)"], ["BSCS", "BSCS (CS)"], ["BSIS", "BSIS (IS)"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <select className="ix-select mon-filter" value={hte} onChange={(e) => { setHte(e.target.value); setLimit(60); }} aria-label="Filter by placement">
+          <option value="all">All placements</option>
+          {htes.map((h) => <option key={h} value={h}>{h}</option>)}
+        </select>
+        {(search || hte !== "all" || prog !== "all" || type !== "all") && <button type="button" className="ix-b ghost sm" onClick={() => { setDateFilter(""); setDateTo(""); setSearch(""); setHte("all"); setProg("all"); setType("all"); }}>Clear</button>}
+        <span className="mon-chip on">{filtered.length} record{filtered.length === 1 ? "" : "s"}</span>
+        <button type="button" className="ix-b ghost sm acc-add" onClick={() => setPrinting(true)}><Icon name="download" size={14} /> Export Excel</button>
       </div>
+      {printing && (
+        <Drawer inPage icon="file" kicker="Attendance Records" title="Export attendance" sub="Pick the dates, program and HTE to include in the Excel file." onClose={() => setPrinting(false)}
+          footer={
+            <>
+              <button type="button" className="ix-b primary" style={{ gridColumn: "1 / -1", width: "100%", justifyContent: "center" }} onClick={() => { exportExcel(); setPrinting(false); }} disabled={!printList().length}><Icon name="download" size={14} /> Download Excel</button>
+            </>
+          }>
+          <style>{`
+            .ix-drawer .rec-pm { display: flex; flex-direction: column; gap: 16px; }
+            .ix-drawer .rec-pm-d { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+            .ix-drawer .rec-pm .ix-field { margin: 0 !important; min-width: 0; display: block; }
+            .ix-drawer .rec-pm .ix-field label { display: block; margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: #374151; line-height: 1.3; }
+            .ix-drawer .rec-pm input, .ix-drawer .rec-pm select { display: block; width: 100% !important; height: 38px !important; box-sizing: border-box; font-size: 13px; }
+            .ix-drawer .rec-pm .rec-pm-n { margin: 2px 0 0; font-family: inherit; font-size: 13px; line-height: 1.45; color: #6b7280; font-weight: 400; }
+            .ix-drawer .rec-pm .rec-pm-n b { color: #1f2430; font-weight: 600; }
+          `}</style>
+          <div className="rec-pm">
+            <div className="rec-pm-d">
+              <div className="ix-field"><label>From</label><input type="date" className="ix-input" value={pp.from} max={pp.to || undefined} onChange={setP("from")} /></div>
+              <div className="ix-field"><label>To</label><input type="date" className="ix-input" value={pp.to} min={pp.from || undefined} onChange={setP("to")} /></div>
+            </div>
+            <div className="ix-field"><label>Program</label>
+              <select className="ix-select" value={pp.prog} onChange={setP("prog")}>
+                <option value="all">All programs</option><option value="BSIT">BSIT</option><option value="BSCS">BSCS</option><option value="BSIS">BSIS</option>
+              </select></div>
+            <div className="ix-field"><label>HTE</label>
+              <select className="ix-select" value={pp.hte} onChange={setP("hte")}>
+                <option value="all">All HTEs</option>{htes.map((h) => <option key={h} value={h}>{h}</option>)}
+              </select></div>
+            <p className="rec-pm-n"><b>{printList().length}</b> record{printList().length === 1 ? "" : "s"} match · {periodLabel()}</p>
+          </div>
+        </Drawer>
+      )}
       <div className="ix-card flush rec-card">
         {loading ? <Spinner /> : (
           <Table
-            headers={["Intern", "Date", "Type", "Action", "Time in", "Time out", "Hours"]}
-            rows={filtered.slice(0, limit).map((r) => [
+            headers={["Intern", "Placement", "Date", "Type", "Action", "Time in", "Time out", "Hours"]}
+            rows={filtered.slice((page - 1) * PAGE, page * PAGE).map((r) => [
               <span className="rec-who"><Avatar name={r.name} photo={r.photo} size={28} /><strong>{r.name}</strong></span>,
+              <span className="rec-place" title={placeOf(r)}>{placeOf(r)}</span>,
               day(r.date),
               <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
               r.checked_out_at
@@ -738,10 +891,23 @@ export function Records({ records, loading }) {
             empty="No records match your filters."
           />
         )}
-        {!loading && filtered.length > limit && (
-          <div className="rec-more">
-            <span>Showing {limit} of {filtered.length}</span>
-            <button type="button" className="ix-b ghost sm" onClick={() => setLimit((n) => n + 100)}>Show more</button>
+        {!loading && filtered.length > PAGE && (
+          <div className="rec-more rec-more-c">
+            {(() => {
+              const total = Math.ceil(filtered.length / PAGE);
+              const start = Math.max(1, Math.min(page - 3, total - 6));
+              const nums = Array.from({ length: Math.min(7, total) }, (_, i) => start + i);
+              return (
+                <span className="rec-pg">
+                  <button type="button" className="ix-b ghost sm" disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>‹ Previous</button>
+                  {nums.map((n) => (
+                    <button key={n} type="button" className={"ix-b sm rec-pn" + (n === page ? " on" : " ghost")} onClick={() => setPage(n)} aria-current={n === page ? "page" : undefined}>{n}</button>
+                  ))}
+                  <button type="button" className="ix-b ghost sm" disabled={page >= total} onClick={() => setPage((n) => n + 1)}>Next ›</button>
+                </span>
+              );
+            })()}
+            <small>Showing {(page - 1) * PAGE + 1}–{Math.min(page * PAGE, filtered.length)} of {filtered.length}</small>
           </div>
         )}
       </div>
@@ -792,6 +958,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
   const [editUser, setEditUser] = useState(null);   // the user being edited (null = modal closed)
   const [editForm, setEditForm] = useState({});
   const [editPhoto, setEditPhoto] = useState(null); // a newly chosen photo file
+  const [editSig, setEditSig] = useState(null);     // a newly chosen signature file (staff)
   const [editPreview, setEditPreview] = useState(null);
   const [editMsg, setEditMsg] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -849,9 +1016,10 @@ export function Accounts({ users, onRefresh, limited = false }) {
       // multipart form, so the profile photo can travel with the other fields
       const fd = new FormData();
       Object.entries(form).forEach(([k, v]) => {
-        if (k !== "photo" && v !== null && v !== undefined) fd.append(k, v);
+        if (k !== "photo" && k !== "signature" && v !== null && v !== undefined) fd.append(k, v);
       });
       if (form.photo) fd.append("photo", form.photo);
+      if (form.signature) fd.append("signature", form.signature);
       const res = await fetch(`${API}/admin/users`, {
         method: "POST",
         headers: { Accept: "application/json" },
@@ -930,15 +1098,19 @@ export function Accounts({ users, onRefresh, limited = false }) {
       emergency_contact_relation: u.emergency_contact_relation || "",
       emergency_contact_number: u.emergency_contact_number || "",
       emergency_contact_address: u.emergency_contact_address || "",
+      position: u.position || "",
+      hte_address: u.hte_address || "",
+      moa_valid_until: u.moa_valid_until ? String(u.moa_valid_until).slice(0, 10) : "",
     });
     setEditPhoto(null);
+    setEditSig(null);
     setEditMsg(null);
     setMsg(null);
     setEditUser(u);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   // Cancel / Save go back to the read-only profile (the user stays open)
-  const closeEdit = () => { setEditUser(null); setEditPhoto(null); setEditMsg(null); };
+  const closeEdit = () => { setEditUser(null); setEditPhoto(null); setEditSig(null); setEditMsg(null); };
   const openView = (u) => { setMsg(null); closeEdit(); setViewUser(u); };
   const backToList = () => { closeEdit(); setViewUser(null); setMsg(null); };
   const setEF = (k) => (e) => setEditForm((f) => ({ ...f, [k]: e.target.value }));
@@ -991,6 +1163,17 @@ export function Accounts({ users, onRefresh, limited = false }) {
         newPhoto = pdata?.photo || null;
       }
 
+      // 3) the signature (staff), only if a new one was chosen
+      if (editSig) {
+        const sf = new FormData();
+        sf.append("signature", editSig);
+        const sr = await fetch(`${API}/admin/users/${editUser.id}/signature`, {
+          method: "POST", headers: { Accept: "application/json" }, body: sf,
+        });
+        const sdata = await sr.json().catch(() => null);
+        if (!sr.ok) throw new Error(sdata?.message || "Details were saved, but the signature could not be uploaded.");
+      }
+
       // if this is my own account, refresh my navbar name / photo too
       const me = JSON.parse(sessionStorage.getItem("user") || "{}");
       if (me.id === editUser.id) {
@@ -1040,11 +1223,12 @@ export function Accounts({ users, onRefresh, limited = false }) {
         .ix-page .acc-table .ix-table-wrap { max-height: none; }
         .ix-page .acc-table td { vertical-align: middle; }
         /* the account opens in the side panel (like the calendar): a wider panel, the profile in one column */
-        .ix-page .ix-drawer:has(.acc-detail) { width: min(720px, calc(100vw - 24px)); }
+        .ix-page .ix-drawer:has(.acc-detail) { width: min(1040px, calc(100vw - 24px)); }
+        .ix-page .ix-drawer:has(.acc-detail .ipa-staff) { width: min(820px, calc(100vw - 24px)); }
         .ix-drawer .acc-detail .acc-detail-bar { position: sticky; top: -16px; z-index: 2; background: #fff; padding: 4px 0 10px; margin: 0; display: flex; gap: 8px; justify-content: flex-start; }
         .ix-drawer .acc-detail :is(.ipv-grid, .uf-grid).c3, .ix-drawer .acc-detail .uf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }`}</style>
       {importing && <ImportInterns onClose={() => setImporting(false)} onDone={onRefresh} />}
-      <PageHeader title={limited ? "Add Accounts" : "Manage Accounts"} sub={limited ? "Add an intern or an HTE supervisor, or import your Excel list. To change or deactivate an account, ask the admin." : "Click a user to see their profile, then Edit to change it."} />
+      <PageHeader title={limited ? "Add Accounts" : "Manage Accounts"} sub={limited ? "Add an intern or an HTE supervisor, import your Excel list, or edit an account. To deactivate or delete an account, ask the admin." : "Click a user to see their profile, then Edit to change it."} />
 
       {!showForm && !editUser && <Msg msg={msg} />}
 
@@ -1069,6 +1253,8 @@ export function Accounts({ users, onRefresh, limited = false }) {
                 isIntern={form.role === "intern"}
                 supervisors={supervisors}
                 roles={limited ? ["intern", "supervisor"] : null}
+                sigFile={form.signature || null}
+                onSig={(file) => setForm((s) => ({ ...s, signature: file }))}
                 header={<PhotoPicker file={form.photo} onChange={(file) => setForm((s) => ({ ...s, photo: file }))} />}
                 actions={
                   <>
@@ -1121,12 +1307,12 @@ export function Accounts({ users, onRefresh, limited = false }) {
               title={cur.name} onClose={() => { if (!savingEdit) backToList(); }}>
               {(
                 <div className="acc-detail">
-                  {!editUser && !limited && (
+                  {!editUser && (
                     <div className="acc-detail-bar">
                       <button type="button" className="ix-b primary sm" onClick={() => openEdit(cur)}>
                         <Icon name="pencil" size={14} /> Edit
                       </button>
-                      {cur.deactivated_at ? (
+                      {limited ? null : cur.deactivated_at ? (
                         <button type="button" className="ix-b ghost sm" disabled={toggling === cur.id} onClick={() => setActive(cur, true)}>
                           <Icon name="check" size={14} /> {toggling === cur.id ? "..." : "Reactivate"}
                         </button>
@@ -1136,10 +1322,12 @@ export function Accounts({ users, onRefresh, limited = false }) {
                           <Icon name="lock" size={14} /> {toggling === cur.id ? "..." : "Deactivate"}
                         </button>
                       )}
+                      {!limited && (
                       <button type="button" className="ix-b danger sm" disabled={deleting === cur.id}
                         onClick={async () => { if (await handleDelete(cur.id, cur.name)) setViewUser(null); }}>
                         <Icon name="trash" size={14} /> {deleting === cur.id ? "..." : "Delete"}
                       </button>
+                      )}
                     </div>
                   )}
 
@@ -1149,7 +1337,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
                     </div>
                   )}
                   {!editUser ? (
-                    <UserDetails u={cur} />
+                    <UserDetails u={cur} interns={users} />
                   ) : (
                     <>
                       <Msg msg={editMsg} />
@@ -1160,6 +1348,10 @@ export function Accounts({ users, onRefresh, limited = false }) {
                         <UserForm
                           mode="edit"
                           f={editForm}
+                          noPassword={limited}
+                          sigFile={editSig}
+                          onSig={setEditSig}
+                          sigCurrent={editUser.signature}
                           set={setEF}
                           isIntern={editIsIntern}
                           role={editUser.role}
@@ -1351,7 +1543,7 @@ export function DTR({ interns, records, canCertify = false }) {
     const month = `${shown.year}-${shown.mon}`;
     const range = periodsOf(shown.year, shown.mon).find((p) => p.key === shown.period);
     const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } =
-      buildDtr({ records: records.filter((r) => r.user_id === intern.id), month, from: range.from, to: range.to, mode, holidays });
+      buildDtr({ records: records.filter((r) => r.user_id === intern.id), month, from: range.from, to: range.to, mode, holidays, portions: excusedDays.portions || {} });
     const monthName = MONTHS.find((m) => m.value === shown.mon)?.label || "";
     const formHtml = dtrFormHtml({
       name: intern.name, office: "Caraga State University - MAIN", periodLabel: `${monthName} ${range.from} - ${range.to}, ${shown.year}`,
@@ -2175,6 +2367,11 @@ export function AdminProfile({ user }) {
 
   const role = { admin: "Admin", ojt_coordinator: "OJT Coordinator", supervisor: "HTE Supervisor" }[me.role] || me.role;
   const parts = (me.name || "").trim().split(/\s+/);
+  // First / middle / last always agree with the full name shown at the top
+  const joined = [me.first_name, me.middle_name, me.last_name].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  const nm = joined && joined.toLowerCase() === (me.name || "").trim().replace(/\s+/g, " ").toLowerCase()
+    ? { first: me.first_name, middle: me.middle_name, last: me.last_name }
+    : { first: parts[0] || "", middle: parts.length > 2 ? parts.slice(1, -1).join(" ") : "", last: parts.length > 1 ? parts[parts.length - 1] : "" };
   const bday = me.date_of_birth
     ? new Date(String(me.date_of_birth).slice(0, 10) + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
   // one fact: a label and its value, or an input while editing
@@ -2241,9 +2438,9 @@ export function AdminProfile({ user }) {
             <section className="ix-card flush pf-card">
               <header>Personal information</header>
               <div className="pf-body">
-                {kv("First name", me.first_name || parts[0], "first_name", { required: true })}
-                {kv("Middle name", me.middle_name, "middle_name")}
-                {kv("Last name", me.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""), "last_name", { required: true })}
+                {kv("First name", nm.first, "first_name", { required: true })}
+                {kv("Middle name", nm.middle, "middle_name")}
+                {kv("Last name", nm.last, "last_name", { required: true })}
                 {kv("Birthday", bday, "date_of_birth", { type: "date" })}
                 {kv("Contact number", me.contact_number, "contact_number", { type: "tel" })}
                 {kv("Address", me.address, "address", { full: true })}
@@ -2266,6 +2463,7 @@ export function AdminProfile({ user }) {
         </form>
       )}
       <style>{STAFF_PF_CSS}</style>
+      <style>{`@media (min-width: 1200px) { .ix-page .pf-page:has(.pf-sec-full) .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }`}</style>
       <style>{`
         .ix-page .pf-photo { position: relative; flex-shrink: 0; }
         .ix-page .pf-preview { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; display: block; }
@@ -2279,7 +2477,9 @@ export function AdminProfile({ user }) {
         @media (min-width: 901px) and (min-height: 600px) {
           .ix-page .pf-page:not(:has(.pf-sec-full)) .pf-grid { grid-template-rows: 1fr; }
           .ix-page .pf-page:has(.pf-sec-full) .pf-grid { grid-template-rows: 1fr; flex: 1 1 0; }
-          .ix-page .pf-sec-full { flex: none; }
+          .ix-page .pf-sec.pf-sec-full { flex: none; height: auto !important; }
+          .ix-page .pf-page:has(.pf-sec-full) .pf-grid { flex: none !important; grid-template-rows: auto !important; }
+          .ix-page .ix-content > .pf-page:has(.pf-sec-full) { flex: none !important; }
           .ix-page .pf-sec-full > .ix-card.sec-card { height: auto; }
         }
       `}</style>
@@ -2798,7 +2998,6 @@ function Kiosks() {
                       <label htmlFor="ks-reader">Card reader on this kiosk</label>
                       <select id="ks-reader" className="ix-select" value={readerPick} onChange={(e) => { setReaderPick(e.target.value); setCopied(false); }}>
                         <option value="auto">Find it automatically</option>
-                        <option value="phone">Android phone / tablet (NFC)</option>
                         <option value="acr122u">ACR122U (with the helper program)</option>
                         <option value="usb">Old USB reader (can't protect cards)</option>
                       </select>
@@ -2877,7 +3076,6 @@ const KIOSK_CSS = `
   .ix-page .ks-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; padding-top: 12px; border-top: 1px solid #eef0f4; flex: none; }
   .ix-page .nfcr-alerts { flex: none; display: flex; align-items: center; gap: 8px; margin: 6px; padding: 9px 12px; border: 1px dashed #f3c48b; border-radius: 10px;
     background: #fffaf2; font: inherit; font-size: 12.5px; font-weight: 700; color: #92400e; cursor: pointer; }
-  .ix-drawer:has(.nfcr-ca) { width: min(960px, calc(100vw - 24px)); }
   .nfcr-ca .ix-card { margin: 0 !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
   .ix-page .ks-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
   .ix-page .ks-bar h3 { margin: 0 6px 0 0 !important; }
@@ -2935,6 +3133,8 @@ function EndOfTerm({ users, records, onRefresh }) {
   const [picked, setPicked] = useState(() => new Set());
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [q, setQ] = useState("");
+  const [confirm, setConfirm] = useState(null);   // null | "off" | "on": the confirm window
 
   const inRange = (r) => (!f.from || r.date >= f.from) && (!f.to || r.date <= f.to);
   const recsOf = (id) => records.filter((r) => String(r.user_id) === String(id) && inRange(r));
@@ -2948,6 +3148,7 @@ function EndOfTerm({ users, records, onRefresh }) {
     (!f.program || programKey(u.program) === f.program)
     && (!f.placement || (u.placement || "") === f.placement)
     && (!f.semester || (u.semester || "") === f.semester)
+    && (!q.trim() || `${u.name} ${u.student_id || ""} ${u.placement || ""}`.toLowerCase().includes(q.trim().toLowerCase()))
     && (!(f.from || f.to) || recs.length > 0)
     && (f.status === "all" || (f.status === "active" && active) || (f.status === "done" && active && done)
         || (f.status === "notdone" && active && !done) || (f.status === "inactive" && !active)));
@@ -2995,8 +3196,7 @@ function EndOfTerm({ users, records, onRefresh }) {
   };
 
   const setActive = async (active) => {
-    const n = chosen.length;
-    if (!active && !window.confirm(`Deactivate ${n} intern account${n > 1 ? "s" : ""}? They can't sign in or tap their card anymore. All their records are kept, and you can reactivate them later.`)) return;
+    setConfirm(null);
     setBusy(active ? "on" : "off"); setMsg(null);
     try {
       const res = await fetch(`${API}/admin/users/active-batch`, {
@@ -3015,29 +3215,30 @@ function EndOfTerm({ users, records, onRefresh }) {
     <div className="ix-card eot">
       <style>{EOT_CSS}</style>
       <div className="eot-filters">
+        <div className="ix-search mon-search" style={{ gridColumn: "1 / -1", maxWidth: "none" }}>
+          <Icon name="search" size={15} />
+          <input type="text" placeholder="Search an intern by name, student ID or HTE..." value={q} onChange={(e) => { setQ(e.target.value); setPicked(new Set()); }} />
+        </div>
         <div className="ix-field"><label>Program</label>
           <select className="ix-select" value={f.program} onChange={set("program")}><option value="">All programs</option>{programs.map((p) => <option key={p}>{p}</option>)}</select></div>
         <div className="ix-field"><label>HTE / placement</label>
           <select className="ix-select" value={f.placement} onChange={set("placement")}><option value="">All</option>{places.map((p) => <option key={p}>{p}</option>)}</select></div>
         <div className="ix-field"><label>Semester</label>
           <select className="ix-select" value={f.semester} onChange={set("semester")}><option value="">Any</option><option>1st Semester</option><option>2nd Semester</option></select></div>
-        <div className="ix-field"><label>Term from</label><input type="date" className="ix-input" value={f.from} onChange={set("from")} /></div>
-        <div className="ix-field"><label>to</label><input type="date" className="ix-input" value={f.to} onChange={set("to")} /></div>
         <div className="ix-field"><label>Show</label>
           <select className="ix-select" value={f.status} onChange={set("status")}>
             <option value="active">Active accounts</option><option value="done">Active, hours completed</option>
             <option value="notdone">Active, hours not completed</option><option value="inactive">Deactivated</option><option value="all">Everyone</option>
           </select></div>
       </div>
-      <p className="eot-hint">Term dates are optional: they keep only interns with attendance in those dates, and the export only has those dates.</p>
       <Msg msg={msg} />
       <div className="eot-bar">
         <b>{chosen.length} of {rows.length} selected</b>
         <span className="eot-acts">
           <button type="button" className="ix-b ghost sm" disabled={!chosen.length || !!busy} onClick={exportXlsx}><Icon name="download" size={14} /> {busy === "export" ? "Exporting..." : "Export to Excel"}</button>
           {f.status === "inactive"
-            ? <button type="button" className="ix-b primary sm" disabled={!chosen.length || !!busy} onClick={() => setActive(true)}>{busy === "on" ? "..." : "Reactivate"}</button>
-            : <button type="button" className="ix-b danger sm" disabled={!chosen.length || !!busy} onClick={() => setActive(false)}>{busy === "off" ? "..." : "Deactivate"}</button>}
+            ? <button type="button" className="ix-b primary sm" disabled={!chosen.length || !!busy} onClick={() => setConfirm("on")}>{busy === "on" ? "..." : "Reactivate"}</button>
+            : <button type="button" className="ix-b danger sm" disabled={!chosen.length || !!busy} onClick={() => setConfirm("off")}>{busy === "off" ? "..." : "Deactivate"}</button>}
         </span>
       </div>
       <Table
@@ -3053,12 +3254,46 @@ function EndOfTerm({ users, records, onRefresh }) {
           <Badge label={active ? (done ? "Completed" : "Active") : "Deactivated"} type={active ? (done ? "approved" : "pending") : "rejected"} />,
         ])}
       />
+      {confirm && (
+        <Modal
+          title={confirm === "off" ? `Deactivate ${chosen.length} account${chosen.length > 1 ? "s" : ""}?` : `Reactivate ${chosen.length} account${chosen.length > 1 ? "s" : ""}?`}
+          sub={confirm === "off" ? "Use this when the batch has finished the term." : "These interns will be able to sign in and tap again."}
+          onClose={() => setConfirm(null)}
+          actions={null}
+        >
+          <div className="eot-cf">
+            <p>
+              {confirm === "off"
+                ? "They won't be able to sign in or tap their card anymore. All their records are kept, and you can reactivate them anytime."
+                : "Their accounts become active again. Their records were never removed."}
+            </p>
+            <ul>
+              {chosen.slice(0, 5).map(({ u }) => <li key={u.id}><b>{u.name}</b><small>{u.student_id || ""}{u.program ? ` · ${u.program}` : ""}</small></li>)}
+              {chosen.length > 5 && <li className="more">+{chosen.length - 5} more</li>}
+            </ul>
+            <div className="eot-cf-act">
+              <button type="button" className="ix-b ghost" onClick={() => setConfirm(null)}>Cancel</button>
+              <button type="button" className={confirm === "off" ? "ix-b danger" : "ix-b primary"} onClick={() => setActive(confirm === "on")}>
+                {confirm === "off" ? "Deactivate" : "Reactivate"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 const EOT_CSS = `
+  .eot-cf p { margin: 0 0 12px; font-size: 13.5px; line-height: 1.5; color: #4b5563; }
+  .eot-cf ul { list-style: none; margin: 0 0 16px; padding: 0; border: 1px solid #e7e9ee; border-radius: 12px; overflow: hidden; }
+  .eot-cf li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 14px; border-bottom: 1px solid #f0f1f4; font-size: 13px; }
+  .eot-cf li:last-child { border-bottom: 0; }
+  .eot-cf li small { color: #6b7280; font-size: 12px; }
+  .eot-cf li.more { color: #6b7280; justify-content: center; }
+  .eot-cf-act { display: flex; gap: 10px; justify-content: flex-end; }
+  .eot-cf-act .ix-b { min-width: 110px; justify-content: center; }
   .ix-page .ix-content .eot { padding: 16px 18px !important; }
-  .ix-page .eot-filters { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+  .ix-page .eot-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
   @media (max-width: 1100px) { .ix-page .eot-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 640px) { .ix-page .eot-filters { grid-template-columns: 1fr 1fr; } }
   .ix-page .eot-hint { margin: 8px 0 10px; font-size: 11.5px; color: #94a3b8; }

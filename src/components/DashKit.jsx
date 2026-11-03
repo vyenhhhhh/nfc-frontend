@@ -1,6 +1,6 @@
 // components/DashKit.jsx
 // Shared shell (navbar + sidebar) and UI pieces for the Admin, Coordinator and Intern dashboards.
-import { useState, useEffect, useRef, useCallback, createContext, useContext, Fragment } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, createContext, useContext, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import { currentFit } from "../fit.js";
@@ -199,6 +199,25 @@ export function liveRefresh(load, fallbackMs = LIVE_FALLBACK_MS) {
   };
 }
 
+// Online = the account's portal was open in the last 3 minutes (the page pings the server every minute)
+export const lastSeenMs = (u) => {
+  const v = u?.last_seen_at;
+  if (!v) return 0;
+  const str = String(v).replace(" ", "T");
+  const t = new Date(/([zZ]|[+-]\d\d:?\d\d)$/.test(str) ? str : `${str}+08:00`).getTime();
+  return Number.isNaN(t) ? 0 : t;
+};
+export const portalOnline = (u) => { const t = lastSeenMs(u); return t > 0 && Date.now() - t < 3 * 60 * 1000; };
+export const seenText = (u) => {
+  const t = lastSeenMs(u);
+  if (!t) return "Never";
+  const m = Math.floor((Date.now() - t) / 60000);
+  if (m < 3) return "Just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 1440) return `${Math.floor(m / 60)} h ago`;
+  return new Date(t).toLocaleDateString("en-PH", { month: "short", day: "numeric" });
+};
+
 export const todayManila = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 export const fmtTime = (v) => (v ? new Date(v).toLocaleTimeString("en-PH") : "—");
 export const esc = (s) =>
@@ -331,6 +350,7 @@ const PATHS = {
   logout: <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>,
   nfc: <path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" />,
+  heart: <path d="M12 20s-7-4.4-9.3-8.8A5.2 5.2 0 0 1 12 6.3a5.2 5.2 0 0 1 9.3 4.9C19 15.6 12 20 12 20z" />,
   globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>,
   warn: <><path d="M12 3 2 20h20L12 3z" /><path d="M12 10v5M12 18h.01" /></>,
   info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
@@ -748,7 +768,7 @@ export function AccountSecurity({ user }) {
 
   return (
     <section className="ix-card sec-card">
-      <h3 className="ipv-title">Account security</h3>
+      <h3 className="ipv-title"><span>Account security</span></h3>
       <Msg msg={note} />
 
       <div className="sec-row2">
@@ -1090,7 +1110,7 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
 }
 
 /* Requirements at a glance: Pre / During / Post side by side, one line per requirement with its status. */
-function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFiles = null }) {
+function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFiles = null, compact = false }) {
   const [movs, setMovs] = useState(null);
   const [reports, setReports] = useState([]);
   const [open, setOpen] = useState(false);
@@ -1127,38 +1147,67 @@ function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFil
   const cnt = { approved: 0, pending: 0, rejected: 0, none: 0 };
   phases.forEach((p) => p.rows.forEach((x) => { cnt[x.st] += 1; }));
 
-  return (
-    <div className="ipa-card ipa-reqb">
-      <div className="ipa-card-h">
-        <h3>Requirements</h3>
-        <span className="ipa-muted"><b>{movs ? okAll : "–"} of {totalAll}</b> approved</span>
-        <button type="button" className="ipa-link" onClick={() => (onReviewFiles ? onReviewFiles() : setOpen(true))}>{canViewFiles ? "Review files ›" : "Details ›"}</button>
-      </div>
+  const sumRow = (ph) => {
+    const rows = phases.find((x) => x.ph === ph).rows;
+    const ok = rows.filter((x) => x.st === "approved").length;
+    const wait = rows.filter((x) => x.st === "pending").length;
+    return { ph, total: rows.length, ok, wait, miss: rows.length - ok - wait };
+  };
+  const sums = ["pre", "during", "post"].map(sumRow);
+  const missAll = totalAll - okAll - cnt.pending;
+  const openFiles = () => (onReviewFiles ? onReviewFiles() : setOpen(true));
+  const detailModal = open && (
+    <Modal title="Requirements" sub={intern?.name} wide onClose={() => setOpen(false)}>
+      <RequirementChecklist internId={internId} intern={intern} canViewFiles={canViewFiles} />
+    </Modal>
+  );
+
+  // compact tiles for the intern profile's summary column
+  if (compact) return (
+    <div className="ipx-card ipx-grow ipx-req">
+      <div className="ipx-sh"><h3>Requirements</h3>{movs && <em>{okAll}/{totalAll}</em>}</div>
       {!movs ? <Spinner /> : (
-        <div className="ipa-reqcols">
-          {phases.map(({ ph, rows, ok }) => (
-            <div key={ph} className="ipa-reqcol">
-              <div className="ipa-reqcol-h">
-                <b>{PHASE_LABEL[ph].replace("-internship", "-internship").toUpperCase()}</b>
-                <span>{ok}/{rows.length}</span>
+        <div className="ipx-phs">
+          {sums.map((r) => {
+            const pct = r.total ? Math.round((r.ok / r.total) * 100) : 0;
+            const done = r.miss === 0 && r.wait === 0;
+            return (
+              <div className="ipx-ph" key={r.ph}>
+                <div className="ipx-ph-t">
+                  <span>{PHASE_LABEL[r.ph]}</span>
+                  <b className={done ? "ok" : r.miss > 0 ? "bad" : "wait"}>
+                    {r.ok}/{r.total}{r.wait > 0 ? ` · ${r.wait} waiting` : ""}{r.miss > 0 ? ` · ${r.miss} missing` : ""}
+                  </b>
+                </div>
+                <div className="ipx-bar"><i className={done ? "ok" : ""} style={{ width: `${pct}%` }} /></div>
               </div>
-              <ul>
-                {rows.map(({ r, st }) => (
-                  <li key={r.key} className={st} title={r.label}>
-                    <span className={`ipa-chip2 ${st}`}>{{ approved: "Approved", pending: "Waiting", rejected: "Rejected", none: "Missing" }[st]}</span>
-                    <span className="ipa-rl">{r.label}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
-      {open && (
-        <Modal title="Requirements" sub={intern?.name} wide onClose={() => setOpen(false)}>
-          <RequirementChecklist internId={internId} intern={intern} canViewFiles={canViewFiles} />
-        </Modal>
+      <button type="button" className="ipx-btn" onClick={openFiles}>{canViewFiles ? "Review submitted files" : "View requirements"}</button>
+      {detailModal}
+    </div>
+  );
+
+  return (
+    <div className="ipa-sect ipa-reqb">
+      <div className="ipa-sh"><b>Requirements</b><em>{movs ? `${okAll} of ${totalAll} approved` : ""}</em>
+        <button type="button" className="ipa-lk" onClick={openFiles}>{canViewFiles ? "Review files ›" : "Details ›"}</button></div>
+      {!movs ? <Spinner /> : (
+        <table className="ipa-tb"><thead><tr><th>Phase</th><th>Approved</th><th>Waiting</th><th>Status</th></tr></thead>
+          <tbody>
+            {sums.map((r) => (
+              <tr key={r.ph}>
+                <td>{PHASE_LABEL[r.ph]}</td>
+                <td><b>{r.ok}</b> / {r.total}</td>
+                <td>{r.wait || "—"}</td>
+                <td>{r.miss > 0 ? <span className="ipa-ch bad">{r.miss} missing</span> : <span className="ipa-ch ok">Complete</span>}</td>
+              </tr>
+            ))}
+          </tbody></table>
       )}
+      {detailModal}
     </div>
   );
 }
@@ -1195,7 +1244,7 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
       .then((list) => {
         if (!alive || !Array.isArray(list)) return;
         const map = {};
-        list.forEach((e) => { map[String(e.date).slice(0, 10)] = e.event_name || "School event"; });
+        list.forEach((e) => { map[String(e.date).slice(0, 10)] = e.event_name || "Excused"; });
         setExcused(map);
       }).catch(() => {});
     return () => { alive = false; };
@@ -1220,235 +1269,649 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
   const short = (t) => (t ? fmtTime(t).replace(/:\d{2}(?=\s?[AP]M)/i, "") : "—");
   const STATE_TXT = { none: "No record", future: "—", wait: "Not in yet" };
 
-  return (
-    <section className="ipa" aria-label={`Profile of ${u.name}`}>
-      <style>{IPA_CSS}</style>
-      <aside className="ipa-rail">
-        <Avatar name={u.name} photo={u.photo} size={96} status={isIn ? "on" : "off"} />
-        <h2>{u.name}</h2>
-        <div className="ipa-sub">{studentId} · {u.program || "—"}</div>
-        <div className="ipa-hte" title={u.placement || ""}>{u.placement || "No placement"}</div>
-        <span className={isIn ? "ipa-pill in" : tIn ? "ipa-pill done" : "ipa-pill out"}>
-          <i />{isIn ? "On duty" : tIn ? "Timed out" : "Not in yet"}
-        </span>
-        <div className="ipa-tiles">
-          <div><small>Time in</small><b>{tIn ? fmtTime(tIn) : "—"}</b></div>
-          <div><small>Time out</small><b>{isIn ? "Still in" : tOut ? fmtTime(tOut) : "—"}</b></div>
-          <div><small>Last record</small><b>{lastDate ? fmtDate(lastDate) : "—"}</b></div>
-        </div>
-        <div className="ipa-sec">Internship</div>
-        <div className="ipa-plc"><PlacementField u={u} /></div>
-        <div className="ipa-dtr"><DtrModeField u={u} /></div>
-        <div className="ipa-sec">Contact</div>
-        <div className="ipa-kv"><b>{u.contact_number || "—"}</b></div>
-        <div className="ipa-sec">Emergency contact</div>
-        <div className="ipa-kv"><b>{emergencyWho || "Not set"}</b>{u.emergency_contact_number && <span>{u.emergency_contact_number}</span>}</div>
-      </aside>
 
-      <div className="ipa-main">
-        <div className="ipa-card">
-          <div className="ipa-card-h">
-            <h3>Attendance summary</h3>
-            {onViewRecords && <button type="button" className="ipa-btn" onClick={onViewRecords}>View all records ›</button>}
+  const over = Math.round((total - required) * 10) / 10;
+  const bday = u.date_of_birth
+    ? new Date(String(u.date_of_birth).slice(0, 10) + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
+    : null;
+  const isOnline = portalOnline(u);
+  const field = (k, v, wide) => (
+    <div className={wide ? "ipx-f wide" : "ipx-f"} key={k}><small>{k}</small><b>{v || "—"}</b></div>
+  );
+  const DAY_TXT = { present: "Present", excused: "Excused", none: "No record", wait: "Not in yet", future: "Upcoming" };
+
+  return (
+    <section className="ipx" aria-label={`Profile of ${u.name}`}>
+      <style>{IPA_CSS + IPX_CSS}</style>
+
+      {/* header */}
+      <div className="ipx-hero">
+        <div className="ipx-band" aria-hidden="true"><i /><i /><i /></div>
+        <div className="ipx-hb">
+          <div className="ipx-av"><Avatar name={u.name} photo={u.photo} size={80} /></div>
+          <div className="ipx-who">
+            <div className="ipx-nm">
+              <h2>{u.name}</h2>
+              <span className={isOnline ? "ipx-pill on" : "ipx-pill"}><u />{isOnline ? "Online now" : `Offline · ${seenText(u)}`}</span>
+            </div>
+            <div className="ipx-tags">
+              <span>#{studentId}</span>
+              {u.program && <span>{u.program}</span>}
+              <span>{u.placement || "No placement"}</span>
+              <span className="b">{MODALITIES[modalityOf(u)]} · {SCOPES[scopeOf(u)]}</span>
+              {pct >= 100 && <span className="g">Hours complete</span>}
+              <span className={u.nfc_uid ? "" : "w"}><Icon name="card" size={13} /> {u.nfc_uid ? "Card linked" : "No card yet"}</span>
+            </div>
           </div>
-          <div className="ipa-prog">
-            <div className="ipa-prog-row"><span>OJT progress</span><span><b>{total}h</b> of {required}h · {pct}% · {left}h left</span></div>
-            <div className="ipa-bar"><i style={{ width: `${Math.max(1, pct)}%` }} /></div>
+          {onViewRecords && <button type="button" className="ipx-btn ghost" onClick={onViewRecords}>View records</button>}
+        </div>
+      </div>
+
+      <div className="ipx-cols">
+        {/* LEFT: intern information */}
+        <div className="ipx-main">
+          <div className="ipx-card">
+            <div className="ipx-sh"><span className="ipx-ic"><Icon name="user" size={18} /></span><h3>Personal information</h3></div>
+            <div className="ipx-fg two">
+              {field("Student ID", studentId)}
+              {field("Birthday", bday)}
+              {field("Phone", u.contact_number)}
+              {field("Email", u.email)}
+              {field("Address", u.address, true)}
+            </div>
           </div>
-          <div className="ipa-stats">
-            <div><b>{days}</b><small>Days present</small></div>
-            <div><b>{onsite}</b><small>Onsite taps</small></div>
-            <div><b>{online}</b><small>Online logs</small></div>
-            <div><b>{total + "h"}</b><small>Rendered</small></div>
+
+          <div className="ipx-card ipx-grow">
+            <div className="ipx-sh big"><span className="ipx-ic solid"><Icon name="briefcase" size={20} /></span>
+              <div><h3>Internship details</h3><em>Placement and time record setup</em></div></div>
+            <div className="ipx-plc">
+              <div><small>Placement (HTE)</small><b>{u.placement || "No placement yet"}</b></div>
+              <div className="r"><small>HTE supervisor</small><strong>{u.supervisor_name || "Not assigned yet"}</strong></div>
+            </div>
+            <div className="ipx-tiles">
+              {[
+                ["Program", u.program],
+                ["Semester", u.semester],
+                ["Required hours", `${required} hours`],
+                ["Modality", MODALITIES[modalityOf(u)]],
+                ["Scope", SCOPES[scopeOf(u)]],
+                ["Time record", dtrModeOf(u) === "four" ? "4 taps (AM/PM)" : "2 taps (in and out)"],
+              ].map(([k, v]) => <div key={k}><small>{k}</small><b>{v || "—"}</b></div>)}
+            </div>
           </div>
-          <div className="ipa-card-h ipa-wk-h"><h3>This week</h3><span className="ipa-muted">{weekTotal}h so far</span></div>
-          <div className="ipa-week">
-            {week.map((w) => (
-              <div key={w.key} className={`ipa-day ${w.state}${w.isToday ? " today" : ""}`}>
-                <div className="ipa-day-top"><small>{w.lbl}</small><em>{w.num}</em></div>
-                {w.state === "present" ? (
-                  <>
-                    <strong>{w.h}<u>h</u></strong>
-                    <span className="ipa-day-bar"><i style={{ width: `${Math.min(100, (w.h / 8) * 100)}%` }} /></span>
-                    <span className="ipa-day-time">{short(w.first)}{w.lastOut ? ` – ${short(w.lastOut)}` : " – in"}</span>
-                  </>
-                ) : w.state === "excused" ? (
-                  <><strong className="txt">Excused</strong><span className="ipa-day-time" title={w.ev}>School event</span></>
-                ) : <strong className="txt">{STATE_TXT[w.state]}</strong>}
-              </div>
-            ))}
+
+          <div className="ipx-emg">
+            <span className="ipx-ic"><Icon name="heart" size={18} /></span>
+            <div className="ipx-emg-t">
+              <small>Emergency contact</small>
+              <b>{emergencyWho || "Not set"}{u.emergency_contact_number ? <em> · {u.emergency_contact_number}</em> : null}</b>
+            </div>
+            {u.emergency_contact_number && <a className="ipx-btn ghost" href={`tel:${u.emergency_contact_number}`}>Call</a>}
           </div>
         </div>
-        <RequirementsBoard internId={u.id} intern={u} canViewFiles={canViewFiles} onReviewFiles={onReviewFiles} />
+
+        {/* RIGHT: compact summary */}
+        <div className="ipx-side">
+          <div className="ipx-card sm">
+            <div className="ipx-sh"><h3>Attendance</h3>
+              {onViewRecords && <button type="button" className="ipa-lk" onClick={onViewRecords}>All records ›</button>}</div>
+            <div className="ipx-ring">
+              <Ring pct={pct} size={54} stroke={7} track="#fbe3d6" color="#e8582a"><strong>{pct}%</strong></Ring>
+              <div>
+                <b>{total}h <em>/ {required}h</em></b>
+                {over > 0 ? <small className="ok">+{over}h beyond required</small> : <small>{left}h left</small>}
+              </div>
+            </div>
+            <div className="ipx-mini">
+              <div><b>{days}</b>present</div>
+              <div><b>{onsite}</b>on-site</div>
+              <div><b>{online}</b>online</div>
+            </div>
+          </div>
+
+          <div className="ipx-card sm">
+            <div className="ipx-sh"><h3>This week</h3><em>{weekTotal}h so far</em></div>
+            <div className="ipx-today"><span>Today · In <b>{tIn ? short(tIn) : "—"}</b></span><span>Out <b>{isIn ? "Still in" : tOut ? short(tOut) : "—"}</b></span></div>
+            <div className="ipx-week">
+              {week.map((w) => (
+                <div key={w.key} className={`ipx-day ${w.state}${w.isToday ? " today" : ""}`} title={w.ev || DAY_TXT[w.state]}>
+                  <small>{w.lbl}</small>
+                  <b>{w.num}</b>
+                  {w.state === "present" ? <em>{w.h}h</em> : <i aria-label={DAY_TXT[w.state]} />}
+                </div>
+              ))}
+            </div>
+            <div className="ipx-last">Last record · {lastDate ? fmtDate(lastDate) : "none yet"}</div>
+          </div>
+
+          <RequirementsBoard internId={u.id} intern={u} canViewFiles={canViewFiles} onReviewFiles={onReviewFiles} compact />
+        </div>
       </div>
     </section>
   );
 }
 
 const IPA_CSS = `
-.ipa { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
-.ipa-rail { background: #fff7f3; border: 1px solid #fbd5c3; border-radius: 16px; padding: 22px 18px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; min-width: 0; }
-.ipa-rail .ix-av { border: 3px solid #fff; box-shadow: none !important; }
-.ipa-rail .ix-av:has(img) { background: #fff !important; }
-.ipa-rail .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-.ipa-rail h2 { margin: 6px 0 0; font-size: 19px; font-weight: 800; color: #1b1f2a; line-height: 1.2; }
-.ipa-sub { font-size: 12.5px; color: #6b7280; }
-.ipa-hte { font-size: 12.5px; font-weight: 600; color: #1b1f2a; overflow-wrap: anywhere; }
-.ipa-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; margin: 4px 0 2px; }
-.ipa-pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.ipa-pill.in { background: #e3f4e5; color: #256029; }
-.ipa-pill.out { background: #fff1e0; color: #b45309; }
+.ipa { display: flex; flex-direction: column; gap: 14px; }
+.ipa-card { background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; min-width: 0; padding: 0; overflow: hidden; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 22px -16px rgba(16,24,40,.22); }
+.ipa-card-h { display: flex; align-items: center; gap: 12px; padding: 0 20px; min-height: 56px; background: linear-gradient(90deg, #d94f1e, #e8582a 60%, #ef6a3a); color: #fff; }
+.ipa-card-h h3 { margin: 0; margin-right: auto; display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; color: #fff; }
+.ipa-card-h h3 > span { display: inline-block; }
+.ipa-muted { font-size: 12.5px; color: rgba(255,255,255,.88); }
+.ipa-btn { height: 32px; padding: 0 14px; border: 1px solid rgba(255,255,255,.75); border-radius: 8px; background: transparent; color: #fff; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.ipa-btn:hover { background: rgba(255,255,255,.18); }
+/* record card */
+.ipa-rb { display: grid; grid-template-columns: minmax(270px, 1.15fr) repeat(3, minmax(0, 1fr)); }
+.ipa-rb > * { border-left: 1px solid #eef0f3; min-width: 0; }
+.ipa-rb > *:first-child { border-left: 0; }
+.ipa-idb { display: flex; gap: 16px; align-items: center; padding: 18px 20px; background: linear-gradient(135deg, #fff8f4 0%, #fff 70%); }
+.ipa-idb .ix-av { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #f6c9b3 !important; }
+.ipa-idb .ix-av { flex: none; }
+.ipa-idb .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.ipa-idt { min-width: 0; }
+.ipa-idt h2 { margin: 0; font-size: 17px; font-weight: 700; color: #1f2430; line-height: 1.25; overflow-wrap: anywhere; }
+.ipa-sub { font-size: 12.5px; color: #6b7280; margin-top: 2px; overflow-wrap: anywhere; }
+.ipa-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; padding: 3px 11px; border-radius: 999px; margin-top: 8px; }
+.ipa-pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ipa-pill.in { background: #e6f7ee; color: #15803d; }
+.ipa-pill.out { background: #fff4e0; color: #b45309; }
 .ipa-pill.done { background: #eef2ff; color: #4338ca; }
-.ipa-tiles { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 6px 0 4px; }
-.ipa-tiles > div { background: #fff; border-radius: 10px; padding: 8px 4px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ipa-tiles small { font-size: 10.5px; color: #6b7280; }
-.ipa-tiles b { font-size: 12px; color: #1b1f2a; font-weight: 700; }
-.ipa-sec { width: 100%; text-align: left; margin-top: 12px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #9a8478; }
-.ipa-plc, .ipa-dtr { width: 100%; text-align: left; font-size: 13px; }
-.plc-set { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.plc-set select, .ipa-dtr .dtr-set select { font: inherit; font-size: 12.5px; font-weight: 600; height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid #f1c7b2; background: #fff; color: #1b1f2a; cursor: pointer; max-width: 100%; }
+.ipa-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ipa-tiles > div { padding: 12px 14px; border-left: 1px solid #eef0f3; min-width: 0; }
+.ipa-tiles > div:first-child { border-left: 0; }
+.ipa-tiles small { display: block; font-size: 11.5px; color: #6b7280; }
+.ipa-tiles b { font-size: 13px; font-weight: 700; color: #1f2430; }
+.ipa-blk { padding: 16px 18px 10px; }
+.ipa-sec { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #9aa1ad; margin-bottom: 2px; }
+.ipa-rows { display: flex; flex-direction: column; }
+.ipa-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; border-top: 1px solid #eef0f3; min-width: 0; }
+.ipa-row:first-child { border-top: 0; }
+.ipa-row > span { font-size: 12.5px; color: #6b7280; flex: none; }
+.ipa-row > div { text-align: right; font-weight: 600; font-size: 13px; color: #1f2430; min-width: 0; overflow-wrap: anywhere; display: flex; flex-direction: column; align-items: flex-end; }
+.ipa-row small { font-weight: 500; color: #6b7280; font-size: 12.5px; }
+.plc-set { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.plc-set select, .ipa-dtr .dtr-set select { font: inherit; font-size: 12.5px; font-weight: 600; height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid #e3e5ea; background: #fff; color: #1f2430; cursor: pointer; max-width: 100%; }
+.ipa-dtr .dtr-set { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .plc-set em { font-style: normal; font-size: 11.5px; font-weight: 700; } .plc-set em.ok { color: #15803d; } .plc-set em.err { color: #b91c1c; }
 .plc-ro { font-weight: 600; }
-.ipa-kv { width: 100%; text-align: left; display: flex; flex-direction: column; font-size: 13px; color: #1b1f2a; overflow-wrap: anywhere; }
-.ipa-kv span { color: #6b7280; font-size: 12.5px; }
-.ipa-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.ipa-card { background: #fff; border: 1px solid #e8ebf0; border-radius: 16px; padding: 18px 20px; min-width: 0; }
-.ipa-card-h { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.ipa-card-h h3 { margin: 0; font-size: 15px; font-weight: 800; color: #1b1f2a; margin-right: auto; }
-.ipa-link { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; font-weight: 700; color: #e8582a; cursor: pointer; white-space: nowrap; }
-.ipa-btn { border: 1px solid #f1c7b2; background: #fff6f2; color: #e8582a; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 9px; cursor: pointer; }
-.ipa-btn:hover { background: #ffe9df; }
-.ipa-muted { font-size: 12.5px; color: #6b7280; }
-.ipa-prog-row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: #6b7280; margin-bottom: 7px; }
-.ipa-prog-row b { color: #1b1f2a; }
-.ipa-bar { height: 10px; border-radius: 5px; background: #f3e6df; overflow: hidden; }
-.ipa-bar i { display: block; height: 100%; border-radius: inherit; background: #e8582a; }
-.ipa-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
-.ipa-stats > div { background: #fff6f2; border-radius: 12px; padding: 11px 14px; display: flex; flex-direction: column; gap: 2px; }
-.ipa-stats b { font-size: 21px; font-weight: 800; color: #e8582a; line-height: 1.1; }
-.ipa-stats small { font-size: 12px; font-weight: 600; color: #7c4a2e; }
-.ipa-wk-h { margin: 18px 0 10px; }
-.ipa-week { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-.ipa-day { border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; background: #f4f5f8; min-width: 0; border: 1.5px solid transparent; }
+/* right side */
+.ipa-ii { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 22px; align-items: stretch; background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; padding: 16px; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 22px -16px rgba(16,24,40,.22); }
+.ipa-photo { width: 176px; min-height: 190px; border-radius: 12px 12px 56px 56px; overflow: hidden; border: 2px solid #f1b99f; background: #fde3d6; box-sizing: border-box; align-self: stretch; }
+.ipa-photo .ix-av { width: 100% !important; height: 100% !important; min-height: 186px; border-radius: 0 !important; box-shadow: none !important; border: 0 !important; background: #fde3d6 !important; font-size: 60px !important; overflow: hidden; }
+.ipa-photo .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 0 !important; }
+.ipa-iic { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.ipa-iih { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 16px; border-radius: 9px; background: #97351a; color: #fff; font-size: 16px; font-weight: 600; }
+.ipa-iih .ipa-pill { margin: 0 0 0 auto; padding: 3px 11px; background: #fff; }
+.ipa-nm { padding: 0 4px; }
+.ipa-nm h2 { margin: 0; font-size: 22px; font-weight: 700; color: #1f2430; line-height: 1.25; }
+.ipa-nm span { display: block; margin-top: 2px; font-size: 13px; color: #6b7280; }
+.ipa-fg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid #eef0f3; margin-top: auto; }
+.ipa-fg > div { padding: 12px 4px 4px 14px; border-left: 1px solid #eef0f3; min-width: 0; }
+.ipa-fg > div:nth-child(4n+1) { border-left: 0; padding-left: 4px; }
+.ipa-fg > div:nth-child(n+5) { border-top: 1px solid #eef0f3; }
+.ipa-fg small { display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #9aa1ad; margin-bottom: 2px; }
+.ipa-fg b { font-size: 14px; font-weight: 600; color: #1f2430; overflow-wrap: anywhere; }
+.ipa-fg em { display: block; font-style: normal; font-size: 12px; color: #6b7280; }
+.ipa-pill u { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; text-decoration: none; }
+@media (max-width: 900px) { .ipa-ii { grid-template-columns: 1fr; } .ipa-photo { width: 140px; min-height: 150px; } .ipa-fg { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ipa-fg > div:nth-child(n) { border-left: 0; padding-left: 4px; } }
+.ipa-hs { margin-left: 8px; font-style: normal; font-size: 12.5px; font-weight: 500; opacity: .9; }
+.ipa-phases { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 14px 18px 16px; }
+.ipa-ph { border: 1px solid #e7e9ee; border-radius: 12px; padding: 12px 14px; background: #fafbfc; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ipa-ph-t { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; color: #1f2430; }
+.ipa-ph-t b { font-size: 20px; color: #1f2430; } .ipa-ph-t small { font-size: 12px; color: #6b7280; font-weight: 500; }
+.ipa-ph-c { display: flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 800px) { .ipa-phases { grid-template-columns: 1fr; } }
+.ipa-info { display: flex; gap: 26px; align-items: flex-start; padding: 22px 24px; }
+.ipa-info .ix-av { flex: none; box-shadow: 0 0 0 3px #fff, 0 0 0 5px #f6c9b3 !important; }
+.ipa-info .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.ipa-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 28px; font-size: 13.5px; }
+.ipa-grid > div { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.ipa-grid > div.wide { grid-column: span 2; }
+.ipa-grid i { font-style: normal; color: #6b7280; }
+.ipa-grid b { color: #1f2430; font-weight: 700; }
+.ipa-pill u { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; text-decoration: none; }
+.ipa-grid .ipa-pill { margin-top: 0; padding: 2px 10px; }
+@media (max-width: 1250px) { .ipa-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .ipa-info { flex-direction: column; } .ipa-grid { grid-template-columns: 1fr; } .ipa-grid > div.wide { grid-column: auto; } }
+.ipa-two { display: contents; }
+.ipa-main { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.ipa-two > .ipa-card:first-child { order: 1; }
+.ipa-main > .ipa-card { order: 2; }
+.ipa-two > .ipa-card:last-child { order: 3; grid-column: 1 / -1; }
+@media (max-width: 1250px) { .ipa-main { grid-template-columns: 1fr; } }
+.ipa-prog { padding: 16px 18px 0; }
+.ipa-prog-row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: #6b7280; margin-bottom: 8px; }
+.ipa-prog-row b { color: #1f2430; }
+.ipa-bar { height: 10px; border-radius: 9px; background: #f1ece8; overflow: hidden; }
+.ipa-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f08a5d, #e8582a); }
+.ipa-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 16px 18px 18px; border: 1px solid #e7e9ee; border-radius: 12px; background: #fafbfc; }
+.ipa-stats > div { display: flex; gap: 11px; align-items: center; padding: 12px 14px; border-left: 1px solid #e7e9ee; min-width: 0; }
+.ipa-stats > div:first-child { border-left: 0; }
+.ipa-ic { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; background: #fdeee5; color: #e8582a; }
+.ipa-ic.b { background: #e8f0ff; color: #2f5fd0; } .ipa-ic.v { background: #f1eaff; color: #6d3fc4; } .ipa-ic.g { background: #e6f7ee; color: #15803d; }
+.ipa-ic svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ipa-stats b { display: block; font-size: 20px; font-weight: 700; color: #1f2430; line-height: 1.1; }
+.ipa-stats small { font-size: 12px; color: #6b7280; }
+.ipa-week { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding: 16px 18px 18px; }
+.ipa-day { border: 1px solid #e7e9ee; border-radius: 12px; padding: 12px 13px; display: flex; flex-direction: column; gap: 6px; min-width: 0; background: #f7f8fa; }
 .ipa-day-top { display: flex; align-items: baseline; justify-content: space-between; }
-.ipa-day-top small { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #6b7280; }
-.ipa-day-top em { font-style: normal; font-size: 12px; font-weight: 700; color: #6b7280; }
-.ipa-day strong { font-size: 26px; font-weight: 800; line-height: 1; color: #1b1f2a; }
-.ipa-day strong u { text-decoration: none; font-size: 14px; font-weight: 700; margin-left: 1px; }
-.ipa-day strong.txt { font-size: 14px; font-weight: 700; color: #6b7280; padding: 6px 0 2px; }
-.ipa-day-bar { height: 5px; border-radius: 3px; background: rgba(0,0,0,.08); overflow: hidden; }
+.ipa-day-top small { font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: #6b7280; }
+.ipa-day-top em { font-style: normal; font-size: 11.5px; font-weight: 600; color: #6b7280; }
+.ipa-day strong { font-size: 22px; font-weight: 700; line-height: 1; color: #1f2430; }
+.ipa-day strong u { text-decoration: none; font-size: 13px; font-weight: 600; margin-left: 1px; }
+.ipa-day strong.txt { font-size: 13px; font-weight: 600; color: #1f2430; padding: 4px 0 2px; }
+.ipa-day-bar { height: 5px; border-radius: 3px; background: #eef0f3; overflow: hidden; }
 .ipa-day-bar i { display: block; height: 100%; background: #2e9e43; border-radius: inherit; }
-.ipa-day-time { font-size: 11.5px; font-weight: 600; color: #4b5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ipa-day.present { background: #f1faf2; } .ipa-day.present strong { color: #1b6a2a; }
-.ipa-day.excused { background: #f1eaff; } .ipa-day.excused strong, .ipa-day.excused .ipa-day-time { color: #6d3fc4; }
-.ipa-day.today { border-color: #e8582a; }
+.ipa-day-time { font-size: 11px; font-weight: 600; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ipa-day.present { border-color: #cfe9d4; background: #f0faf2; } .ipa-day.present strong { color: #15803d; }
+.ipa-day.excused { border-color: #dccaf7; background: #f5efff; } .ipa-day.excused strong, .ipa-day.excused .ipa-day-time { color: #6d3fc4; }
+.ipa-day.today { border-color: #e8582a; background: #fdeee5; }
 .ipa-day.future strong { color: #9ca3af; }
-.ipa-reqcols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.ipa-reqcol-h { display: flex; justify-content: space-between; align-items: baseline; padding: 0 6px 6px; font-size: 11px; font-weight: 700; letter-spacing: .05em; color: #94a3b8; }
-.ipa-reqcol-h span { letter-spacing: 0; }
-.ipa-reqcol ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.ipa-reqcol li { display: flex; align-items: center; gap: 9px; padding: 7px 6px; border-radius: 8px; font-size: 13px; color: #0f172a; min-width: 0; line-height: 1.25; }
-.ipa-reqcol li:hover { background: #f8f9fb; }
-.ipa-chip2 { flex: none; width: 66px; text-align: center; font-size: 11px; font-weight: 700; padding: 3px 0; border-radius: 6px; }
-.ipa-chip2.approved { background: #e9f8ef; color: #15803d; }
-.ipa-chip2.pending { background: #fff4e5; color: #b45309; }
-.ipa-chip2.rejected { background: #fef2f2; color: #b91c1c; }
-.ipa-chip2.none { background: #f3f4f6; color: #94a3b8; }
-.ipa-rl { min-width: 0; flex: 1; overflow-wrap: anywhere; }
-.ipa-reqb .ipa-card-h { flex-wrap: wrap; }
-@media (max-width: 1100px) { .ipa { grid-template-columns: 1fr; } .ipa-reqcols { grid-template-columns: 1fr; } }
+/* ── sidebar profile (reference style) ── */
+.ipa.ipa2 { display: grid; grid-template-columns: clamp(300px, 26vw, 380px) minmax(0, 1fr); gap: 0; background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; overflow: hidden; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 22px -16px rgba(16,24,40,.22); }
+.ipa-side { padding: 18px 20px; border-right: 1px solid #e7e9ee; min-width: 0; }
+.ipa-p1 { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+.ipa-phw { flex: none; width: 76px; height: 76px; border-radius: 14px; padding: 0; border: 0; overflow: hidden; background: #fde3d6; }
+.ipa-phw .ix-av { width: 100% !important; height: 100% !important; border-radius: 0 !important; border: 0 !important; box-shadow: none !important; background: #fde3d6 !important; }
+.ipa-phw .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 0 !important; }
+.ipa-pn { min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.ipa-pn h2 { margin: 0; font-size: 16px; font-weight: 700; color: #1f2430; line-height: 1.25; overflow-wrap: anywhere; }
+.ipa-id { font-size: 12px; color: #6b7280; }
+.ipa-pn .ipa-pill { margin-top: 4px; }
+.ipa-side h4 { margin: 12px 0 6px; font-size: 13px; font-weight: 700; color: #1f2430; }
+.ipa-side hr { border: 0; border-top: 1px solid #e7e9ee; margin: 12px 0 0; }
+.ipa-li { display: flex; gap: 6px; padding: 3px 0; font-size: 12.5px; line-height: 1.35; }
+.ipa-li i { font-style: normal; color: #6b7280; flex: none; width: 84px; }
+.ipa-li b { font-weight: 600; color: #1f2430; overflow-wrap: anywhere; word-break: break-word; min-width: 0; flex: 1; }
+.ipa-rt { padding: 6px 22px 12px; min-width: 0; display: flex; flex-direction: column; }
+.ipa-sect { padding: 14px 0 6px; }
+.ipa-sect + .ipa-sect { border-top: 1px solid #eef0f3; }
+.ipa-sh { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.ipa-sh b { font-size: 14.5px; font-weight: 600; color: #1f2430; }
+.ipa-sh em { font-style: normal; font-size: 12px; color: #6b7280; }
+.ipa-lk { margin-left: auto; border: 0; background: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 600; color: #e8582a; cursor: pointer; }
+.ipa-lk:hover { text-decoration: underline; }
+.ipa-sum { font-size: 12.5px; color: #6b7280; }
+.ipa-sum b { color: #1f2430; font-weight: 600; }
+.ipa-dot { display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: #c4c8cf; margin: 0 8px; vertical-align: middle; }
+.ipa-sect .ipa-bar { margin-top: 8px; height: 7px; }
+.ipa-tb { width: 100%; border-collapse: collapse; }
+.ipa-tb th { text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9aa1ad; padding: 7px 8px 7px 0; border-bottom: 1px solid #e7e9ee; }
+.ipa-tb td { padding: 8px 8px 8px 0; border-bottom: 1px solid #f0f1f4; font-size: 12.5px; color: #1f2430; }
+.ipa-tb tr:last-child td { border-bottom: 0; }
+.ipa-tb tr.today td { font-weight: 600; background: #fff8f4; }
+.ipa-ch { display: inline-block; border-radius: 99px; padding: 1px 10px; font-size: 11.5px; font-weight: 600; }
+.ipa-ch.ok { background: #e6f7ee; color: #15803d; } .ipa-ch.bad { background: #fdeaea; color: #b91c1c; } .ipa-ch.ex { background: #f1eaff; color: #6d3fc4; }
+.ipa-pill.off { background: #f1f2f4; color: #6b7280; }
+.ipa-phw .ix-av, .ipa-phw .ix-av::before, .ipa-phw .ix-av::after { outline: 0 !important; border: 0 !important; box-shadow: none !important; }
+@media (max-width: 900px) { .ipa.ipa2 { grid-template-columns: 1fr; } .ipa-side { border-right: 0; border-bottom: 1px solid #e7e9ee; } }
+/* compact pass */
+.ipa-main, .ipa-page { gap: 10px !important; }
+.ipa-ii { grid-template-columns: 128px minmax(0, 1fr); gap: 16px; padding: 12px; }
+.ipa-photo { width: 128px; min-height: 0; border-radius: 10px 10px 40px 40px; }
+.ipa-photo .ix-av { min-height: 0; }
+.ipa-iic { gap: 6px; }
+.ipa-iih { height: 34px; font-size: 14.5px; border-radius: 8px; }
+.ipa-nm h2 { font-size: 18px; }
+.ipa-nm span { font-size: 12.5px; margin-top: 0; }
+.ipa-fg > div { padding: 7px 4px 3px 12px; }
+.ipa-fg > div:nth-child(4n+1) { padding-left: 4px; }
+.ipa-fg small { font-size: 10.5px; margin-bottom: 1px; }
+.ipa-fg b { font-size: 13px; }
+.ipa-fg em { font-size: 11.5px; }
+.ipa-card-h { min-height: 40px; padding: 0 16px; }
+.ipa-card-h h3 { font-size: 14.5px; }
+.ipa-btn { height: 26px; font-size: 11.5px; padding: 0 11px; }
+.ipa-week { padding: 10px 12px 12px; gap: 6px; }
+.ipa-day { padding: 8px 9px; gap: 4px; border-radius: 9px; }
+.ipa-day strong { font-size: 17px; }
+.ipa-day strong.txt { font-size: 12px; padding: 2px 0; }
+.ipa-prog { padding: 10px 14px 0; }
+.ipa-prog-row { font-size: 12px; margin-bottom: 5px; }
+.ipa-bar { height: 8px; }
+.ipa-stats { margin: 10px 14px 12px; }
+.ipa-stats > div { flex-direction: column; align-items: flex-start; gap: 0; padding: 8px 12px; }
+.ipa-ic { display: none; }
+.ipa-stats b { font-size: 17px; }
+.ipa-stats small { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ipa-phases { padding: 10px 14px 12px; gap: 10px; }
+.ipa-ph { padding: 9px 12px; gap: 6px; border-radius: 10px; }
+.ipa-ph-t b { font-size: 17px; }
+.ipa-meter { height: 6px; }
+/* simple intern information */
+.ipa-ii { display: block !important; padding: 0 !important; overflow: hidden; }
+.ipa-ihd { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 16px; background: #97351a; color: #fff; font-size: 14.5px; font-weight: 600; }
+.ipa-ib { display: grid; grid-template-columns: 230px minmax(0, 1fr); }
+.ipa-pp { background: #fdeee5; border-right: 1px solid #e7e9ee; padding: 18px 14px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; }
+.ipa-pp h2 { margin: 6px 0 0; font-size: 16px; font-weight: 700; color: #1f2430; }
+.ipa-pp > span { font-size: 12px; color: #6b7280; }
+.ipa-pp .ipa-pill { margin-top: 8px; background: #fff; border: 1px solid #f1b99f; padding: 2px 11px; }
+.ipa-photo { width: 170px !important; height: 170px !important; border-radius: 18px !important; border: 6px solid #e8582a !important; box-shadow: 0 0 0 4px #fff, 0 8px 18px -8px rgba(200,70,28,.55); background: #fde3d6 !important; margin-bottom: 6px; align-self: center !important; }
+.ipa-kv { width: 100%; height: 100%; border-collapse: collapse; align-self: stretch; }
+.ipa-kv td { padding: 11px 14px; border-top: 1px solid #e7e9ee; font-size: 13px; vertical-align: middle; }
+.ipa-kv tr:first-child td { border-top: 0; }
+.ipa-kv td.k { width: 15%; color: #6b7280; font-weight: 500; background: #f6f7f9; }
+.ipa-kv td.v { width: 35%; font-weight: 600; color: #1f2430; overflow-wrap: anywhere; }
+@media (max-width: 800px) { .ipa-ib { grid-template-columns: 1fr; } }
+/* photo: square, own border */
+.ipa-ii { grid-template-columns: 150px minmax(0, 1fr); align-items: start; }
+.ipa-photo { width: 150px; height: 150px; min-height: 0; align-self: start; border-radius: 14px; border: 3px solid #e8582a; background: #fde3d6; }
+.ipa-photo .ix-av { width: 100% !important; height: 100% !important; min-height: 0; }
+.ipa-photo .ix-av img { width: 100%; height: 100%; object-fit: cover; }
+.ipa-rqw { padding: 14px 18px 16px; }
+.ipa-rq { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ipa-rq th { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #9aa1ad; text-align: left; padding: 0 0 8px; }
+.ipa-rq td { padding: 10px 0; border-top: 1px solid #eef0f3; font-size: 13px; color: #1f2430; background: transparent !important; }
+.ipa-rq tr { background: transparent !important; }
+.ipa-rq th:first-child, .ipa-rq td:first-child { width: 22%; }
+.ipa-rq th:nth-child(2), .ipa-rq td:nth-child(2) { width: 28%; padding-right: 24px; }
+.ipa-rq .n { text-align: right; font-variant-numeric: tabular-nums; }
+.ipa-rq tr.tot td { background: #fafbfc !important; border-top: 1px solid #e7e9ee; font-weight: 700; }
+.ipa-ch { display: inline-block; min-width: 40px; text-align: center; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+.ipa-ch.ok { background: #e6f7ee; color: #15803d; } .ipa-ch.wait { background: #fff4e0; color: #b45309; } .ipa-ch.bad { background: #fdecec; color: #b91c1c; }
+.ipa-ch.strong { box-shadow: inset 0 0 0 1px currentColor; }
+.ipa-zero { color: #b6bcc6; }
+.ipa-meter { display: block; width: 100%; height: 8px; border-radius: 9px; background: #eef0f3; overflow: hidden; }
+.ipa-meter u { display: block; height: 100%; background: linear-gradient(90deg, #34a853, #15803d); border-radius: inherit; }
+.ipa-reqb .ipa-card-h { flex-wrap: nowrap; }
+
+
 @media (max-width: 760px) { .ipa-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ipa-week { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 `;
 
+/* ── Intern profile (monitor) — info on the left, compact summary on the right ── */
+const IPX_CSS = `
+.ipx { display: flex; flex-direction: column; gap: 12px; color: #1f2430; width: 100%; max-width: 1120px; }
+.ipx small, .ipx em { font-style: normal; }
+.ipx-card { background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
+.ipx-card.sm { padding: 13px 14px; gap: 10px; border-radius: 14px; }
+.ipx-sh { display: flex; align-items: center; gap: 10px; }
+.ipx-sh h3 { margin: 0; font-size: 14.5px; font-weight: 700; color: #1f2430; }
+.ipx-card.sm .ipx-sh h3 { font-size: 13.5px; font-weight: 600; }
+.ipx-sh > em { margin-left: auto; font-size: 12px; color: #6b7280; }
+.ipx-sh .ipa-lk { font-size: 12px; }
+.ipx-sh.big h3 { font-size: 16px; }
+.ipx-sh.big em { display: block; font-size: 12px; color: #6b7280; }
+.ipx-ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; background: #fdeee5; color: #c2410c; }
+.ipx-ic.solid { width: 36px; height: 36px; border-radius: 10px; background: #e8582a; color: #fff; }
+.ipx-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 14px; border: 0; border-radius: 10px; background: #f4f5f7; color: #1f2430; font: inherit; font-size: 12.5px; font-weight: 600; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.ipx-btn:hover { background: #eceef2; }
+.ipx-btn.ghost { background: #fff; border: 1px solid #e3e5ea; }
+.ipx-btn.ghost:hover { background: #fafbfc; }
+
+/* header */
+.ipx-hero { background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; overflow: hidden; }
+.ipx-band { position: relative; height: 64px; background: #fde6da; overflow: hidden; }
+.ipx-band i { position: absolute; border-radius: 50%; }
+.ipx-band i:nth-child(1) { width: 280px; height: 280px; right: 6%; top: -170px; background: #f9d3be; }
+.ipx-band i:nth-child(2) { width: 180px; height: 180px; right: 22%; top: 40px; background: #fbdccb; }
+.ipx-band i:nth-child(3) { width: 92px; height: 92px; right: 2%; top: 58px; background: #f6c2a5; }
+.ipx-hb { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; padding: 0 18px 14px; margin-top: -38px; position: relative; }
+.ipx-av { flex: none; width: 80px; height: 80px; border-radius: 50%; border: 4px solid #fff; background: #fff; overflow: hidden; box-sizing: content-box; }
+.ipx-av .ix-av { width: 100% !important; height: 100% !important; border: 0 !important; box-shadow: none !important; background: #1f2430 !important; color: #fff !important; }
+.ipx-av .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.ipx-who { flex: 999 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-bottom: 2px; }
+.ipx-nm { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.ipx-nm h2 { margin: 0; font-size: 19px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.ipx-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #f1f2f4; color: #4b5563; font-size: 11.5px; font-weight: 500; }
+.ipx-pill u { width: 7px; height: 7px; border-radius: 50%; background: #9ca3af; }
+.ipx-pill.on { background: #e6f7ee; color: #15803d; } .ipx-pill.on u { background: #16a34a; }
+.ipx-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ipx-tags span { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 7px; background: #f4f5f7; color: #374151; font-size: 11.5px; font-weight: 500; }
+.ipx-tags span.b { background: #e8f0ff; color: #1d4ed8; }
+.ipx-tags span.g { background: #e6f7ee; color: #15803d; }
+.ipx-tags span.w { background: #fff4e0; color: #b45309; }
+
+/* columns: both stretch so the bottoms line up */
+.ipx-cols { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
+.ipx-main { flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.ipx-side { flex: 1 1 280px; max-width: 320px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.ipx-grow { flex: 1; }
+
+/* personal */
+.ipx-fg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; }
+.ipx-f { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ipx-f.wide { grid-column: 1 / -1; }
+.ipx-f small { font-size: 11.5px; color: #6b7280; }
+.ipx-f b { font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+
+/* internship */
+.ipx-plc { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 18px; padding: 12px 16px; border-radius: 12px; background: #fff7f2; border: 1px solid #f8dccb; }
+.ipx-plc small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #b8461a; }
+.ipx-plc b { display: block; font-size: 17px; font-weight: 700; margin-top: 2px; overflow-wrap: anywhere; }
+.ipx-plc strong { display: block; font-size: 14px; font-weight: 600; margin-top: 2px; }
+.ipx-plc .r { text-align: right; }
+.ipx-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ipx-tiles > div { background: #f6f7f9; border-radius: 10px; padding: 9px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ipx-tiles small { font-size: 11.5px; color: #6b7280; }
+.ipx-tiles b { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+
+/* emergency */
+.ipx-emg { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 11px 16px; border-radius: 14px; background: #fff7f2; border: 1px solid #f8dccb; }
+.ipx-emg-t { flex: 999 1 220px; min-width: 0; }
+.ipx-emg-t small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #b8461a; }
+.ipx-emg-t b { font-size: 13.5px; font-weight: 600; }
+.ipx-emg-t em { font-weight: 400; color: #4b5563; }
+
+/* summary */
+.ipx-ring { display: flex; align-items: center; gap: 14px; }
+.ipx-ring .ix-ring-center { color: #1f2430; }
+.ipx-ring .ix-ring-center strong { font-size: 12.5px; font-weight: 700; }
+.ipx-ring b { display: block; font-size: 16px; font-weight: 700; }
+.ipx-ring b em { font-size: 13px; font-weight: 500; color: #6b7280; }
+.ipx-ring small { font-size: 12px; font-weight: 600; color: #6b7280; }
+.ipx-ring small.ok { color: #15803d; }
+.ipx-mini { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ipx-mini > div { background: #f6f7f9; border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #6b7280; }
+.ipx-mini b { display: block; font-size: 15px; font-weight: 700; color: #1f2430; }
+.ipx-today { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 10px; background: #1f2430; color: #fff; font-size: 12px; }
+.ipx-week { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.ipx-day { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 2px; border-radius: 10px; border: 1px dashed #dcdfe4; min-width: 0; }
+.ipx-day small { font-size: 11px; color: #6b7280; }
+.ipx-day b { font-size: 15px; font-weight: 700; color: #9ca3af; }
+.ipx-day i { width: 8px; height: 8px; border-radius: 50%; background: #e5e7eb; margin-top: 3px; }
+.ipx-day em { font-size: 11px; font-weight: 700; }
+.ipx-day.present { border: 1px solid #cfe9d4; background: #f0faf2; } .ipx-day.present b, .ipx-day.present em { color: #15803d; }
+.ipx-day.excused { border: 1px solid #dccaf7; background: #f5efff; } .ipx-day.excused b { color: #6d3fc4; } .ipx-day.excused i { background: #8b5cf6; }
+.ipx-day.none { border: 1px solid #fde2e2; background: #fef2f2; } .ipx-day.none b { color: #1f2430; } .ipx-day.none i { background: #dc2626; }
+.ipx-day.today { border: 2px solid #e8582a; background: #fff7f2; padding: 6px 1px; } .ipx-day.today small { color: #b8461a; font-weight: 600; } .ipx-day.today b { color: #1f2430; } .ipx-day.today i { background: #e8582a; }
+.ipx-last { font-size: 11.5px; color: #6b7280; }
+.ipx-req .ipx-phs { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.ipx-ph { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 9px 12px; border-radius: 10px; background: #f6f7f9; }
+.ipx-ph-t { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.ipx-ph-t span { font-weight: 500; }
+.ipx-ph-t b { font-weight: 600; text-align: right; } .ipx-ph-t b.ok { color: #15803d; } .ipx-ph-t b.bad { color: #b91c1c; } .ipx-ph-t b.wait { color: #b45309; }
+.ipx-bar { height: 6px; border-radius: 99px; background: #e2e4e8; overflow: hidden; }
+.ipx-bar i { display: block; height: 100%; border-radius: inherit; background: #e8582a; }
+.ipx-bar i.ok { background: #16a34a; }
+
+@media (max-width: 1100px) { .ipx-side { max-width: none; flex-basis: 100%; } }
+@media (max-width: 760px) {
+  .ipx-hb { padding: 0 18px 18px; } .ipx-nm h2 { font-size: 21px; }
+  .ipx-card { padding: 18px; } .ipx-fg, .ipx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ipx-plc .r { text-align: left; } .ipx-plc b { font-size: 20px; }
+}
+@media (max-width: 460px) { .ipx-fg, .ipx-tiles { grid-template-columns: 1fr; } }
+`;
+
 /* Read-only details (same look as the Monitor Interns profile). Used in the View window in Manage Accounts. */
-export function UserDetails({ u }) {
+export function UserDetails({ u, interns = [] }) {
   const isIntern = u.role === "intern";
   const parts = (u.name || "").trim().split(/\s+/);
   const bday = u.date_of_birth
     ? new Date(String(u.date_of_birth).slice(0, 10) + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
     : "—";
-
-  const cell = (label, value, full = false) => (
-    <div className="ipv-cell" key={label} style={full ? { gridColumn: "1 / -1" } : undefined}>
-      <span className="ipv-label">{label}</span>
-      <div className="ipv-value">{value || "—"}</div>
+  const li = (k, v) => <div className="ipa-li" key={k}><i>{k}</i><b>{v || "—"}</b></div>;
+  const kv = (items) => (
+    <div className="ipa-kvg">
+      {items.map(([k, v, full]) => (
+        <div className={full ? "c full" : "c"} key={k}><small>{k}</small><b>{v || "—"}</b></div>
+      ))}
     </div>
   );
+  const emergencyWho = [u.emergency_contact_name, u.emergency_contact_relation && `(${u.emergency_contact_relation})`]
+    .filter(Boolean).join(" ");
 
   return (
-    <div className="ipv ipv-modal">
-      {/* header (same as Monitor Interns) */}
-      <div className="ipv-head">
-        <Avatar name={u.name} photo={u.photo} size={84} />
-        <div className="ipv-head-main">
-          <h2>{u.name}</h2>
-          <div className="ipv-head-sub">
-            <span>{isIntern ? "Student ID" : "Employee ID"} <strong>{u.student_id || "—"}</strong></span>
-            {isIntern && u.program && <span>{u.program}</span>}
-            {isIntern && u.placement && <span>{u.placement}</span>}
-          </div>
-          <Badge label={ROLE_LABEL[u.role] || u.role} type={"r-" + u.role} />
-        </div>
-      </div>
-
-      <div className="ipv-block">
-        <h3 className="ipv-title">Personal information</h3>
-        <div className="ipv-grid c3">
-          {cell("First name", u.first_name || parts[0])}
-          {cell("Middle name", u.middle_name)}
-          {cell("Last name", u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""))}
-          {cell("Birthday", bday)}
-          {cell("Email", u.email)}
-          {cell("Contact number", u.contact_number)}
-          {cell("Address", u.address, true)}
-        </div>
-      </div>
-
-      {u.role === "supervisor" && (
-        <div className="ipv-block">
-          <h3 className="ipv-title">HTE details</h3>
-          <div className="ipv-grid c3">
-            {cell("HTE (company / office)", u.placement || "Not set", true)}
+    <section className={"ipa ipa2 ipa-acc" + (isIntern ? "" : " ipa-staff")} aria-label={`Profile of ${u.name}`}>
+      <style>{IPA_CSS}{`
+        .ipa-staff .ipa-kvg { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .ipa-sigv { padding: 10px 0 4px; border-bottom: 1px solid #f0f1f4; }
+        .ipa-sigv small { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9aa1ad; margin-bottom: 4px; }
+        .ipa-sigv img { max-height: 56px; max-width: 220px; object-fit: contain; }
+        .ipa-sigv b { font-size: 13px; font-weight: 600; color: #1f2430; }
+        .ipa-mine { list-style: none; margin: 4px 0 0; padding: 0; border-top: 1px solid #eef0f3; }
+        .ipa-mine li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f1f4; font-size: 13px; }
+        .ipa-mine li b { font-weight: 600; color: #1f2430; }
+        .ipa-mine li small { margin-left: auto; color: #6b7280; font-size: 12px; }
+        .ipa.ipa2.ipa-acc { grid-template-columns: 320px minmax(0, 1fr); }
+        .ipa-acc .ipa-pn .ipa-pill { background: #fdeee5; color: #c8461c; }
+        .ipa-kvg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid #eef0f3; margin-top: 2px; }
+        .ipa-kvg .c { padding: 8px 12px 8px 0; border-bottom: 1px solid #f0f1f4; min-width: 0; }
+        .ipa-kvg .c.full { grid-column: 1 / -1; }
+        .ipa-acc .ipa-sect { padding: 10px 0 4px; }
+        .ipa-acc .ipa-rt { padding: 4px 22px 8px; }
+        @media (max-width: 1100px) { .ipa-kvg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        .ipa-kvg small { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9aa1ad; margin-bottom: 2px; }
+        .ipa-kvg b { font-size: 13px; font-weight: 600; color: #1f2430; overflow-wrap: anywhere; }
+        @media (max-width: 900px) { .ipa.ipa2.ipa-acc { grid-template-columns: 1fr; } }
+      `}</style>
+      <aside className="ipa-side">
+        <div className="ipa-p1">
+          <div className="ipa-phw"><Avatar name={u.name} photo={u.photo} size={76} /></div>
+          <div className="ipa-pn">
+            <h2>{u.name}</h2>
+            <span className="ipa-id">#{u.student_id || "—"}</span>
+            <span className="ipa-pill">{isIntern ? "OJT Intern" : (ROLE_LABEL[u.role] || u.role)}</span>
           </div>
         </div>
-      )}
+        <h4>About</h4>
+        {li("Phone", u.contact_number)}
+        {li("Email", u.email)}
+        {li("Address", u.address)}
+        {isIntern && (
+          <>
+            <hr />
+            <h4>Emergency contact</h4>
+            {li("Name", emergencyWho || "Not set")}
+            {li("Phone", u.emergency_contact_number)}
+            {li("Address", u.emergency_contact_address)}
+          </>
+        )}
+      </aside>
 
-      {isIntern && (
-        <>
-          <div className="ipv-block">
-            <h3 className="ipv-title">Internship details</h3>
-            <div className="ipv-grid c3">
-              {cell("College", u.college || "CCIS")}
-              {cell("Program", u.program)}
-              {cell("Semester", u.semester)}
-              {cell("Placement", u.placement)}
-              {cell("Modality", MODALITIES[modalityOf(u)])}
-              {cell("Scope", SCOPES[scopeOf(u)])}
-              {cell("Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite")}
-              {cell("DTR type", DTR_MODES[dtrModeOf(u)])}
-              {cell("HTE supervisor", u.supervisor_name || "Not assigned yet")}
-              {cell("Required hours", `${requiredHoursFor(u.program)}h`)}
-              {cell("NFC UID", u.nfc_uid || "Not linked")}
+      <div className="ipa-rt">
+        <div className="ipa-sect">
+          <div className="ipa-sh"><b>Personal information</b></div>
+          {kv([
+            ["First name", u.first_name || parts[0]],
+            ["Middle name", u.middle_name],
+            ["Last name", u.last_name || (parts.length > 1 ? parts[parts.length - 1] : "")],
+            ["Birthday", bday],
+          ])}
+        </div>
+
+        {u.role === "supervisor" && (
+          <div className="ipa-sect">
+            <div className="ipa-sh"><b>HTE details</b></div>
+            {kv([
+              ["HTE (company / office)", u.placement || "Not set", true],
+              ["HTE address", u.hte_address, true],
+              ["MOA valid until", u.moa_valid_until ? (() => {
+                const d = new Date(String(u.moa_valid_until).slice(0, 10) + "T00:00:00");
+                const txt = d.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
+                return d < new Date(new Date().toDateString()) ? `${txt} (expired)` : txt;
+              })() : "No MOA yet"],
+            ])}
+          </div>
+        )}
+
+        {!isIntern && (
+          <div className="ipa-sect">
+            <div className="ipa-sh"><b>Account</b></div>
+            {kv([
+              ["Position", u.position || "Not set", true],
+              ["Status", u.deactivated_at ? "Deactivated" : "Active"],
+              ["Last online", portalOnline(u) ? "Online now" : seenText(u)],
+              ["Created", u.created_at ? new Date(String(u.created_at).replace(" ", "T")).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" }) : "—"],
+              ["Role", ROLE_LABEL[u.role] || u.role],
+            ])}
+            <div className="ipa-sigv"><small>Signature</small>
+              {u.signature ? <img src={photoUrl(u.signature)} alt="Signature" /> : <b>Not uploaded</b>}
             </div>
           </div>
+        )}
 
-          <div className="ipv-block">
-            <h3 className="ipv-title">Emergency contact</h3>
-            <div className="ipv-grid c3">
-              {cell("Full name", u.emergency_contact_name)}
-              {cell("Relationship", u.emergency_contact_relation)}
-              {cell("Contact number", u.emergency_contact_number)}
-              {cell("Address", u.emergency_contact_address, true)}
+        {u.role === "supervisor" && (() => {
+          const mine = interns.filter((x) => String(x.supervisor_id) === String(u.id));
+          return (
+            <div className="ipa-sect">
+              <div className="ipa-sh"><b>Assigned interns</b><em>{mine.length}</em></div>
+              {mine.length === 0 ? <div className="ipa-muted2" style={{ fontSize: 12.5, color: "#6b7280", padding: "6px 0" }}>No interns assigned yet.</div> : (
+                <ul className="ipa-mine">
+                  {mine.map((x) => (
+                    <li key={x.id}><Avatar name={x.name} photo={x.photo} size={28} /><b>{x.name}</b><small>{x.program || ""}{x.placement ? ` · ${x.placement}` : ""}</small></li>
+                  ))}
+                </ul>
+              )}
             </div>
+          );
+        })()}
+
+        {isIntern && (
+          <div className="ipa-sect">
+            <div className="ipa-sh"><b>Internship details</b></div>
+            {kv([
+              ["College", u.college || "CCIS"],
+              ["Program", u.program],
+              ["Semester", u.semester],
+              ["Placement", u.placement],
+              ["Modality", MODALITIES[modalityOf(u)]],
+              ["Scope", SCOPES[scopeOf(u)]],
+              ["Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite"],
+              ["DTR type", DTR_MODES[dtrModeOf(u)]],
+              ["HTE supervisor", u.supervisor_name || "Not assigned yet"],
+              ["Required hours", `${requiredHoursFor(u.program)}h`],
+              ["NFC UID", u.nfc_uid || "Not linked"],
+            ])}
           </div>
-        </>
-      )}
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* Signature upload (staff): picks an image, shows a preview, or the saved one */
+function SigPicker({ file, onChange, current }) {
+  const [preview, setPreview] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    if (!file) { setPreview(null); return; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  const shown = preview || photoUrl(current);
+  return (
+    <div className="sig-pick">
+      <div className="sig-box">{shown ? <img src={shown} alt="Signature" /> : <span>No signature yet</span>}</div>
+      <label className="ix-b ghost sm">
+        <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+          const f = e.target.files?.[0]; e.target.value = "";
+          if (!f) return;
+          if (!f.type.startsWith("image/")) { setErr("Please choose an image file."); return; }
+          if (f.size > 2 * 1024 * 1024) { setErr("Signature must be under 2 MB."); return; }
+          setErr(null); onChange(f);
+        }} />
+        {shown ? "Change signature" : "Upload signature"}
+      </label>
+      {err && <small className="uf-hint" style={{ color: "#b91c1c" }}>{err}</small>}
     </div>
   );
 }
 
 /* Shared form for "Add New User" and "Edit User" (same look as the View window) */
-export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions, supervisors, role, roles = null }) {
+export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions, supervisors, role, roles = null, noPassword = false, sigFile = null, onSig = null, sigCurrent = null }) {
   const add = mode === "add";
   // when editing, the form has no "role" field, so the page passes the account's role
   const formRole = role || f.role;
@@ -1468,56 +1931,73 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
     <input className="uf-input" value={f[k] ?? ""} onChange={set(k)} {...props} />
   );
 
+  const fld = (label, control, { full = false, hint, plain = false, className = "" } = {}) => {
+    const Tag = plain ? "div" : "label";
+    return (
+      <Tag className={"c uf-cell" + (full ? " full" : "") + (className ? " " + className : "")} key={label}>
+        <small>{label}</small>
+        {control}
+        {hint && <em className="uf-hint">{hint}</em>}
+      </Tag>
+    );
+  };
+  const empId = isIntern
+    ? text("student_id", { required: add, placeholder: "e.g. 2021-00123" })
+    : (
+      <div className="uf-prefix">
+        <span>EMP-</span>
+        <input
+          className="uf-input"
+          required={add}
+          placeholder="0001"
+          value={String(f.student_id ?? "").replace(/^EMP-?/i, "")}
+          onChange={(e) => {
+            const rest = e.target.value.replace(/^EMP-?/i, "").replace(/\s+/g, "").toUpperCase();
+            set("student_id")({ target: { value: rest ? `EMP-${rest}` : "" } });
+          }}
+        />
+      </div>
+    );
+
   return (
-    <div className="ipv ipv-modal">
-      <div className="ipv-head uf-head">
-        {header}
-        {title && (
-          <div className="ipv-head-main">
-            <h2>{title}</h2>
-            {sub && <div className="ipv-head-sub"><span>{sub}</span></div>}
-          </div>
-        )}
-      </div>
-
-      <div className="ipv-block">
-        <h3 className="ipv-title">Personal information</h3>
-        <div className="ipv-grid c3">
-          {cell("First name", text("first_name", { required: true }))}
-          {cell("Middle name", text("middle_name"))}
-          {cell("Last name", text("last_name", { required: true }))}
-          {cell("Birthday", text("date_of_birth", { type: "date", max: today, required: add }),
-            { hint: "Used for account recovery." })}
-          {cell("Contact number", text("contact_number", { type: "tel", placeholder: "e.g. 09123456789" }))}
-          {cell("Email", text("email", { type: "email", required: true, placeholder: "e.g. juan@csu.edu.ph" }))}
-          {cell("Address", text("address", { placeholder: "Street, Barangay, City" }), { full: true })}
+    <section className={"ipa ipa2 ipa-acc ipa-form" + (isIntern ? "" : " ipa-staff")}>
+      <style>{IPA_CSS}{`
+        .ipa.ipa2.ipa-acc { grid-template-columns: 320px minmax(0, 1fr); }
+        .ipa-kvg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 14px; margin-top: 2px; }
+        .ipa-kvg .c { padding: 6px 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .ipa-kvg .c.full { grid-column: 1 / -1; }
+        .ipa-kvg .c.w2 { grid-column: span 2; }
+        .ipa-kvg small { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9aa1ad; }
+        .ipa-form .uf-input { width: 100%; box-sizing: border-box; height: 36px; font-size: 13px; }
+        .ipa-form .uf-hint { font-style: normal; font-size: 11px; color: #9aa1ad; line-height: 1.3; }
+        .ipa-form .ipa-side .ipa-kvg { grid-template-columns: 1fr; }
+        .ipa-form .ipa-side .ipa-kvg .c.full { grid-column: auto; }
+        .ipa-form .ipa-sect { padding: 10px 0 4px; }
+        .ipa-form .ipa-rt { padding: 4px 22px 14px; }
+        .ipa-form .ipa-p1 { align-items: center; }
+        .ipa-form .ipa-pn h2 { font-size: 16px; }
+        .sig-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .sig-box { width: 180px; height: 64px; border: 1px dashed #d8dce3; border-radius: 10px; background: #fafbfc; display: grid; place-items: center; overflow: hidden; font-size: 12px; color: #9aa1ad; }
+        .sig-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .ipa-form .ix-form-actions { margin-top: 12px; justify-content: flex-end; }
+        .ipa-form .ix-form-actions .ix-b { flex: 0 0 auto; padding: 9px 22px; font-size: 13px; }
+        @media (max-width: 1100px) { .ipa-kvg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 900px) { .ipa.ipa2.ipa-acc { grid-template-columns: 1fr; } }
+      `}</style>
+      <aside className="ipa-side">
+        <div className="ipa-p1">
+          {header}
+          {title && (
+            <div className="ipa-pn">
+              <h2>{title}</h2>
+              {sub && <span className="ipa-id">{sub}</span>}
+            </div>
+          )}
         </div>
-      </div>
-
-      <div className="ipv-block">
-        <h3 className="ipv-title">Account</h3>
-        <div className="ipv-grid c3">
-          {cell(isIntern ? "Student ID" : "Employee ID",
-            isIntern
-              ? text("student_id", { required: add, placeholder: "e.g. 2021-00123" })
-              : (
-                /* employees: a fixed "EMP-" in front, you only type the number; saved as e.g. EMP-0001 */
-                <div className="uf-prefix">
-                  <span>EMP-</span>
-                  <input
-                    className="uf-input"
-                    required={add}
-                    placeholder="0001"
-                    value={String(f.student_id ?? "").replace(/^EMP-?/i, "")}
-                    onChange={(e) => {
-                      const rest = e.target.value.replace(/^EMP-?/i, "").replace(/\s+/g, "").toUpperCase();
-                      set("student_id")({ target: { value: rest ? `EMP-${rest}` : "" } });
-                    }}
-                  />
-                </div>
-              ),
-            { hint: "Used to sign up for account recovery." })}
-          {add && cell("Role", (
+        <h4>Account</h4>
+        <div className="ipa-kvg">
+          {fld(isIntern ? "Student ID" : "Employee ID", empId, { hint: "Used to sign up for account recovery." })}
+          {add && fld("Role", (
             <select className="uf-input" value={f.role} onChange={set("role")}>
               {(!roles || roles.includes("intern")) && <option value="intern">Intern</option>}
               {(!roles || roles.includes("ojt_coordinator")) && <option value="ojt_coordinator">OJT Coordinator</option>}
@@ -1525,31 +2005,68 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
               {(!roles || roles.includes("admin")) && <option value="admin">Admin</option>}
             </select>
           ))}
-          {cell(add ? "Password" : "Set new password",
+          {(add || !noPassword) && fld(add ? "Password" : "Set new password",
             text("password", {
               type: "text", autoComplete: "off", required: add, minLength: add ? 6 : undefined,
               placeholder: add ? "At least 6 characters" : "Leave blank to keep",
             }))}
         </div>
-      </div>
+        {isIntern && (
+          <>
+            <hr />
+            <h4>Emergency contact</h4>
+            <div className="ipa-kvg">
+              {fld("Full name", text("emergency_contact_name"))}
+              {fld("Relationship", text("emergency_contact_relation", { placeholder: "e.g. Mother" }))}
+              {fld("Contact number", text("emergency_contact_number", { type: "tel" }))}
+              {fld("Address", text("emergency_contact_address"), { full: true })}
+            </div>
+          </>
+        )}
+      </aside>
 
-      {formRole === "supervisor" && (
-        <div className="ipv-block">
-          <h3 className="ipv-title">HTE details</h3>
-          <div className="ipv-grid c3">
-            {cell("HTE (company / office)", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }),
-              { full: true, hint: "Use the same name as the interns' Placement, so the coordinator can match them." })}
+      <div className="ipa-rt">
+        <div className="ipa-sect">
+          <div className="ipa-sh"><b>Personal information</b></div>
+          <div className="ipa-kvg">
+            {fld("First name", text("first_name", { required: true }))}
+            {fld("Middle name", text("middle_name"))}
+            {fld("Last name", text("last_name", { required: true }))}
+            {fld("Birthday", text("date_of_birth", { type: "date", max: today, required: add }))}
+            {fld("Contact number", text("contact_number", { type: "tel", placeholder: "e.g. 09123456789" }))}
+            {fld("Email", text("email", { type: "email", required: true, placeholder: "e.g. juan@csu.edu.ph" }), { className: "w2" })}
+            {fld("Address", text("address", { placeholder: "Street, Barangay, City" }), { full: true })}
           </div>
         </div>
-      )}
 
-      {isIntern && (
-        <>
-          <div className="ipv-block">
-            <h3 className="ipv-title">Internship details</h3>
-            <div className="ipv-grid c3">
-              {cell("College", <input className="uf-input" value="CCIS" disabled readOnly />)}
-              {cell("Program", (
+        {formRole === "supervisor" && (
+          <div className="ipa-sect">
+            <div className="ipa-sh"><b>HTE details</b></div>
+            <div className="ipa-kvg">
+              {fld("HTE (company / office)", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }),
+                { full: true, hint: "Use the same name as the interns' Placement, so the coordinator can match them." })}
+              {fld("HTE address", text("hte_address", { placeholder: "Street, Barangay, City" }), { full: true })}
+              {fld("MOA valid until", text("moa_valid_until", { type: "date" }), { hint: "Leave empty if there is no MOA yet." })}
+            </div>
+          </div>
+        )}
+
+        {!isIntern && (
+          <div className="ipa-sect">
+            <div className="ipa-sh"><b>Position & signature</b></div>
+            <div className="ipa-kvg">
+              {fld("Position / job title", text("position", { placeholder: "e.g. OJT Coordinator, CCIS" }), { full: true })}
+              {onSig && fld("Signature", <SigPicker file={sigFile} onChange={onSig} current={sigCurrent} />, { full: true, plain: true, hint: "Used on the DTR and reports. Use a clear photo of the signature on white paper." })}
+            </div>
+          </div>
+        )}
+
+        {isIntern && (
+          <div className="ipa-sect">
+            <div className="ipa-sh"><b>Internship details</b></div>
+            <div className="ipa-kvg">
+              {fld("College", <input className="uf-input" value="CCIS" disabled readOnly />)}
+              {fld("Program", (
                 <select className="uf-input" value={f.program} onChange={set("program")}>
                   {!add && <option value="">Select program</option>}
                   <option value="BSIT - 4">BSIT - 4</option>
@@ -1557,62 +2074,50 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                   <option value="BSIS - 4">BSIS - 4</option>
                 </select>
               ), { hint: `Required hours: ${requiredHoursFor(f.program)}h` })}
-              {cell("Semester", (
+              {fld("Semester", (
                 <select className="uf-input" value={f.semester} onChange={set("semester")}>
                   {!add && <option value="">Select semester</option>}
                   <option value="1st Semester">1st Semester</option>
                   <option value="2nd Semester">2nd Semester</option>
                 </select>
               ))}
-              {cell("Placement", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }), { full: true })}
-              {cell("Modality", (
-                <select className="uf-input" value={f.modality || "onsite"} onChange={set("modality")}>
-                  {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-              ))}
-              {cell("Scope", (
-                <select className="uf-input" value={f.scope || "local"} onChange={set("scope")}>
-                  {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-              ))}
-              {cell("Work mode", (
+              {fld("Work mode", (
                 <select className="uf-input" value={f.work_mode} onChange={set("work_mode")}>
                   <option value="onsite">Onsite</option>
                   <option value="offsite">Offsite (WFH)</option>
                 </select>
               ))}
-              {cell("DTR type", (
+              {fld("Placement", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }), { full: true })}
+              {fld("Modality", (
+                <select className="uf-input" value={f.modality || "onsite"} onChange={set("modality")}>
+                  {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              ))}
+              {fld("Scope", (
+                <select className="uf-input" value={f.scope || "local"} onChange={set("scope")}>
+                  {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              ))}
+              {fld("DTR type", (
                 <select className="uf-input" value={f.dtr_mode || "two"} onChange={set("dtr_mode")}>
                   <option value="two">{DTR_MODES.two}</option>
                   <option value="four">{DTR_MODES.four}</option>
                 </select>
               ), { hint: "Depends on the intern's HTI." })}
-              {supervisors && cell("HTE supervisor", (
+              {supervisors && fld("HTE supervisor", (
                 <select className="uf-input" value={f.supervisor_id ?? ""} onChange={set("supervisor_id")}>
                   <option value="">Not assigned yet</option>
                   {supervisors.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
                 </select>
-              ), { hint: "Reviews this intern's overtime and time corrections and certifies the DTR." })}
-              {uidField && cell("NFC card", uidField, { plain: true, full: true })}
+              ), { hint: "Reviews overtime and time corrections, certifies the DTR." })}
+              {uidField && fld("NFC card", uidField, { plain: true, full: true })}
             </div>
           </div>
+        )}
 
-          <div className="ipv-block">
-            <h3 className="ipv-title">Emergency contact</h3>
-            <div className="ipv-grid c3">
-              {cell("Full name", text("emergency_contact_name"))}
-              {cell("Relationship", text("emergency_contact_relation", { placeholder: "e.g. Mother" }))}
-              {cell("Contact number", text("emergency_contact_number", { type: "tel" }))}
-              {cell("Address", text("emergency_contact_address"), { full: true })}
-            </div>
-          </div>
-        </>
-      )}
-
-      <div className="ipv-block">
         <div className="ix-form-actions">{actions}</div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -1699,7 +2204,7 @@ const OA_STATUS = {
   approved: ["Approved", "approved"],
   rejected: ["Rejected", "rejected"],
 };
-export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [] , onReview }) {
+export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [], withSup = [], onReview }) {
   const coord = role !== "supervisor";
   const [view, setView] = useState("waiting");
   const [sel, setSel] = useState(null);
@@ -1708,12 +2213,12 @@ export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [] 
   const [remarks, setRemarks] = useState({});
   const [busy, setBusy] = useState(null);
   const sq = q.trim().toLowerCase();
-  const list = (view === "waiting" ? waiting : reviewed).filter((o) => !sq || String(o.intern_name || "").toLowerCase().includes(sq));
-  const cur = list.find((o) => o.id === sel) || list[0] || null;
+  const list = (view === "waiting" ? waiting : view === "sup" ? withSup : reviewed).filter((o) => !sq || String(o.intern_name || "").toLowerCase().includes(sq));
+  const cur = list.find((o) => o.id === sel) || null;   // nothing opens by itself: the details show after a click
   const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
   const mine = (o) => (coord ? o.status === "endorsed" || o.status === "pending" : o.status === "pending") && view === "waiting";
   const badge = (o) => {
-    const [label, type] = o.status === "pending" && coord ? ["No supervisor", "pending"] : o.status === "pending" ? ["Waiting for you", "pending"] : (OA_STATUS[o.status] || [o.status, "none"]);
+    const [label, type] = view === "sup" ? ["With supervisor", "pending"] : o.status === "pending" && coord ? ["No supervisor", "pending"] : o.status === "pending" ? ["Waiting for you", "pending"] : (OA_STATUS[o.status] || [o.status, "none"]);
     return <Badge label={o.status === "endorsed" && coord && view === "waiting" ? "Waiting for you" : label} type={type} />;
   };
   const decide = async (o, status) => {
@@ -1772,11 +2277,16 @@ export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [] 
           <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
             Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
           </button>
+          {coord && (
+            <button type="button" role="tab" aria-selected={view === "sup"} className={view === "sup" ? "on" : ""} onClick={() => pick("sup")}>
+              Supervisor <span className="oa-n">{withSup.length}</span>
+            </button>
+          )}
           <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
             Reviewed <span className="oa-n">{reviewed.length}</span>
           </button>
         </div>
-        {(view === "reviewed" ? reviewed.length : waiting.length) > 6 && (
+        {list.length + (sq ? 99 : 0) > 6 && (
           <div className="oa-search">
             <Icon name="search" size={14} />
             <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" />
@@ -1787,7 +2297,7 @@ export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [] 
             <div className="oa-none">
               <span className="oa-none-ic"><Icon name="check" size={18} /></span>
               <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
-              <small>{sq ? "Try another name." : view === "waiting" ? "No online days waiting for you." : "Days you approve or reject show here."}</small>
+              <small>{sq ? "Try another name." : view === "waiting" ? "No online days waiting for you." : view === "sup" ? "Nothing is with the supervisor right now." : "Days you approve or reject show here."}</small>
             </div>
           ) : list.map((o) => (
             <button key={o.id} type="button" role="listitem"
@@ -1795,7 +2305,7 @@ export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [] 
               onClick={() => { setSel(o.id); setOpen(true); }}>
               <Avatar name={o.intern_name} photo={o.intern_photo} size={34} />
               <span className="oa-who"><b>{o.intern_name}</b><small>{oaDate(o.date)} · 8h</small></span>
-              {(view === "reviewed" || (coord && o.status === "pending")) && badge(o)}
+              {(view !== "waiting" || (coord && o.status === "pending")) && badge(o)}
             </button>
           ))}
         </div>
@@ -1805,8 +2315,8 @@ export function OnlineReview({ role = "supervisor", waiting = [], reviewed = [] 
         {!cur ? (
           <div className="oa-blank">
             <span className="oa-none-ic"><Icon name="inbox" size={20} /></span>
-            <b>{view === "waiting" ? "No online days waiting" : "Nothing to show yet"}</b>
-            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the days already checked." : "When an intern works online, their day shows here."}</small>
+            <b>{list.length ? "Pick an online day" : view === "waiting" ? "No online days waiting" : "Nothing to show yet"}</b>
+            <small>{list.length ? "Click an intern on the left to see the details." : view === "waiting" && reviewed.length ? "Open Reviewed to see the days already checked." : "When an intern works online, their day shows here."}</small>
           </div>
         ) : (
           <>
@@ -1866,6 +2376,7 @@ export const OA_CSS = `
 .oa { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 16px; min-height: 0; }
 .oa-list, .oa-detail { background: #fff; border: 1px solid #e8ebf0; border-radius: 14px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .oa-switch { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid #eef0f4; flex: none; }
+.oa-switch button { white-space: nowrap; min-width: 0; padding-left: 6px !important; padding-right: 6px !important; gap: 5px !important; font-size: 12.5px !important; }
 .oa-switch button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: #64748b; cursor: pointer; line-height: 1.2; }
 .oa-switch button:hover { background: #f6f7f9; }
 .oa-switch button.on { background: #fff1ea; color: #c2410c; }
@@ -1883,6 +2394,8 @@ export const OA_CSS = `
 .oa-blank { flex: 1; min-height: 300px; }
 .oa-none b, .oa-blank b { font-size: 14px; color: #0f172a; margin-top: 4px; }
 .oa-none small, .oa-blank small { font-size: 12.5px; color: #64748b; max-width: 280px; }
+.oa-list { position: relative; }
+.oa-items > .oa-none { position: absolute; inset: 0; padding: 0 14px; pointer-events: none; }   /* centered on the whole card, the same spot as the empty message on the right */
 .oa-none-ic { width: 38px; height: 38px; border-radius: 50%; background: #e9f8ef; color: #16a34a; display: inline-flex; align-items: center; justify-content: center; }
 .oa-blank .oa-none-ic { background: #fff1ea; color: #ea580c; }
 .oa-detail { padding: 18px 20px; gap: 14px; overflow-y: auto; }
@@ -1980,7 +2493,7 @@ const otDay = (v, long) => {
   return isNaN(d) ? String(v).slice(0, 10) : d.toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", ...(long ? { year: "numeric" } : {}), timeZone: "Asia/Manila" });
 };
 
-export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [], all = [], capOf = (o) => o.ot_minutes, onReview }) {
+export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [], withSup = [], all = [], capOf = (o) => o.ot_minutes, onReview }) {
   const coord = role !== "supervisor";
   const [minutes, setMinutes] = useState({});
   const [remarks, setRemarks] = useState({});
@@ -1996,8 +2509,8 @@ export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const sq = q.trim().toLowerCase();
-  const list = (view === "waiting" ? waiting : reviewed).filter((o) => !sq || String(o.intern_name || "").toLowerCase().includes(sq));
-  const cur = list.find((o) => o.id === sel) || list[0] || null;
+  const list = (view === "waiting" ? waiting : view === "sup" ? withSup : reviewed).filter((o) => !sq || String(o.intern_name || "").toLowerCase().includes(sq));
+  const cur = list.find((o) => o.id === sel) || null;   // nothing opens by itself: the details show after a click
   const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
   const mine = cur && view === "waiting";
 
@@ -2051,7 +2564,7 @@ export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [
     );
   };
 
-  const otBadge = (o, long) => o.ot_status === "approved" ? <Badge label={long ? "Approved" : `+${fmtMinutes(o.ot_approved_minutes)}`} type="approved" />
+  const otBadge = (o, long) => o.ot_status === "pending" ? <Badge label="With supervisor" type="pending" /> : o.ot_status === "approved" ? <Badge label={long ? "Approved" : `+${fmtMinutes(o.ot_approved_minutes)}`} type="approved" />
     : o.ot_status === "endorsed" ? <Badge label={long ? "Sent to coordinator" : `${fmtMinutes(o.ot_endorsed_minutes)} sent`} type="online" />
     : <Badge label="Rejected" type="rejected" />;
   const capM = cur ? capOf(cur) : 0;
@@ -2068,11 +2581,16 @@ export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [
           <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
             Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
           </button>
+          {coord && (
+            <button type="button" role="tab" aria-selected={view === "sup"} className={view === "sup" ? "on" : ""} onClick={() => pick("sup")}>
+              Supervisor <span className="oa-n">{withSup.length}</span>
+            </button>
+          )}
           <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
             Reviewed <span className="oa-n">{reviewed.length}</span>
           </button>
         </div>
-        {(view === "waiting" ? waiting : reviewed).length > 6 && (
+        {(view === "waiting" ? waiting : view === "sup" ? withSup : reviewed).length > 6 && (
           <div className="oa-search"><Icon name="search" size={14} />
             <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" /></div>
         )}
@@ -2080,15 +2598,15 @@ export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [
           {list.length === 0 ? (
             <div className="oa-none">
               <span className="oa-none-ic"><Icon name="check" size={18} /></span>
-              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
-              <small>{sq ? "Try another name." : view === "waiting" ? "No overtime waiting for you." : "Overtime you approve or reject shows here."}</small>
+              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : view === "sup" ? "Nothing here" : "Nothing reviewed yet"}</b>
+              <small>{sq ? "Try another name." : view === "waiting" ? "No overtime waiting for you." : view === "sup" ? "Nothing is with the supervisor right now." : "Overtime you approve or reject shows here."}</small>
             </div>
           ) : list.map((o) => (
             <button key={o.id} type="button" role="listitem" className={cur && cur.id === o.id ? "oa-item on" : "oa-item"}
               onClick={() => { setSel(o.id); setOpen(true); }}>
               <Avatar name={o.intern_name} photo={o.intern_photo} size={34} />
               <span className="oa-who"><b>{o.intern_name}</b><small>{otDay(o.date)} · out {otClock(o.checked_out_at)}</small></span>
-              {view === "waiting" ? <span className="ot-tag">{fmtMinutes(capOf(o))}</span>
+              {view !== "reviewed" ? <span className="ot-tag">{fmtMinutes(capOf(o))}</span>
                 : otBadge(o)}
             </button>
           ))}
@@ -2099,8 +2617,8 @@ export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [
         {!cur ? (
           <div className="oa-blank">
             <span className="oa-none-ic"><Icon name="clock" size={20} /></span>
-            <b>{view === "waiting" ? "No overtime waiting" : "Nothing to show yet"}</b>
-            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the overtime already checked." : "Time after 5:00 PM shows here once the supervisor approves it."}</small>
+            <b>{list.length ? "Pick an overtime request" : view === "waiting" ? "No overtime waiting" : "Nothing to show yet"}</b>
+            <small>{list.length ? "Click an intern on the left to see the details." : view === "waiting" && reviewed.length ? "Open Reviewed to see the overtime already checked." : "Time after 5:00 PM shows here once the supervisor approves it."}</small>
           </div>
         ) : (
           <>
@@ -2108,7 +2626,7 @@ export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [
             <div className="oa-head">
               <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
               <div className="oa-hn"><b>{cur.intern_name}</b><small>Overtime · {otDay(cur.date, true)}</small></div>
-              {view === "waiting" ? (coord && cur.ot_status === "pending" ? <Badge label="No supervisor" type="pending" /> : <Badge label="Waiting for you" type="pending" />)
+              {view === "sup" ? <Badge label="With supervisor" type="pending" /> : view === "waiting" ? (coord && cur.ot_status === "pending" ? <Badge label="No supervisor" type="pending" /> : <Badge label="Waiting for you" type="pending" />)
                 : otBadge(cur, true)}
             </div>
             {bar(cur)}
@@ -2161,9 +2679,9 @@ export function OvertimeBoard({ role = "coordinator", waiting = [], reviewed = [
                 </div>
               </div>
             ) : (
-              <div className={cur.ot_status === "rejected" ? "oa-done bad" : cur.ot_status === "endorsed" ? "oa-done" : "oa-done ok"}>
-                <Icon name={cur.ot_status === "rejected" ? "x" : cur.ot_status === "endorsed" ? "clock" : "check"} size={14} />
-                <span>{cur.ot_status === "rejected" ? "Rejected. No overtime added." : cur.ot_status === "endorsed" ? `You approved ${fmtMinutes(cur.ot_endorsed_minutes)}. Waiting for the OJT coordinator.` : `Approved. ${fmtMinutes(cur.ot_approved_minutes)} added to that day.`}
+              <div className={cur.ot_status === "rejected" ? "oa-done bad" : cur.ot_status === "endorsed" || cur.ot_status === "pending" ? "oa-done" : "oa-done ok"}>
+                <Icon name={cur.ot_status === "rejected" ? "x" : cur.ot_status === "endorsed" || cur.ot_status === "pending" ? "clock" : "check"} size={14} />
+                <span>{cur.ot_status === "pending" ? "Waiting for the HTE supervisor to approve it first." : cur.ot_status === "rejected" ? "Rejected. No overtime added." : cur.ot_status === "endorsed" ? `You approved ${fmtMinutes(cur.ot_endorsed_minutes)}. Waiting for the OJT coordinator.` : `Approved. ${fmtMinutes(cur.ot_approved_minutes)} added to that day.`}
                   {(cur.ot_remarks || cur.ot_endorse_remarks) ? <> Remarks: <em>{cur.ot_remarks || cur.ot_endorse_remarks}</em></> : null}
                   {cur.reviewer_name ? <small> · {cur.reviewer_name}</small> : null}</span>
               </div>
@@ -2208,7 +2726,7 @@ const OT2_CSS = `
 
 /* Monitor Interns: a compact list on the left, the selected intern's details on the right
    (like an inbox). On phones the list shows first; tapping an intern opens the details. */
-export function InternMonitor({ interns, records, loading, onRefresh, recordsPath = null, movsPath = null, canViewFiles = false }) {
+export function InternMonitor({ interns, records, loading, onRefresh, recordsPath = null, movsPath = null, canViewFiles = false, hideHte = false, hideArr = false }) {
   const today = todayManila();
   const navigate = useNavigate();
   const location = useLocation();
@@ -2217,23 +2735,46 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
   const [program, setProgram] = useState("all");
   const [hte, setHte] = useState("all");
   const [arr, setArr] = useState("all");             // all | m:onsite|hybrid|virtual | s:local|inbound|outbound
+  const [groupBy, setGroupBy] = useState("none");     // none | hte
   const [selectedId, setSelectedId] = useState(null);
   const [showDetail, setShowDetail] = useState(false); // phones: details instead of the list
 
   const sq = q.trim().toLowerCase();
+  // university No-OJT days: they don't count as absent
+  const [holidays, setHolidays] = useState({});
+  useEffect(() => {
+    fetch(`${API}/calendar`, { headers: { Accept: "application/json" } }).then((r) => r.json()).then((list) => {
+      if (!Array.isArray(list)) return;
+      const m = {}; list.forEach((e) => { if (e.off !== false && !e.hte_key) m[String(e.date).slice(0, 10)] = true; });
+      setHolidays(m);
+    }).catch(() => {});
+  }, []);
+  const shiftDay = (iso, n) => new Date(new Date(iso + "T12:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
+  const weekend = (iso) => { const d = new Date(iso + "T12:00:00Z").getUTCDay(); return d === 0 || d === 6; };
   const rows = interns.map((u) => {
     const recs = records.filter((r) => r.user_id === u.id);
+    // what needs the coordinator's attention for this intern
+    const flags = [];
+    const open = recs.some((r) => r.date < today && r.date >= shiftDay(today, -7) && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
+    if (open) flags.push({ k: "amber", t: "No time out" });
+    if (recs.length) {
+      const have = new Set(recs.map((r) => r.date));
+      let n = 0, d = shiftDay(today, -1);
+      for (let i = 0; i < 60; i++, d = shiftDay(d, -1)) { if (weekend(d) || holidays[d]) continue; if (have.has(d)) break; n++; }
+      if (n >= 3) flags.push({ k: "red", t: `Absent ${n >= 60 ? "60+" : n} days` });
+    }
     const todaySessions = sessionsByDate(recs.filter((r) => r.date === today))[today] || [];
     const isIn = recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
     const tIn = todaySessions[0]?.in;
     const tOut = [...todaySessions].reverse().find((x) => x.out)?.out;
-    return { u, isIn, tIn, tOut, hours: calcHours(recs), required: requiredHoursFor(u.program) };
+    const hrs = calcHours(recs);
+    return { u, isIn, tIn, tOut, flags, hours: hrs, required: requiredHoursFor(u.program) };
   });
   const inCount = rows.filter((x) => x.isIn).length;
   const htes = [...new Set(interns.map((u) => (u.placement || "").trim()).filter(Boolean))].sort();
   const shown = rows
     .filter((x) => program === "all" || programKey(x.u.program) === program)
-    .filter((x) => status === "all" || (status === "in" ? x.isIn : !x.isIn))
+    .filter((x) => status === "all" || (status === "attn" ? x.flags.length > 0 : status === "in" ? x.isIn : !x.isIn))
     .filter((x) => hte === "all" || (x.u.placement || "").trim() === hte)
     .filter((x) => arr === "all" || (arr.startsWith("m:") ? modalityOf(x.u) === arr.slice(2) : scopeOf(x.u) === arr.slice(2)))
     .filter((x) => `${x.u.name} ${x.u.email} ${x.u.student_id ?? ""} ${x.u.placement ?? ""}`.toLowerCase().includes(sq))
@@ -2252,6 +2793,46 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, interns.length]);
   const hm = (v) => (v ? new Date(v).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }) : "");
+  // "Group by HTE": the same cards, under one heading per HTE
+  const groups = (() => {
+    const m = new Map();
+    shown.forEach((x) => {
+      const name = (x.u.placement || "").trim() || "No placement yet";
+      if (!m.has(name)) m.set(name, { key: name, name, sup: "", rows: [] });
+      const g = m.get(name); g.rows.push(x); if (!g.sup && x.u.supervisor_name) g.sup = x.u.supervisor_name;
+    });
+    return [...m.values()].sort((a, b) => (a.name === "No placement yet") - (b.name === "No placement yet") || a.name.localeCompare(b.name));
+  })();
+  const card = (x) => {
+  const pct = Math.min(100, Math.round((x.hours / (x.required || 1)) * 100));
+  return (
+    <div key={x.u.id} className="ix-ic clickable imc" role="button" tabIndex={0}
+      aria-label={`View the summary of ${x.u.name}`}
+      onClick={() => open(x.u)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(x.u); } }}>
+      <div className="ix-ic-top">
+        <Avatar name={x.u.name} photo={x.u.photo} status={portalOnline(x.u) ? "on" : "off"} />
+        <div className="ix-ic-id">
+          <strong>{x.u.name}</strong>
+          <span>{[programKey(x.u.program), x.u.placement || x.u.email].filter(Boolean).join(" · ")}</span>
+          {(modalityOf(x.u) !== "onsite" || scopeOf(x.u) !== "local" || x.flags.length > 0) && (
+            <span className="imc-tags">
+              {x.flags.map((f) => <em key={f.t} className={`imc-tag a-${f.k}`}>{f.t}</em>)}
+              {modalityOf(x.u) !== "onsite" && <em className={`imc-tag m-${modalityOf(x.u)}`}>{MODALITIES[modalityOf(x.u)]}</em>}
+              {scopeOf(x.u) !== "local" && <em className="imc-tag s">{SCOPES[scopeOf(x.u)]}</em>}
+            </span>
+          )}
+        </div>
+        <Badge label={x.isIn ? "Present now" : "Not in"} type={x.isIn ? "in" : "out"} />
+      </div>
+      <div className="ix-ic-stats">
+        <div><strong>{`${x.hours}h`}</strong><span>{`of ${x.required}h · ${pct}%`}</span></div>
+        <div><strong>{x.isIn ? hm(x.tIn) : x.tOut ? hm(x.tOut) : "—"}</strong><span>{x.isIn ? "time in today" : x.tOut ? "time out today" : "no tap today"}</span></div>
+      </div>
+      <div className="imc-bar" aria-hidden="true"><i style={{ width: pct + "%" }} /></div>
+    </div>
+  );
+  };
   const todayText = (x) => x.isIn ? `In ${hm(x.tIn)}` : x.tOut ? `Out ${hm(x.tOut)}` : "Not in";
 
   return (
@@ -2267,23 +2848,32 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
             <option value="all">All interns ({rows.length})</option>
             <option value="in">On duty ({inCount})</option>
             <option value="out">Not in ({rows.length - inCount})</option>
+            <option value="attn">Needs attention ({rows.filter((x) => x.flags.length).length})</option>
           </select>
           <select className="ix-select mon-filter" value={program} onChange={(e) => setProgram(e.target.value)} aria-label="Filter by program">
             <option value="all">All programs</option>
             {["BSIT", "BSCS", "BSIS"].map((k) => <option key={k} value={k}>{k} ({rows.filter((x) => programKey(x.u.program) === k).length})</option>)}
           </select>
-          <select className="ix-select mon-filter" value={hte} onChange={(e) => setHte(e.target.value)} aria-label="Filter by HTE">
-            <option value="all">All HTEs</option>
-            {htes.map((h) => <option key={h} value={h}>{h}</option>)}
-          </select>
-          <select className="ix-select mon-filter" value={arr} onChange={(e) => setArr(e.target.value)} aria-label="Filter by modality or scope">
-            <option value="all">All modalities</option>
-            <optgroup label="Modality">
-              {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={`m:${k}`}>{l} ({rows.filter((x) => modalityOf(x.u) === k).length})</option>)}
-            </optgroup>
-            <optgroup label="Scope">
-              {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={`s:${k}`}>{l} ({rows.filter((x) => scopeOf(x.u) === k).length})</option>)}
-            </optgroup>
+          {!hideHte && (
+            <select className="ix-select mon-filter" value={hte} onChange={(e) => setHte(e.target.value)} aria-label="Filter by HTE">
+              <option value="all">All HTEs</option>
+              {htes.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          )}
+          {!hideArr && (
+            <select className="ix-select mon-filter" value={arr} onChange={(e) => setArr(e.target.value)} aria-label="Filter by modality or scope">
+              <option value="all">All modalities</option>
+              <optgroup label="Modality">
+                {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={`m:${k}`}>{l} ({rows.filter((x) => modalityOf(x.u) === k).length})</option>)}
+              </optgroup>
+              <optgroup label="Scope">
+                {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={`s:${k}`}>{l} ({rows.filter((x) => scopeOf(x.u) === k).length})</option>)}
+              </optgroup>
+            </select>
+          )}
+          <select className="ix-select mon-filter" value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Group interns">
+            <option value="none">No grouping</option>
+            <option value="hte">Group by HTE</option>
           </select>
           <span className="mon-chip on mon-count">{shown.length} shown</span>
         </div>
@@ -2305,36 +2895,21 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
           <div className="ix-card"><Empty icon="users" title="No interns found" /></div>
         ) : (
           /* every intern as a card; click one to see the summary */
-          <div className="ix-intern-grid imc-grid">
-            {shown.map((x) => {
-              const pct = Math.min(100, Math.round((x.hours / (x.required || 1)) * 100));
-              return (
-                <div key={x.u.id} className="ix-ic clickable imc" role="button" tabIndex={0}
-                  aria-label={`View the summary of ${x.u.name}`}
-                  onClick={() => open(x.u)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(x.u); } }}>
-                  <div className="ix-ic-top">
-                    <Avatar name={x.u.name} photo={x.u.photo} status={x.isIn ? "on" : "off"} />
-                    <div className="ix-ic-id">
-                      <strong>{x.u.name}</strong>
-                      <span>{[programKey(x.u.program), x.u.placement || x.u.email].filter(Boolean).join(" · ")}</span>
-                      {(modalityOf(x.u) !== "onsite" || scopeOf(x.u) !== "local") && (
-                        <span className="imc-tags">
-                          {modalityOf(x.u) !== "onsite" && <em className={`imc-tag m-${modalityOf(x.u)}`}>{MODALITIES[modalityOf(x.u)]}</em>}
-                          {scopeOf(x.u) !== "local" && <em className="imc-tag s">{SCOPES[scopeOf(x.u)]}</em>}
-                        </span>
-                      )}
-                    </div>
-                    <Badge label={x.isIn ? "Present now" : "Not in"} type={x.isIn ? "in" : "out"} />
+          <div className="imc-wrap">
+            {(groupBy === "hte" ? groups : [{ key: "all", name: null, rows: shown }]).map((g) => (
+              <div key={g.key} className="imc-sec">
+                {g.name !== null && (
+                  <div className="imc-gh">
+                    <b>{g.name}</b>
+                    <span>{g.sup ? `Supervisor: ${g.sup}` : "No supervisor assigned"}</span>
+                    <em>{g.rows.length} intern{g.rows.length === 1 ? "" : "s"} · {g.rows.filter((x) => x.isIn).length} on duty</em>
                   </div>
-                  <div className="ix-ic-stats">
-                    <div><strong>{`${x.hours}h`}</strong><span>{`of ${x.required}h · ${pct}%`}</span></div>
-                    <div><strong>{x.isIn ? hm(x.tIn) : x.tOut ? hm(x.tOut) : "—"}</strong><span>{x.isIn ? "time in today" : x.tOut ? "time out today" : "no tap today"}</span></div>
-                  </div>
-                  <div className="imc-bar" aria-hidden="true"><i style={{ width: pct + "%" }} /></div>
+                )}
+                <div className="ix-intern-grid imc-grid">
+                  {g.rows.map((x) => card(x))}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -2349,9 +2924,34 @@ const fmtDay = (v) => {
 };
 
 // Read-only card (intern home). Polls so a new post shows up without a refresh.
-export function AnnouncementBoard({ limit = 3 }) {
+export function AnnouncementBoard({ limit = 20 }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tip, setTip] = useState(null);                 // { a, el }: the hover card for a long announcement
+  const tipRef = useRef(null);
+  // every announcement shows its full text on hover
+  const showTip = (a) => (e) => setTip({ a, el: e.currentTarget });
+  // put the card beside the announcement (left, since the panel is on the right; right if there is no room), inside the window
+  useLayoutEffect(() => {
+    const t = tipRef.current;
+    if (!t || !tip?.el || !tip.el.isConnected) return;
+    const z = currentFit();
+    const r = tip.el.getBoundingClientRect();
+    const vw = window.innerWidth / z, vh = window.innerHeight / z;
+    const w = t.offsetWidth, h = t.offsetHeight;
+    let left = r.left / z - 12 - w;
+    if (left < 8) left = Math.min(r.right / z + 12, vw - w - 8);
+    t.style.left = Math.max(8, left) + "px";
+    t.style.top = Math.min(Math.max(8, r.top / z), Math.max(8, vh - h - 8)) + "px";
+    t.style.visibility = "visible";
+  });
+  useEffect(() => {
+    if (!tip) return undefined;
+    const off = () => setTip(null);
+    window.addEventListener("scroll", off, true);
+    window.addEventListener("resize", off);
+    return () => { window.removeEventListener("scroll", off, true); window.removeEventListener("resize", off); };
+  }, [tip]);
 
   useEffect(() => {
     let alive = true;
@@ -2383,18 +2983,34 @@ export function AnnouncementBoard({ limit = 3 }) {
           <p>Important OJT announcements will appear here.</p>
         </div>
       ) : (
-        <ul className="ann-list">
-          {items.slice(0, limit).map((a) => (
-            <li key={a.id}>
+        <ul className="ann-list ann-two">
+          {items.slice(0, Math.max(limit, 20)).map((a) => (
+            <li key={a.id} tabIndex={0} onMouseEnter={showTip(a)} onFocus={showTip(a)} onMouseLeave={() => setTip(null)} onBlur={() => setTip(null)}>
               <strong>{a.title}</strong>
               <p>{a.body}</p>
             </li>
           ))}
         </ul>
       )}
+      {tip && createPortal(
+        <div ref={tipRef} className="ann-tip" role="tooltip" style={{ visibility: "hidden" }}>
+          <style>{ANN_TIP_CSS}</style>
+          <strong>{tip.a.title}</strong>
+          {tip.a.body && <p>{tip.a.body}</p>}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
+const ANN_TIP_CSS = `
+  .ann-tip { position: fixed; z-index: 9999; width: 320px; max-width: calc(100vw - 24px); max-height: 70vh; overflow: hidden; padding: 14px 16px;
+    background: #fff; border: 1px solid #f1e2d9; border-radius: 12px; box-shadow: 0 14px 32px rgba(15,23,42,.18);
+    font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1f2937; display: flex; flex-direction: column; gap: 6px; pointer-events: none; animation: ann-tip-in .12s ease-out; }
+  .ann-tip strong { font-size: 13.5px; line-height: 1.35; color: #0f172a; overflow-wrap: anywhere; }
+  .ann-tip p { margin: 0; font-size: 12.5px; line-height: 1.55; color: #475569; white-space: pre-line; overflow-wrap: anywhere; }
+  @keyframes ann-tip-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+`;
 
 // Full page for staff: post a new announcement + manage the old ones
 export function AnnouncementManager({ user }) {
@@ -2654,7 +3270,7 @@ const NOTIF_PAGES = {
     supervisor_assigned: "/supervisor/interns", dtr_certified: "/supervisor/reports?tab=dtr", announcement: "/supervisor",
   },
   admin: {
-    nfc_print: "/admin/accounts?tab=cards", nfc_request: "/admin/accounts?tab=cards", nfc_review: "/admin/accounts?tab=cards", announcement: "/admin",
+    nfc_print: "/admin/cards", nfc_request: "/admin/cards", nfc_review: "/admin/cards", announcement: "/admin",
   },
 };
 // title words -> type (for notifications saved before types were used everywhere)
@@ -2956,6 +3572,15 @@ export default function Shell({ navItems, user, children }) {
     try { return !isMobile() && localStorage.getItem(SIDEBAR_KEY) !== "0"; } catch { return !isMobile(); }
   });
   const [isFull, setIsFull] = useState(false);
+
+  // tell the server this account has the portal open (shown as "Online" to coordinators and supervisors)
+  useEffect(() => {
+    const ping = () => { if (!document.hidden) fetch(`${API}/me/ping`, { method: "POST", headers: { Accept: "application/json" } }).catch(() => {}); };
+    ping();
+    const iv = setInterval(ping, 60000);
+    document.addEventListener("visibilitychange", ping);
+    return () => { clearInterval(iv); document.removeEventListener("visibilitychange", ping); };
+  }, []);
 
   // live updates: one small "has anything changed?" check for the whole page
   useEffect(() => {
@@ -4967,6 +5592,11 @@ const css = `
   .ann-cell small { font-size: 11.5px; color: #9ca3af; }
   @media (max-width: 1000px) { .side-split { grid-template-columns: 1fr; } }
   .ann-split > * { min-width: 0; margin: 0; }
+  /* the intern's announcement card shows two announcements; with more, the list scrolls inside the card */
+  .ix-page .adm-duty > .ann-list.ann-two, .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > .ann-list.ann-two {
+    flex: none !important; min-height: 0 !important; max-height: 236px !important; overflow-y: auto !important; padding-right: 4px !important;
+    scrollbar-width: thin; scrollbar-color: #f0c9b8 transparent; overscroll-behavior: contain; }
+  .ann-list.ann-two::-webkit-scrollbar { width: 6px; } .ann-list.ann-two::-webkit-scrollbar-thumb { background: #f0c9b8; border-radius: 99px; }
   .ann-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   .ann-manage { margin: 0; padding: 16px 20px 20px; }
   .ann-list li { padding: 12px 14px; border-radius: 14px; background: #fff6f1; border: 1px solid #f8e3d8; }
@@ -5401,8 +6031,15 @@ const css = `
 
 
   /* modality / scope tags on the Monitor Interns cards */
+  .ix-page .imc-wrap { display: flex; flex-direction: column; gap: 18px; }
+  .ix-page .imc-gh { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 0 2px 8px; margin-bottom: 10px; border-bottom: 1px solid #e7e9ee; }
+  .ix-page .imc-gh b { font-size: 14px; font-weight: 600; color: #1f2430; }
+  .ix-page .imc-gh span { font-size: 12.5px; color: #6b7280; }
+  .ix-page .imc-gh em { margin-left: auto; font-style: normal; font-size: 12px; color: #6b7280; }
   .ix-page .imc-tags { display: flex !important; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
   .ix-page .imc-tag { font-style: normal; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 99px; line-height: 1.3; background: #eef2ff; color: #4338ca; }
+  .ix-page .imc-tag.a-red { background: #fdeaea; color: #b91c1c; }
+  .ix-page .imc-tag.a-amber { background: #fff4e0; color: #b45309; }
   .ix-page .imc-tag.m-virtual { background: #f3e8ff; color: #7e22ce; }
   .ix-page .imc-tag.m-hybrid { background: #e0f2fe; color: #0369a1; }
   .ix-page .imc-tag.m-project { background: #dcfce7; color: #15803d; }

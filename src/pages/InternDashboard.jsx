@@ -1,5 +1,5 @@
 // InternDashboard.jsx
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import Shell, {
@@ -15,6 +15,7 @@ import { DashLayout, Panel, DashRow, DashEmpty, TimeLine } from "../components/D
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API, STORAGE } from "../config.js";
+import RequirementForms from "./RequirementForms.jsx";   // blank forms to download and print
 import { MyGrade } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
 import { ID_OFFICE, CardFace, CardBack, idCardCss, loadCardSettings } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
 
@@ -189,7 +190,7 @@ const REQ_KINDS = {
   online:     { label: "Online attendance", icon: "upload" },
   overtime:   { label: "Overtime",          icon: "clock" },
   correction: { label: "Time correction",   icon: "pencil" },
-  event:      { label: "School event",      icon: "calendar" },
+  event:      { label: "Excused",           icon: "calendar" },
 };
 
 function reqSteps(row) {
@@ -222,7 +223,8 @@ function MyRequests({ user, records }) {
   const [fixes, setFixes] = useState([]);
   const [events, setEvents] = useState([]);
   const [evOpen, setEvOpen] = useState(false);
-  const [evForm, setEvForm] = useState({ date: "", event_name: "", reason: "", mandatory: false });
+  const [evForm, setEvForm] = useState({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" });
+  const [evProof, setEvProof] = useState(null);
   const [evBusy, setEvBusy] = useState(false);
   const [evMsg, setEvMsg] = useState(null);
   // missed a whole day (no tap at all)
@@ -253,16 +255,21 @@ function MyRequests({ user, records }) {
   };
   useEffect(() => { load(); return liveRefresh(load); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const openEvent = () => { setEvForm({ date: "", event_name: "", reason: "", mandatory: false }); setEvMsg(null); setEvOpen(true); };
+  const openEvent = () => { setEvProof(null); setEvForm({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" }); setEvMsg(null); setEvOpen(true); };
   const sendEvent = async (e) => {
     e.preventDefault();
+    if (!evProof) { setEvMsg({ type: "error", text: "Attach a proof first (a medical certificate, event invitation or similar)." }); return; }
     setEvBusy(true); setEvMsg(null);
     try {
-      const res = await fetch(`${API}/intern/school-events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ user_id: user.id, ...evForm, event_name: evForm.event_name.trim(), reason: evForm.reason.trim() }),
-      });
+      const fd = new FormData();
+      fd.append("user_id", user.id);
+      fd.append("date", evForm.date);
+      fd.append("event_name", evForm.event_name.trim());
+      fd.append("reason", evForm.reason.trim());
+      fd.append("mandatory", evForm.mandatory ? "1" : "0");
+      fd.append("portion", evForm.portion);
+      if (evProof) fd.append("proof", evProof);
+      const res = await fetch(`${API}/intern/school-events`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
       setEvOpen(false);
@@ -328,7 +335,7 @@ function MyRequests({ user, records }) {
     ...events.map((v) => ({
       key: `e${v.id}`, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
       endorsed: !!v.endorsed_at || v.status === "endorsed",
-      details: `${v.event_name}${v.mandatory ? " (mandatory)" : ""} · excused, no hours counted${v.reason ? " — " + v.reason : ""}`,
+      details: `${v.event_name}${v.mandatory ? " (mandatory)" : ""} · excused ${PORTION_LBL[v.portion] || "whole day"}, no hours counted for it${v.reason ? " — " + v.reason : ""}`,
       remarks: v.remarks || v.endorse_remarks,
     })),
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -372,7 +379,7 @@ function MyRequests({ user, records }) {
         <div className="ix-card flush rq-table">
           {loading ? <Spinner /> : shown.length === 0 ? (
             <div className="rq-empty"><Icon name="inbox" size={22} /><b>{rows.length ? "Nothing here" : "No requests yet"}</b>
-              <small>Online attendance, overtime, time corrections and school events you file will show up here.</small></div>
+              <small>Online attendance, overtime, time corrections and excuses you file will show up here.</small></div>
           ) : (
             <table>
               <thead><tr><th>Request</th><th>Filed</th><th>Where it is</th><th>Status</th></tr></thead>
@@ -417,15 +424,15 @@ function MyRequests({ user, records }) {
               <button type="button" title="Opens My Attendance: use “Request fix” on that day" onClick={() => go("/intern/records")}><Icon name="pencil" size={15} /><span>Forgot to time in / out</span></button>
               <button type="button" onClick={openDay}><Icon name="calendar" size={15} /><span>Missed a whole day</span></button>
               <button type="button" onClick={() => go("/intern/online")}><Icon name="upload" size={15} /><span>Online attendance</span></button>
-              <button type="button" title="Attending a CSU school event: an excused day, no hours counted" onClick={openEvent}><Icon name="calendar" size={15} /><span>School event (excused)</span></button>
+              <button type="button" title="Sick, a school event or another valid reason: the excused time is not counted as absent" onClick={openEvent}><Icon name="calendar" size={15} /><span>Excused (sick, school event)</span></button>
             </div>
           </div>
           <div className="ix-card rq-box rq-how-box">
             <b>How approval works</b>
             <ol className="rq-how2">
               <li><span>1</span><div><strong>You file it</strong><small>From My Attendance or Submit Online.</small></div></li>
-              <li><span>2</span><div><strong>Your HTE supervisor checks it</strong><small>Tap fixes end here. School events go on to the coordinator.</small></div></li>
-              <li><span>3</span><div><strong>The OJT coordinator decides</strong><small>For online days, overtime and school events.</small></div></li>
+              <li><span>2</span><div><strong>Your HTE supervisor checks it</strong><small>Tap fixes end here. Excuses go on to the coordinator.</small></div></li>
+              <li><span>3</span><div><strong>The OJT coordinator decides</strong><small>For online days, overtime and excuses.</small></div></li>
             </ol>
             <div className="rq-legend">
               <small>What the colors mean</small>
@@ -491,8 +498,8 @@ function MyRequests({ user, records }) {
       )}
 
       {evOpen && (
-        <Drawer title="School event (excused)" kicker="Excused absence" icon="calendar"
-          sub="Attending a CSU event? The day is excused: no OJT hours are counted for it, and it is not counted as absent."
+        <Drawer title="Excused absence" kicker="Excused" icon="calendar"
+          sub="Sick or attending a school event? The excused part of the day is not counted as absent and gives no OJT hours. Hours you work outside the event count as normal."
           onClose={() => setEvOpen(false)}
           footer={(close) => (<>
             <button type="button" className="ix-b ghost" onClick={close} disabled={evBusy}>Cancel</button>
@@ -506,15 +513,25 @@ function MyRequests({ user, records }) {
                 onChange={(e) => setEvForm((f) => ({ ...f, date: e.target.value }))} />
               <small className="fx-hint">A weekday. File it before the event if you can.</small>
             </div>
+            <PortionPick value={evForm.portion} onChange={(v) => setEvForm((f) => ({ ...f, portion: v }))} />
             <div className="ix-field">
-              <label htmlFor="ev-name">Event</label>
-              <input id="ev-name" type="text" required maxLength={160} value={evForm.event_name} placeholder="e.g. University Foundation Day"
+              <label htmlFor="ev-name">Reason</label>
+              <input id="ev-name" type="text" required maxLength={160} value={evForm.event_name} placeholder="e.g. Sick (fever), or University Foundation Day"
                 onChange={(e) => setEvForm((f) => ({ ...f, event_name: e.target.value }))} />
             </div>
             <label className="ix-check">
               <input type="checkbox" checked={evForm.mandatory} onChange={(e) => setEvForm((f) => ({ ...f, mandatory: e.target.checked }))} />
-              <span>This event is mandatory for students</span>
+              <span>Mandatory school event</span>
             </label>
+            <div className="ix-field so-proof">
+              <label htmlFor="ev-proof">Proof (photo or PDF, required)</label>
+              <label className={`so-file${evProof ? " has" : ""}`} htmlFor="ev-proof">
+                <Icon name="upload" size={15} /><span>{evProof ? evProof.name : "Tap to attach: medical certificate, invitation..."}</span>
+                {evProof && <button type="button" onClick={(e) => { e.preventDefault(); setEvProof(null); }} aria-label="Remove file">✕</button>}
+              </label>
+              <input id="ev-proof" type="file" accept="image/*,.pdf" hidden onChange={(e) => setEvProof(e.target.files?.[0] || null)} />
+              <style>{PROOF_CSS}</style>
+            </div>
             <div className="ix-field">
               <label htmlFor="ev-reason">Note (optional)</label>
               <textarea id="ev-reason" rows={3} maxLength={500} value={evForm.reason} placeholder="e.g. Morning program, I will report to the office after lunch."
@@ -1105,7 +1122,7 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
         <div className="at-excused" role="note">
           <Icon name="calendar" size={15} />
           <div>
-            <b>Excused school events</b>
+            <b>Excused days</b>
             <span>{Object.entries(excusedDays).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6)
               .map(([d, n]) => `${new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ${n}`).join("   ")}</span>
             <small>Excused, not absent. The event time gives no OJT hours.</small>
@@ -1282,12 +1299,19 @@ function SubmitOnline({ user }) {
   const [loadingSubs, setLoadingSubs] = useState(true);
   const [tab, setTab] = useState("all");
   const [openId, setOpenId] = useState(null);
+  const [kind, setKind] = useState("online");
+  const [evs, setEvs] = useState([]);
+  const [evf, setEvf] = useState({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" });
+  const [proof, setProof] = useState(null);
 
   const fetchSubs = async () => {
     try {
       const res = await fetch(`${ONLINE_LIST_URL}?user_id=${user.id}`, { headers: { Accept: "application/json" } });
       const data = await res.json();
       setSubs(Array.isArray(data) ? data : []);
+      const r2 = await fetch(`${API}/intern/school-events?user_id=${user.id}`, { headers: { Accept: "application/json" } }).catch(() => null);
+      const d2 = r2 && r2.ok ? await r2.json().catch(() => []) : [];
+      setEvs(Array.isArray(d2) ? d2 : []);
     } catch {
       /* keep what we already have */
     } finally {
@@ -1301,25 +1325,51 @@ function SubmitOnline({ user }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const removeSub = async (id) => {
+  const removeSub = async (id, isEv) => {
     setMsg(null);
     try {
-      const res = await fetch(ONLINE_DELETE_URL(id, user.id), { method: "DELETE", headers: { Accept: "application/json" } });
+      const res = await fetch(isEv ? `${API}/intern/school-events/${id}` : ONLINE_DELETE_URL(id, user.id), { method: "DELETE", headers: { Accept: "application/json" } });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || "Couldn't remove this submission.");
-      setSubs((list) => list.filter((x) => x.id !== id));
+      if (isEv) setEvs((list) => list.filter((x) => x.id !== id)); else setSubs((list) => list.filter((x) => x.id !== id));
       setMsg({ type: "success", text: data.message || "Submission removed." });
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
     }
   };
 
-  const shown = subs
+  const all = [
+    ...subs.map((x) => ({ ...x, key: `o-${x.id}` })),
+    ...evs.map((v) => ({ ...v, key: `e-${v.id}`, isEv: true, description: v.event_name || "Excused" })),
+  ];
+  const shown = all
     .filter((x) => tab === "all" || soGroup(x) === tab)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setSub(true); setMsg(null);
+    if (kind === "event") {
+      if (!proof) { setMsg({ type: "error", text: "Attach a proof first (a medical certificate, event invitation or similar)." }); setSub(false); return; }
+      try {
+        const fd = new FormData();
+        fd.append("user_id", user.id);
+        fd.append("date", evf.date);
+        fd.append("event_name", evf.event_name.trim());
+        fd.append("reason", evf.reason.trim());
+        fd.append("mandatory", evf.mandatory ? "1" : "0");
+        fd.append("portion", evf.portion);
+        if (proof) fd.append("proof", proof);
+        const res = await fetch(`${API}/intern/school-events`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
+        setMsg({ type: "success", text: data.message || "Excuse sent for approval." });
+        setEvf({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" });
+        setProof(null);
+        fetchSubs();
+      } catch (err) { setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message }); }
+      finally { setSub(false); }
+      return;
+    }
     try {
       const res = await fetch(`${API}/intern/submit-online`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1342,62 +1392,100 @@ function SubmitOnline({ user }) {
       <div className="so-cols">
         {/* left: the form, always there */}
         <form onSubmit={handleSubmit} className="ix-card so-form">
-          <div className="so-hd"><b>Log an online day</b></div>
+          <div className="so-hd"><b>{kind === "event" ? "File an excused absence" : "Log an online day"}</b></div>
           <div className="so-body">
-            <div className="ix-field">
-              <label htmlFor="ix-date">Date of work</label>
-              <input id="ix-date" type="date" value={form.date} required max={manilaToday()}
-                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
+            <div className="so-kind" role="tablist">
+              <button type="button" role="tab" aria-selected={kind === "online"} className={kind === "online" ? "on" : ""} onClick={() => setKind("online")}>Online workday</button>
+              <button type="button" role="tab" aria-selected={kind === "event"} className={kind === "event" ? "on" : ""} onClick={() => setKind("event")}>Excused absence</button>
             </div>
-            <div className="ix-field">
-              <label htmlFor="ix-desc">Tasks completed</label>
-              <textarea id="ix-desc" rows={6} value={form.description} required
-                placeholder="Describe in detail what you worked on that day..."
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
-            </div>
-            <small className="so-note">Your HTE supervisor confirms it first, then your OJT coordinator approves or rejects it. Approved days count as 8:00 AM – 5:00 PM.</small>
+            {kind === "online" ? (<>
+              <div className="ix-field">
+                <label htmlFor="ix-date">Date of work</label>
+                <input id="ix-date" type="date" value={form.date} required max={manilaToday()}
+                  onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
+              </div>
+              <div className="ix-field so-fill">
+                <label htmlFor="ix-desc">Tasks completed</label>
+                <textarea id="ix-desc" rows={6} value={form.description} required
+                  placeholder="Describe in detail what you worked on that day..."
+                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+              </div>
+              <small className="so-note">Your HTE supervisor confirms it first, then your OJT coordinator approves or rejects it. Approved days count as 8:00 AM – 5:00 PM.</small>
+            </>) : (<>
+              <div className="ix-field">
+                <label htmlFor="sev-date">Which day?</label>
+                <input id="sev-date" type="date" required min={addDays(manilaToday(), -30)} value={evf.date}
+                  onChange={(e) => setEvf((f) => ({ ...f, date: e.target.value }))} />
+              </div>
+              <PortionPick value={evf.portion} onChange={(v) => setEvf((f) => ({ ...f, portion: v }))} />
+              <div className="ix-field">
+                <label htmlFor="sev-name">Reason</label>
+                <input id="sev-name" type="text" required maxLength={160} value={evf.event_name} placeholder="e.g. Sick (fever), or University Foundation Day"
+                  onChange={(e) => setEvf((f) => ({ ...f, event_name: e.target.value }))} />
+              </div>
+              <label className="ix-check">
+                <input type="checkbox" checked={evf.mandatory} onChange={(e) => setEvf((f) => ({ ...f, mandatory: e.target.checked }))} />
+                <span>Mandatory school event</span>
+              </label>
+              <div className="ix-field">
+                <label htmlFor="sev-reason">Note (optional)</label>
+                <textarea id="sev-reason" rows={2} style={{ minHeight: 64 }} maxLength={500} value={evf.reason} placeholder="e.g. Morning program, I will report to the office after lunch."
+                  onChange={(e) => setEvf((f) => ({ ...f, reason: e.target.value }))} />
+              </div>
+              <div className="ix-field so-proof">
+                <label htmlFor="sev-proof">Proof (photo or PDF, required)</label>
+                <label className={`so-file${proof ? " has" : ""}`} htmlFor="sev-proof">
+                  <Icon name="upload" size={15} /><span>{proof ? proof.name : "Tap to attach: medical certificate, invitation..."}</span>
+                  {proof && <button type="button" onClick={(e) => { e.preventDefault(); setProof(null); }} aria-label="Remove file">✕</button>}
+                </label>
+                <input id="sev-proof" type="file" accept="image/*,.pdf" hidden onChange={(e) => setProof(e.target.files?.[0] || null)} />
+              </div>
+              <small className="so-note">The excused time gives no hours and is not marked absent. Hours you work outside it count as normal. Supervisor confirms, then coordinator approves.</small>
+            </>)}
             <button type="submit" disabled={submitting} className="ix-b primary so-send">
-              <Icon name="send" size={15} /> {submitting ? "Submitting..." : "Submit for approval"}</button>
+              <Icon name="send" size={15} /> {submitting ? "Submitting..." : kind === "event" ? "Send for approval" : "Submit for approval"}</button>
           </div>
         </form>
 
         {/* right: everything already sent, newest first */}
         <div className="ix-card so-list">
           <div className="so-hd">
-            <b>Your online days</b>
+            <b>My online submissions</b>
             <div className="so-tabs" role="tablist">
               {SO_TABS.map(([k, label]) => (
                 <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
-                  {label} · {subs.filter((x) => soGroup(x) === k || k === "all").length}
+                  {label} · {all.filter((x) => soGroup(x) === k || k === "all").length}
                 </button>
               ))}
             </div>
           </div>
           {loadingSubs ? <Spinner /> : shown.length === 0 ? (
-            <div className="so-empty"><Icon name="upload" size={20} /><b>{subs.length ? "Nothing here." : "No online days yet."}</b>
-              <small>{subs.length ? "Try another filter." : "Days you log on the left will show up here."}</small></div>
+            <div className="so-empty"><Icon name="upload" size={20} /><b>{all.length ? "Nothing here." : "No submissions yet."}</b>
+              <small>{all.length ? "Try another filter." : "Days you log on the left will show up here."}</small></div>
           ) : (
             <ul className="so-items">
               {shown.map((x) => {
-                const st = soStage(x);
+                const st = x.isEv ? { ...soStage(x), text: soStage(x).text.replace(" · counted 8:00 AM – 5:00 PM", " · excused day") } : soStage(x);
                 const d = new Date(String(x.date).slice(0, 10) + "T12:00:00");
-                const isOpen = openId === x.id;
+                const isOpen = openId === x.key;
                 return (
-                  <li key={x.id} className={isOpen ? "open" : ""}>
-                    <button type="button" className="so-row" onClick={() => setOpenId(isOpen ? null : x.id)} aria-expanded={isOpen}>
+                  <li key={x.key} className={isOpen ? "open" : ""}>
+                    <button type="button" className="so-row" onClick={() => setOpenId(isOpen ? null : x.key)} aria-expanded={isOpen}>
                       <span className="so-dd"><b>{d.getDate()}</b><small>{d.toLocaleDateString("en-US", { weekday: "short" })}</small></span>
                       <span className="so-tx">
-                        <b>{x.description}</b>
+                        <b><em className={`so-tag${x.isEv ? "" : " wd"}`}>{x.isEv ? `Excused absence${x.portion === "am" ? " · Morning" : x.portion === "pm" ? " · Afternoon" : ""}` : "Online workday"}</em>{x.description}</b>
                         <span className="so-steps"><i className={st.a} /><i className={st.b} /><em>{st.text}</em></span>
                       </span>
                       <span className={`so-pill ${st.tone}`}>{st.label}</span>
                     </button>
                     {isOpen && (
                       <div className="so-more">
-                        <div><span>{d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span><p>{x.description}</p></div>
+                        <div><span>{d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span><p>{x.description}{x.isEv && x.mandatory ? " (mandatory school event)" : ""}{x.isEv ? ` · excused ${PORTION_LBL[x.portion] || "whole day"}` : ""}</p></div>
+                        {x.isEv && x.reason && <div><span>Note</span><p>{x.reason}</p></div>}
+                        {x.isEv && x.proof_path && <div><span>Proof</span><p><a className="ix-link" href={`${STORAGE}${x.proof_path}`} target="_blank" rel="noopener noreferrer">{x.proof_name || "View file"}</a></p></div>}
                         {x.remarks && <div><span>Remarks</span><p>“{x.remarks}”</p></div>}
                         {(x.status || "pending") === "pending" && (
-                          <div className="so-act"><small>You can remove it while it's still waiting.</small><RemoveBtn onConfirm={() => removeSub(x.id)} /></div>
+                          <div className="so-act"><small>You can remove it while it's still waiting.</small><RemoveBtn onConfirm={() => removeSub(x.id, x.isEv)} /></div>
                         )}
                       </div>
                     )}
@@ -1413,6 +1501,19 @@ function SubmitOnline({ user }) {
   );
 }
 
+const PORTION_LBL = { whole: "whole day", am: "morning", pm: "afternoon" };
+function PortionPick({ value = "whole", onChange }) {
+  return (
+    <div className="ix-field">
+      <label>How long are you excused?</label>
+      <div className="so-kind so-three" role="radiogroup">
+        {[["whole", "Whole day"], ["am", "Morning"], ["pm", "Afternoon"]].map(([k, l]) => (
+          <button key={k} type="button" role="radio" aria-checked={value === k} className={value === k ? "on" : ""} onClick={() => onChange(k)}>{l}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
 const SO_TABS = [["all", "All"], ["waiting", "Waiting"], ["approved", "Approved"], ["rejected", "Rejected"]];
 const soGroup = (x) => (x.status === "approved" ? "approved" : x.status === "rejected" ? "rejected" : "waiting");
 // two dots: 1 = HTE supervisor, 2 = OJT coordinator
@@ -1427,7 +1528,24 @@ function soStage(x) {
   }
   return { a: "wait", b: "", tone: "wait", label: "Waiting", text: "Waiting for your HTE supervisor" };
 }
+const PROOF_CSS = `
+.so-file { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1.5px dashed #d6dae1; border-radius: 10px; background: #fafbfc; color: #6b7280; font-size: 12.5px; cursor: pointer; overflow: hidden; box-sizing: border-box; }
+.so-file:hover { border-color: #e8582a; color: #c2410c; }
+.so-file.has { border-style: solid; border-color: #f6c9b3; background: #fff7f3; color: #c2410c; font-weight: 600; }
+.so-file span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.so-file button { border: 0; background: none; color: inherit; cursor: pointer; font-size: 13px; padding: 2px 4px; }`;
 const SO_CSS = `
+.ix-page .ix-content .so-file { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1.5px dashed #d6dae1; border-radius: 10px; background: #fafbfc; color: #6b7280; font-size: 12.5px; cursor: pointer; overflow: hidden; }
+.ix-page .ix-content .so-file:hover { border-color: #e8582a; color: #c2410c; }
+.ix-page .ix-content .so-file.has { border-style: solid; border-color: #f6c9b3; background: #fff7f3; color: #c2410c; font-weight: 600; }
+.ix-page .ix-content .so-file span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ix-page .ix-content .so-file button { border: 0; background: none; color: inherit; cursor: pointer; font-size: 13px; padding: 2px 4px !important; }
+.ix-page .ix-content .so-kind { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; background: #f3f4f6; border: 1px solid #e8ebf0; border-radius: 10px; }
+.ix-page .ix-content .so-kind.so-three { grid-template-columns: 1fr 1fr 1fr; }
+.ix-page .ix-content .so-kind button { height: 32px; border: 0; border-radius: 8px; background: transparent; color: #4b5563; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 0 6px !important; }
+.ix-page .ix-content .so-kind button.on { background: #fff; color: #c2410c; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
+.ix-page .ix-content .so-tag.wd { color: #1d4ed8; background: #eef4ff; border-color: #cfe0ff; }
+.ix-page .ix-content .so-tag { display: inline-block; font-style: normal; font-size: 10.5px; font-weight: 700; color: #c2410c; background: #fdece4; border: 1px solid #f6c9b3; border-radius: 99px; padding: 1px 8px; margin-right: 7px; vertical-align: 1px; }
 .ix-page .ix-content .so-cols { display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); gap: 14px; align-items: stretch; }
 .ix-page .ix-content .so-cols > .ix-card { padding: 0 !important; overflow: hidden; margin: 0 !important; }
 .ix-page .ix-content .so-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; min-height: 54px; padding: 10px 18px; border-bottom: 1px solid #eef0f3; box-sizing: border-box; }
@@ -1474,9 +1592,12 @@ const SO_CSS = `
   .ix-page .ix-content .so-list .so-items { flex: 1 1 0; min-height: 0; max-height: none; overflow-y: auto; }
   .ix-page .ix-content .so-list > .ix-spin, .ix-page .ix-content .so-list > .so-empty { flex: 1; }
   /* the form gives or takes space through the tasks box, so its button always shows */
-  .ix-page .ix-content .so-form .so-body { flex: 1 1 0; min-height: 0; }
-  .ix-page .ix-content .so-form .so-body > .ix-field:has(textarea) { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-  .ix-page .ix-content .so-form .so-body textarea { flex: 1 1 0; min-height: 70px !important; height: auto !important; resize: none; }
+  .ix-page .ix-content .so-form .so-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+  .ix-page .ix-content .so-form .so-body > * { flex-shrink: 0; }
+  .ix-page .ix-content .so-form .so-body > .so-send { position: sticky; bottom: 0; box-shadow: 0 -8px 10px -4px #fff; }
+  .ix-page .ix-content .so-form .so-body > .so-fill { flex-shrink: 1; }
+  .ix-page .ix-content .so-form .so-body > .ix-field.so-fill { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .ix-page .ix-content .so-form .so-body .so-fill textarea { flex: 1 1 0; min-height: 70px !important; height: auto !important; resize: none; }
 }
 @media (max-width: 900px) {
   .ix-page .ix-content .so-cols { grid-template-columns: 1fr; }
@@ -1526,10 +1647,31 @@ function WorkModeCard({ user }) {
 }
 
 /* ───────────────────────── Submit MOV ───────────────────────── */
+/* a look at the submitted file inside the drawer: PDF and images show right there; Word files can only be opened */
+function FilePreview({ x }) {
+  const url = `${STORAGE}${x.file_path}`;
+  const ext = String(x.original_name || x.file_path || "").split(".").pop().toLowerCase();
+  const isImg = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext);
+  const isPdf = ext === "pdf";
+  return (
+    <div className="mv-prev">
+      <div className="mv-prev-h"><span>Preview</span>
+        <a className="ix-link" href={url} target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
+      <div className="mv-prev-box">
+        {isPdf ? <iframe title={x.original_name || "Submitted file"} src={`${url}#toolbar=0&navpanes=0&view=FitH`} />
+          : isImg ? <img src={url} alt={x.original_name || "Submitted file"} />
+          : <div className="mv-prev-none"><Icon name="file" size={26} /><span>No preview for this file type.</span><a className="ix-link" href={url} target="_blank" rel="noopener noreferrer">Open {x.original_name || "the file"}</a></div>}
+      </div>
+    </div>
+  );
+}
+
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,.doc,.docx";
 
 function SubmitMov({ user, unlocked, totalHours, required }) {
   const [tab, setTab] = useState("pre");
+  const [prevId, setPrevId] = useState(null);      // which submitted file the drawer previews
+  const [formsOpen, setFormsOpen] = useState(false);   // "Forms to print" panel
   const [movs, setMovs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState(null);
@@ -1639,12 +1781,13 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                       <div><b>Other documents</b><small>Any other document you need to submit.</small></div></div>
                     <form onSubmit={submitOther} className="ibx-sec mv-upform">
                       <span>Send a document</span>
-                      <input type="text" className="ix-input" required placeholder="Document title, e.g. Company ID copy"
+                      <input type="text" className="ix-input" required placeholder="Document title, e.g. "
                         value={otherTitle} onChange={(e) => setOtherTitle(e.target.value)} />
                       <label className={otherFile ? "ix-drop has-file" : "ix-drop"}>
                         <input type="file" accept={ACCEPT} onChange={(e) => setOtherFile(e.target.files[0] || null)} />
                         <span className="ix-drop-icon"><Icon name={otherFile ? "file" : "upload"} size={20} /></span>
-                        <span className="ix-drop-text">{otherFile ? otherFile.name : "Click to choose a file"}<small>{otherFile ? "Click to change" : "PDF, JPG, PNG, DOC or DOCX"}</small></span>
+                        <span className="ix-drop-text">{otherFile ? otherFile.name : "Drag file or photos here"}<small>{otherFile ? "Drop another file to change it" : "PDF, JPG, PNG, DOC or DOCX"}</small></span>
+                        <span className="ix-b ghost sm mv-choose">{otherFile ? "Change file" : "Choose file"}</span>
                       </label>
                       <button type="submit" disabled={busyKey !== null} className="ix-b primary">{busyKey === "others" ? "Uploading..." : "Submit"}</button>
                     </form>
@@ -1728,6 +1871,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                 const mine = movs.filter((x) => x.requirement === r.key && inPhase(x));
                 const canUpload = r.repeat || !m || m.status === "rejected";
                 const due = dueStatus(deadlines[`${phase}:${r.key}`], r.repeat ? null : m);
+                const shownFile = (r.repeat ? mine.find((x) => x.id === prevId) : null) || mine[0] || null;
                 return (
                   <>
                     <div className="ibx-head">
@@ -1754,7 +1898,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                     <div className="ibx-sec"><span>{r.repeat ? `Submitted (${mine.length})` : "Your submission"}</span>
                       {mine.length === 0 ? <p className="ix-muted">Nothing submitted yet.</p> : (
                         <ul className="mv-hist">{(r.repeat ? mine : mine.slice(0, 1)).map((x) => (
-                          <li key={x.id}>
+                          <li key={x.id} className={r.repeat && shownFile?.id === x.id ? "mv-sel" : ""} onClick={r.repeat ? () => setPrevId(x.id) : undefined} style={r.repeat ? { cursor: "pointer" } : undefined}>
                             <span className="mv-hist-main">{fileLink(x)}<small>{[x.created_at && !isNaN(new Date(x.created_at)) ? `Sent ${new Date(x.created_at).toLocaleDateString("en-PH")}` : "", x.remarks ? `“${x.remarks}”` : ""].filter(Boolean).join(" · ")}</small></span>
                             <Badge label={cap(x.status)} type={statusType(x.status)} />
                             {x.status === "pending" && <RemoveBtn onConfirm={() => removeMov(x.id)} />}
@@ -1762,6 +1906,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                         ))}</ul>
                       )}
                     </div>
+                    {shownFile && <FilePreview x={shownFile} />}
                   </>
                 );
               };
@@ -1777,8 +1922,19 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
             </button>
           ))}
         </div>
-      )} />
+      )}>
+        <button type="button" className="ix-b ghost sm" onClick={() => setFormsOpen(true)}><Icon name="file" size={14} /> Forms and templates</button>
+      </PageHeader>
+      {formsOpen && <RequirementForms onClose={() => setFormsOpen(false)} />}
       <style>{`
+        .mv-prev { flex: 1 1 0; min-height: 260px; display: flex; flex-direction: column; gap: 8px; }
+        .mv-prev-h { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #94a3b8; }
+        .mv-prev-h a { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
+        .mv-prev-box { flex: 1 1 0; min-height: 240px; position: relative; border: 1px solid #e7e9ee; border-radius: 12px; background: #f6f7f9; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .mv-prev-box iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+        .mv-prev-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .mv-prev-none { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px; text-align: center; font-size: 12.5px; color: #6b7280; }
+        .mv-hist li.mv-sel { background: #fff3ee; border-radius: 8px; }
         .req-due { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; vertical-align: 1px; background: #f1f5f9; color: #475569; }
         .req-due.pending { background: #fff4d6; color: #9a5b00; }
         .req-due.rejected { background: #fee2e2; color: #b91c1c; }
@@ -1830,7 +1986,8 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
         .ix-page .mv-chip:hover { background: #dcfce7; }
         .ix-page .mv-alldone { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; background: #ecfdf3; color: #15803d; font-size: 13px; font-weight: 600; }
         .ix-page .mv-drawer .ibx-head { display: none; }
-        .ix-page .mv-drawer { display: flex; flex-direction: column; gap: 12px; }
+        .ix-page .mv-drawer { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; }
+        .ix-page .ix-drawer-body:has(> .mv-drawer) { display: flex; flex-direction: column; }
         @media (max-width: 700px) {
           .ix-page .mv-row { grid-template-columns: 34px minmax(0, 1fr); }
           .ix-page .mv-rt { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
@@ -1881,6 +2038,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
             const c = { approved: 0, pending: 0, rejected: 0, none: 0 };
             list.forEach((r) => { const k = stateOf(r); c[k in c ? k : "none"]++; });
             const n = list.length || 1;
+            const othersWaiting = others.filter((m) => m.status === "pending").length;   // sent under "Other documents", still waiting
             const segs = [["approved", "approved"], ["pending", "waiting"], ["rejected", "needs fix"], ["none", "to upload"]];
             return (
               <div className="mv-prog2">
@@ -1889,7 +2047,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                   {segs.slice(0, 3).map(([k]) => c[k] > 0 && <i key={k} className={k} style={{ width: (c[k] / n) * 100 + "%" }} />)}
                 </span>
                 <span className="mv-legend">
-                  {segs.map(([k, l]) => <span key={k}><i className={k} /><b>{c[k]}</b> {l}</span>)}
+                  {segs.map(([k, l]) => <span key={k}><i className={k} /><b>{k === "pending" ? c[k] + othersWaiting : c[k]}</b> {l}</span>)}
                 </span>
               </div>
             );
@@ -1992,7 +2150,10 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                       <button type="button" className="mv-tx" onClick={() => setOpenKey("__others")}>
                         <b>Other documents</b><small>{others.length ? `Last sent: ${others[0].title}` : "Any other document your coordinator asks for."}</small>
                       </button>
-                      <span className="mv-rt"><button type="button" className="ix-b ghost mv-act" onClick={() => setOpenKey("__others")}>Send or view</button></span>
+                      <span className="mv-rt">
+                        {others.some((m) => m.status === "pending") && <Badge label={`${others.filter((m) => m.status === "pending").length} waiting`} type="pending" />}
+                        <button type="button" className="ix-b ghost mv-act" onClick={() => setOpenKey("__others")}>Upload</button>
+                      </span>
                     </li>
                   </ul>
                 </section>
@@ -2387,7 +2548,9 @@ export function useExcused(forId = null) {
       .then((list) => {
         if (!Array.isArray(list)) { setDays({}); return; }
         const map = {};
-        list.forEach((e) => { map[String(e.date).slice(0, 10)] = e.event_name || "School event"; });
+        const portions = {};
+        list.forEach((e) => { const k = String(e.date).slice(0, 10); map[k] = e.event_name || "Excused"; portions[k] = e.portion || "whole"; });
+        Object.defineProperty(map, "portions", { value: portions, enumerable: false });
         setDays(map);
       })
       .catch(() => {});
@@ -2395,10 +2558,11 @@ export function useExcused(forId = null) {
   return days;
 }
 // printed on the DTR for an excused day with no taps (a holiday on the same day wins)
+// (a morning-only or afternoon-only event is not a day off: the DTR shows the taps instead)
 export const excusedLabels = (map) =>
-  Object.fromEntries(Object.entries(map).map(([d, n]) => [d, `EXCUSED: ${n}`]));
+  Object.fromEntries(Object.entries(map).filter(([d]) => !["am", "pm"].includes(map.portions?.[d])).map(([d, n]) => [d, `EXCUSED: ${n}`]));
 
-export function buildDtr({ records, month, from, to, mode, holidays = {} }) {
+export function buildDtr({ records, month, from, to, mode, holidays = {}, portions = {} }) {
   const S = SCHEDULE;
   const mins = (h) => Math.max(Math.floor(h * 60 + 1e-6), 0);   // hours → whole minutes, never negative
   const inRange = records.filter((r) => {
@@ -2424,18 +2588,19 @@ export function buildDtr({ records, month, from, to, mode, holidays = {} }) {
     let late = 0;
     let early = 0;
     let row;
+    const part = portions[iso];   // "am" / "pm": that half was an excused school event
     if (mode === "two") {
       const last = [...s].reverse().find((x) => x.out);
-      late = mins(manilaHour(s[0].in) - S.amIn);
-      if (last) early = mins(S.pmOut - manilaHour(last.out));
+      late = part === "am" ? 0 : mins(manilaHour(s[0].in) - S.amIn);
+      if (last && part !== "pm") early = mins(S.pmOut - manilaHour(last.out));
       row = { d, amIn: t12(s[0].in), pmOut: last ? t12(last.out) : "" };
     } else {
       const am = s.find((x) => manilaHour(x.in) < 12);
       const pm = s.find((x) => x !== am);
-      if (am) late += mins(manilaHour(am.in) - S.amIn);
-      if (am?.out) early += mins(S.amOut - manilaHour(am.out));
-      if (pm) late += mins(manilaHour(pm.in) - S.pmIn);
-      if (pm?.out) early += mins(S.pmOut - manilaHour(pm.out));
+      if (am && part !== "am") late += mins(manilaHour(am.in) - S.amIn);
+      if (am?.out && part !== "am") early += mins(S.amOut - manilaHour(am.out));
+      if (pm && part !== "pm") late += mins(manilaHour(pm.in) - S.pmIn);
+      if (pm?.out && part !== "pm") early += mins(S.pmOut - manilaHour(pm.out));
       row = {
         d,
         amIn: am ? t12(am.in) : "",
@@ -2492,7 +2657,7 @@ function MyDtr({ user, records, loading, mode }) {
     const month = `${shown.year}-${shown.mon}`;
     const range = periodsOf(shown.year, shown.mon).find((p) => p.key === shown.period);
     const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } =
-      buildDtr({ records, month, from: range.from, to: range.to, mode, holidays });
+      buildDtr({ records, month, from: range.from, to: range.to, mode, holidays, portions: excusedDays.portions || {} });
     const monthName = MONTHS.find((m) => m.value === shown.mon)?.label || "";
     const periodLabel = `${monthName} ${range.from} - ${range.to}, ${shown.year}`;
     const formHtml = dtrFormHtml({
@@ -2658,6 +2823,27 @@ function NfcApply({ user, records = [] }) {
   const [showReplace, setShowReplace] = useState(false);   // replacement form, opened on demand
   const [me, setMe] = useState(null);                       // full account, for the card preview
   const [back, setBack] = useState(false);                  // card preview: front or back
+  // computers: the page is exactly as tall as the window (no page scroll) and the card scales to its box
+  const pageRef = useRef(null);
+  const boxRef = useRef(null);
+  const [zoom, setZoom] = useState(null);
+  useLayoutEffect(() => {
+    const fit = () => {
+      const pg = pageRef.current, box = boxRef.current;
+      if (!pg || !box) return;
+      if (window.innerWidth <= 1000 || window.innerHeight < 600) { if (pg.style.height) pg.style.height = ""; setZoom(null); return; }
+      const h = Math.max(470, Math.floor(window.innerHeight - pg.getBoundingClientRect().top - 34));
+      if (pg.style.height !== h + "px") pg.style.height = h + "px";
+      const r = box.getBoundingClientRect();
+      // CR80 card: 54mm x 85.6mm = about 204 x 324 px; leave room for the Show the back button and padding
+      const z = Math.min((r.height - 96) / 324, (r.width - 44) / 204);
+      setZoom(Math.round(Math.max(0.6, Math.min(1.7, z)) * 100) / 100);
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    const t = setInterval(fit, 400);
+    return () => { window.removeEventListener("resize", fit); clearInterval(t); };
+  });
   useEffect(() => {
     fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
       .then((r) => r.json()).then((d) => setMe(d?.user || d || {})).catch(() => setMe({}));
@@ -2750,11 +2936,11 @@ function NfcApply({ user, records = [] }) {
       {loading ? <Spinner /> : error ? (
         <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>
       ) : (
-        <div className="nc-page">
+        <div className="nc-page" ref={pageRef}>
           {/* 1 · the card (same design as the printed ID) and where it is */}
-          <div className="ix-card nc-hero">
+          <div className="ix-card nc-cardbox" ref={boxRef}>
             <div className="nc-card">
-              <div className={`nc-flip ${back ? "back" : ""} ${hasCard ? "" : "ghost"}`}>
+              <div className={`nc-flip ${back ? "back" : ""} ${hasCard ? "" : "ghost"}`} style={zoom ? { zoom } : undefined}>
                 <div className="nc-side front">{me ? <CardFace u={cardUser} settings={settings} /> : <div className="nc-skel" />}</div>
                 <div className="nc-side rear">{me ? <CardBack u={cardUser} settings={settings} /> : <div className="nc-skel" />}</div>
               </div>
@@ -2763,7 +2949,10 @@ function NfcApply({ user, records = [] }) {
               </button>
               {!hasCard && <span className="nc-preview-tag">{["printed", "linked"].includes(stage) ? `Preview · your card is at the ${ID_OFFICE}` : "Preview · how your card will look"}</span>}
             </div>
+          </div>
 
+          <div className="nc-col">
+          <div className="ix-card nc-hero">
             <div className="nc-info">
               <span className={`nc-state ${notStarted ? "warn" : hasCard ? "ok" : status === "rejected" ? "bad" : active ? "wait" : ""}`}>
                 {notStarted ? "Linked · not active yet" : hasCard ? "Card linked · ready" : status === "rejected" ? "Request not approved" : active ? "On its way" : "No card yet"}
@@ -2817,7 +3006,7 @@ function NfcApply({ user, records = [] }) {
                 <div className="nc-empty">{hasCard ? "No taps yet. Your taps on the kiosk will show here." : "Your taps will show here once your card is active."}</div>
               ) : (
                 <ul className="nc-tlist">
-                  {taps.map((x, i) => (
+                  {taps.slice(0, 5).map((x, i) => (
                     <li key={i}><span><b>{tapDay(x.t)}</b> · {tapTime(x.t)}</span>
                       <span className={`nc-pill ${x.kind}`}>{x.kind === "in" ? "Time in" : "Time out"}</span></li>
                   ))}
@@ -2854,8 +3043,8 @@ function NfcApply({ user, records = [] }) {
                   </button>
                 </form>
               )}
-              <small className="nc-sec"><Icon name="lock" size={13} /> Each tap is checked with a one-time card code, so a copied card won't work.</small>
             </div>
+          </div>
           </div>
         </div>
       )}
@@ -2865,10 +3054,12 @@ function NfcApply({ user, records = [] }) {
 }
 
 const NC_CSS = `
-.ix-page .nc-page { display: flex; flex-direction: column; gap: 14px; }
-.ix-page .ix-card.nc-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 32px; align-items: center; padding: 24px 28px !important; margin: 0 !important; }
+.ix-page .nc-page { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.ix-page .nc-col { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.ix-page .ix-card.nc-cardbox { display: flex; align-items: center; justify-content: center; padding: 22px 30px !important; margin: 0 !important; }
+.ix-page .ix-card.nc-hero { display: block; padding: 24px 28px !important; margin: 0 !important; }
 .ix-page .nc-card { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.ix-page .nc-flip { position: relative; width: 85.6mm; height: 54mm; perspective: 1200px; zoom: 1.12; }
+.ix-page .nc-flip { position: relative; width: 54mm; height: 85.6mm; perspective: 1200px; zoom: 1.12; }
 .ix-page .nc-side { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; transition: transform .6s cubic-bezier(.2,.8,.2,1); }
 .ix-page .nc-side.rear { transform: rotateY(180deg); }
 .ix-page .nc-flip.back .nc-side.front { transform: rotateY(-180deg); }
@@ -2920,36 +3111,31 @@ const NC_CSS = `
 .ix-page .nc-info .nfc-go, .ix-page .nc-info .ix-b { align-self: flex-start; width: auto !important; }
 .ix-page .nc-send { align-self: flex-start; }
 .ix-page .nc-sec { margin-top: auto; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #6b7280; padding-top: 6px; }
-/* computers: the page fits the window (no scrolling); even gaps; the bottom row takes the space left */
+/* computers: the page is as tall as the window (set in the component); the card scales to its stage, the status box keeps its size, and the bottom row shares the rest evenly */
 @media (min-width: 1001px) and (min-height: 600px) {
-  .ix-page.lay2 .ix-main:has(.nc-page) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
-  .ix-page.lay2 .ix-main:has(.nc-page) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
-  .ix-page.lay2 .ix-main:has(.nc-page) > .ix-content > * { flex: none; }
-  .ix-page .ix-content > .nc-page { flex: 1 1 0 !important; min-height: 0; gap: 14px; }
-  .ix-page .ix-card.nc-hero { flex: none; padding: clamp(14px, 2.2vh, 24px) 28px !important; gap: 36px; }
-  .ix-page .nc-card { gap: 8px; }
-  .ix-page .nc-info { gap: 6px; }
-  .ix-page .nc-steps { margin-top: 10px; }
-  .ix-page .nc-row { flex: 1 1 0; min-height: 0; }
+  .ix-page .ix-main:has(.nc-page) { overflow: hidden !important; }
+  .ix-page .nc-page { grid-template-columns: clamp(260px, 26vw, 400px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .ix-page .nc-col { min-height: 0; }
+  .ix-page .ix-card.nc-cardbox { background: #f7f1ec !important; border-color: transparent !important; overflow: hidden; min-height: 0; }
+  .ix-page .ix-card.nc-hero { flex: none; padding: clamp(14px, 2.2vh, 24px) 28px !important; }
+  .ix-page .nc-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); flex: 1 1 0; min-height: 0; }
   .ix-page .nc-row > .ix-card { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .ix-page .nc-tlist { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
   .ix-page .nc-tlist li { flex: 1 1 0; min-height: 0; padding-top: 0; padding-bottom: 0; }
-  /* the request form grows with the box: the notes field takes the extra height, the button sits under it */
   .ix-page .nc-act .nc-form { flex: 1 1 auto; min-height: 0; }
-  .ix-page .nc-act .nc-notes { flex: 1 1 auto; max-height: 180px; }
+  .ix-page .nc-act .nc-notes { flex: 1 1 auto; min-height: 44px !important; }
   .ix-page .nc-empty { flex: 1; display: grid; place-items: center; }
-  .ix-page .ix-card.nc-act { padding: clamp(14px, 2vh, 20px) 20px !important; gap: 10px; }
 }
 /* tall screens (full HD, full screen): a bigger card and steps, so the rows below don't stretch too far */
 @media (min-width: 1001px) and (min-height: 920px) {
-  .ix-page .nc-flip { zoom: 1.5; }
   .ix-page .nc-info h3 { font-size: 24px; } .ix-page .nc-info > p { font-size: 14.5px; }
   .ix-page .nc-steps { max-width: 720px; margin-top: 18px; }
 }
-@media (min-width: 1001px) and (max-height: 860px) { .ix-page .nc-flip { zoom: .95; } .ix-page .nc-info h3 { font-size: 19px; } }
-@media (min-width: 1001px) and (max-height: 760px) { .ix-page .nc-flip { zoom: .82; } .ix-page .nc-notes { min-height: 44px !important; } }
+@media (min-width: 1001px) and (max-height: 860px) { .ix-page .nc-info h3 { font-size: 19px; } }
+@media (min-width: 1001px) and (max-height: 760px) { .ix-page .nc-notes { min-height: 44px !important; } }
 @media (max-width: 1000px) {
-  .ix-page .ix-card.nc-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .ix-page .nc-page { grid-template-columns: 1fr; }
+  .ix-page .ix-card.nc-hero { text-align: center; }
   .ix-page .nc-info { align-items: center; } .ix-page .nc-state { align-self: center; }
   .ix-page .nc-row { grid-template-columns: 1fr; }
 }
@@ -2962,6 +3148,29 @@ const NC_CSS = `
 /* ───────────────────────── Profile ───────────────────────── */
 function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
   const [acct, setAcct] = useState(null);
+  // computers: scale the page down just enough that it fits the window (no scroll bar)
+  const pageRef = useRef(null);
+  const lastKey = useRef("");
+  useLayoutEffect(() => {
+    const fit = (force) => {
+      const pg = pageRef.current;
+      if (!pg) return;
+      if (window.innerWidth < 901 || window.innerHeight < 600) { pg.style.zoom = ""; lastKey.current = ""; return; }
+      const key = `${window.innerWidth}|${window.innerHeight}|${Math.round(pg.getBoundingClientRect().top)}`;
+      if (!force && key === lastKey.current) return;
+      lastKey.current = key;
+      pg.style.zoom = "";
+      const natural = pg.getBoundingClientRect().height;
+      const avail = window.innerHeight - pg.getBoundingClientRect().top - 30;
+      const z = natural > avail ? Math.max(0.66, avail / natural) : 1;
+      pg.style.zoom = z < 1 ? String(Math.floor(z * 100) / 100) : "";
+    };
+    fit(true);
+    const onR = () => fit(false);
+    window.addEventListener("resize", onR);
+    const t = setInterval(onR, 500);
+    return () => { window.removeEventListener("resize", onR); clearInterval(t); };
+  }, [acct]);
 
   // the full account (program, supervisor, NFC card, emergency contact...)
   useEffect(() => {
@@ -2986,7 +3195,7 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
     <>
       <PageHeader title="My Profile" sub="Your account information. Ask the admin if something needs to be changed." />
       {!acct ? <Spinner /> : (
-        <div className="pf-page">
+        <div className="pf-page" ref={pageRef}>
           {/* header: who you are, at a glance */}
           <div className="ix-card pf-head">
             <Avatar name={u.name} photo={u.photo} size={76} />
@@ -3017,7 +3226,7 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
 
           <div className="pf-grid">
             <section className="ix-card flush pf-card">
-              <header>Personal information</header>
+              <header><span>Personal information</span></header>
               <div className="pf-body">
                 {kv("First name", u.first_name || parts[0])}
                 {kv("Middle name", u.middle_name)}
@@ -3029,7 +3238,7 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
               </div>
             </section>
             <section className="ix-card flush pf-card">
-              <header>Internship details</header>
+              <header><span>Internship details</span></header>
               <div className="pf-body">
                 {kv("College", u.college || "CCIS")}
                 {kv("Program", u.program)}
@@ -3044,7 +3253,7 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
               </div>
             </section>
             <section className="ix-card flush pf-card">
-              <header>In case of emergency</header>
+              <header><span>In case of emergency</span></header>
               <div className="pf-body">
                 {kv("Full name", u.emergency_contact_name)}
                 {kv("Relationship", u.emergency_contact_relation)}
@@ -3085,7 +3294,10 @@ const PF_CSS = `
 .ix-page .pf-lock { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #8b919b; }
 .ix-page .pf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
 .ix-page .ix-card.pf-card { margin: 0 !important; padding: 0 !important; overflow: hidden; }
-.ix-page .pf-card > header { padding: 13px 18px; border-bottom: 1px solid #eef0f3; font-size: 14px; font-weight: 600; color: #111827; }
+.ix-page .pf-card > header { padding: 0 18px; border-bottom: 1px solid #eef0f3; font-size: 14px; font-weight: 600; color: #111827; }
+.ix-page .pf-card > header, .ix-page .pf-sec .sec-card > .ipv-title { position: relative; box-sizing: border-box; height: clamp(40px, 5.2vh, 48px); display: flex; align-items: center; }
+.ix-page .pf-card > header > span, .ix-page .pf-sec .sec-card > .ipv-title > span { position: relative; align-self: stretch; display: inline-flex; align-items: center; }
+.ix-page .pf-card > header > span::after, .ix-page .pf-sec .sec-card > .ipv-title > span::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: #e8582a; }
 .ix-page .pf-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; padding: 16px 18px 18px; }
 .ix-page .pf-kv { min-width: 0; }
 .ix-page .pf-kv.full { grid-column: 1 / -1; }
@@ -3094,28 +3306,27 @@ const PF_CSS = `
 /* account security uses the same card header as the others */
 .ix-page .pf-sec, .ix-page .pf-sec > .sec-card { height: 100%; }
 .ix-page .pf-sec > .ix-card.sec-card { margin: 0 !important; padding: 0 0 16px !important; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; }
-.ix-page .pf-sec .sec-card > .ipv-title { margin: 0 !important; padding: 13px 18px; border-bottom: 1px solid #eef0f3; font-size: 14px !important; font-weight: 600 !important; color: #111827; text-transform: none !important; letter-spacing: 0 !important; }
-.ix-page .pf-sec .sec-card > .ipv-title::after { display: none !important; }
+.ix-page .pf-sec .sec-card > .ipv-title { margin: 0 !important; padding: 0 18px; border-bottom: 1px solid #eef0f3; font-size: 14px !important; font-weight: 600 !important; color: #111827; text-transform: none !important; letter-spacing: 0 !important; }
 .ix-page .pf-sec .sec-card > :not(.ipv-title) { margin-left: 18px !important; margin-right: 18px !important; }
 .ix-page .pf-sec .sec-change { align-self: flex-start; }
 @media (max-width: 1100px) { .ix-page .pf-stats { gap: 18px; } }
 /* computers: the page fits the window; the four cards share the height left */
 @media (min-width: 901px) and (min-height: 600px) {
-  .ix-page.lay2 .ix-main:has(.pf-page) { overflow-y: auto !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.pf-page) { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
   .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content > * { flex: none; }
-  .ix-page .ix-content > .pf-page { flex: 1 0 auto !important; min-height: 0; }
+  .ix-page .ix-content > .pf-page { flex: 0 0 auto !important; min-height: 0; }
   .ix-page .ix-card.pf-head { flex: none; padding: clamp(12px, 1.8vh, 18px) 22px !important; }
   /* each row is at least as tall as its content (nothing is cut); extra height is shared */
-  .ix-page .pf-grid { flex: 1 0 auto; grid-template-rows: minmax(min-content, 1.15fr) minmax(min-content, 1fr); }
+  .ix-page .pf-grid { grid-template-rows: auto auto; }
   .ix-page .pf-grid > * { min-height: 0; }
-  .ix-page .pf-card > header, .ix-page .pf-sec .sec-card > .ipv-title { padding: clamp(9px, 1.4vh, 13px) 18px !important; }
+  .ix-page .pf-card > header, .ix-page .pf-sec .sec-card > .ipv-title { padding: 0 18px !important; }
   .ix-page .pf-body { gap: clamp(8px, 1.4vh, 14px) 24px; padding: clamp(10px, 1.6vh, 16px) 18px; }
   .ix-page .pf-sec > .ix-card.sec-card { gap: clamp(6px, 1.2vh, 12px); padding-bottom: clamp(10px, 1.6vh, 16px) !important; }
   .ix-page .pf-sec .sec-hint { font-size: 11.5px; line-height: 1.45; }
 }
 /* wide screens: three facts per row, so the cards stay short */
-@media (min-width: 1200px) and (max-height: 900px) { .ix-page .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1200px) and (max-height: 1000px) { .ix-page .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 /* tall screens: roomier facts so the cards are filled */
 @media (min-width: 901px) and (min-height: 901px) { .ix-page .pf-body { gap: 18px 24px; } .ix-page .pf-kv b { font-size: 14px; } }
 @media (min-width: 901px) and (max-height: 800px) {
@@ -3462,6 +3673,7 @@ export const internCss = `
 .ix-page .mv-drop { position: relative; display: flex; align-items: center; gap: 12px; padding: 18px; border: 1.5px dashed #f5b79f; border-radius: 12px; background: #fffaf7; cursor: pointer; }
 .ix-page .mv-drop:hover { background: #fff3ec; border-color: #e8582a; }
 .ix-page .mv-drop.busy { opacity: .6; pointer-events: none; }
+.ix-page .mv-choose { margin-left: auto; flex: none; pointer-events: none; white-space: nowrap; }
 .ix-page .mv-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .ix-page .mv-hist { list-style: none; margin: 0; padding: 0; }
 .ix-page .mv-hist li { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #f4f1ee; font-size: 12.5px; }

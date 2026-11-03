@@ -222,7 +222,6 @@ const NFCR_CSS = `
 .nfcr-alerts:hover { background: #fff4e5; }
 .nfcr-alerts .oa-n { margin-left: auto; }
 .nfcr-ok { color: #15803d !important; } .nfcr-not { color: #b45309 !important; }
-.ix-drawer:has(.nfcr-ca) { width: min(960px, calc(100vw - 24px)); }
 .nfcr-ca .ix-table-wrap, .nfcr-ca table { overflow-x: auto; max-width: 100%; }
 .nfcr-ca .ix-card { margin: 0 !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
 `;
@@ -465,7 +464,7 @@ function History({ requests, loading }) {
 }
 
 /* ───────────────────────── the card itself ─────────────────────────
-   CR80 size (85.6mm x 54mm, landscape). The card UID is never printed: anyone who saw it could tap for this intern. */
+   CR80 size (54mm x 85.6mm, portrait). The card UID is never printed: anyone who saw it could tap for this intern. */
 const CARD_KEY = "mytrack.idcard";
 const defaultValid = () => {                       // end of the school year: June 30
   const d = new Date(); const y = d.getMonth() >= 5 ? d.getFullYear() + 1 : d.getFullYear();
@@ -504,100 +503,103 @@ export function CardFace({ u, settings = {} }) {
   const src = photoUrl(u.photo);
   const name = cardName(u);
   const { course, year } = courseOf(u.program);
-  const address = u.company_address || u.hte_address;      // shown when the system has it
-  const emergency = [u.emergency_contact_name, u.emergency_contact_number].filter(Boolean).join(" · ");
   return (
-    <div className="idc">
+    <div className="idc idc-p">
       <img src={campus} alt="" className="idc-bg" />
-      <div className="idc-head">
-        <img src={csuLogo} alt="Caraga State University" className="idc-logo" />
-        <div className="idc-titles">
-          <strong>CARAGA STATE UNIVERSITY</strong>
-          <span>COLLEGE OF COMPUTING AND INFORMATION SCIENCES</span>
-          <b>OJT INTERN IDENTIFICATION CARD</b>
-        </div>
-        <img src={logo} alt="CSU CCIS" className="idc-logo" />
+      <svg className="idc-curve" viewBox="0 0 540 400" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0H540V300Q270 400 0 300Z" fill="#e8582a" /></svg>
+      <span className="idc-tap">TAP TO LOG ATTENDANCE</span>
+      <div className="idc-logos">
+        <img src={csuLogo} alt="Caraga State University" />
+        <img src={logo} alt="CSU CCIS" className="idc-ccis" />
+      </div>
+      <div className="idc-uni">Caraga State University · CCIS</div>
+      <div className="idc-photo">
+        {src ? <img src={src} alt="" /> : <b>{u.name?.charAt(0).toUpperCase() || "?"}</b>}
       </div>
 
-      <div className="idc-body">
-        <div className="idc-photo">
-          {src ? <img src={src} alt="" /> : <b>{u.name?.charAt(0).toUpperCase() || "?"}</b>}
-        </div>
-        <div className="idc-info">
-          <span className="idc-role">Student Intern</span>
-          <strong className={name.length > 30 ? "idc-name xlong" : name.length > 22 ? "idc-name long" : "idc-name"}>{name}</strong>
-          <div className="idc-grid">
-            <div><small>Student ID</small><span>{u.student_id || "—"}</span></div>
-            <div><small>Year Level</small><span>{year}</span></div>
-            <div><small>Course</small><span>{course}</span></div>
-            <div><small>Birthday</small><span>{birthDate(u.date_of_birth)}</span></div>
-            <div className="span2"><small>OJT Placement</small><span>{u.placement || "—"}</span></div>
-            <div><small>Valid date</small><span>{longDate(settings.valid)}</span></div>
-            {address
-              ? <div className="span2"><small>Company Address</small><span>{address}</span></div>
-              : <div className="span2"><small>In case of emergency</small><span>{emergency || "—"}</span></div>}
-          </div>
-        </div>
+      <div className="idc-main">
+        <span className="idc-role">STUDENT INTERN</span>
+        <strong className={`idc-name ${name.length > 28 ? "n4" : name.length > 25 ? "n3" : name.length > 20 ? "n2" : name.length > 16 ? "n1" : ""}`}>{name}</strong>
+        <span className="idc-sub">{course} · {year} · Student ID: {u.student_id || "—"}</span>
+        <hr className="idc-line" />
+        <div className="idc-fact"><b>OJT placement</b><span className={(u.placement || "").length > 60 ? "pl3" : (u.placement || "").length > 34 ? "pl2" : ""}>{u.placement || "—"}</span></div>
+        <div className="idc-fact"><b>Valid until</b><span>{longDate(settings.valid)}</span></div>
       </div>
 
-      <div className="idc-sign">
-        <div className="idc-sig">
-          <i />
-          <small>Signature of Intern</small>
-        </div>
-        <div className="idc-sig">
-          {settings.signature ? <img src={settings.signature} alt="" /> : <i />}
-          {settings.coordinator && <span>{settings.coordinator}</span>}
-          <small>OJT Coordinator</small>
-        </div>
+      <div className="idc-signbox">
+        <i />
+        <small>Signature Intern</small>
       </div>
     </div>
   );
 }
 
-/* Back of the ID card: emergency contact, card rules, and where to return a found card */
+/* Back of the ID card: card rules, emergency contact, where to return a found card, coordinator signature */
 export const CARD_RULES = [
-  "This card is the property of CSU – CCIS and is not transferable.",
-  "Tap only your own card. Tapping for another intern is not allowed.",
-  "Bring this card with you every OJT day.",
+  "This card belongs to CSU CCIS and cannot be transferred.",
+  "Tap only your own card.",
+  "Bring it every OJT day.",
   "Report a lost or damaged card to your OJT Coordinator right away.",
 ];
 export function CardBack({ u, settings = {} }) {
   return (
-    <div className="idc idc-back">
-      <img src={campus} alt="" className="idc-bg" />
-      <div className="idb-band">
-        <img src={csuLogo} alt="" />
-        <span><b>CARAGA STATE UNIVERSITY</b><small>College of Computing and Information Sciences</small></span>
-        <em>OJT INTERN ID</em>
-      </div>
-
+    <div className="idc idc-p idc-back">
+      <div className="idb-bar" />
       <div className="idb-body">
-        <div className="idb-left">
-          <div className="idb-emg">
-            <small>In case of emergency</small>
-            <strong>{u.emergency_contact_name || "—"}{u.emergency_contact_relation ? ` (${u.emergency_contact_relation})` : ""}</strong>
-            <b>{u.emergency_contact_number || "—"}</b>
-          </div>
-          <div className="idb-found">
-            <small>If found, please return to</small>
-            <p>{ID_OFFICE}, College of Computing and Information Sciences, Caraga State University, Ampayon, Butuan City</p>
-            {settings.contact && <p className="idb-contact">{settings.contact}</p>}
-          </div>
+        <h4>CARD RULES</h4>
+        <ol>{CARD_RULES.map((r, i) => <li key={r}><span>{i + 1}.</span>{r}</li>)}</ol>
+
+        <div className="idb-emg">
+          <h5>IN CASE OF EMERGENCY</h5>
+          <p>Name: {u.emergency_contact_name || "—"}{u.emergency_contact_relation ? ` (${u.emergency_contact_relation})` : ""}</p>
+          <p>Contact no: {u.emergency_contact_number || "—"}</p>
         </div>
-        <div className="idb-rules">
-          <small>Card rules</small>
-          <ol>{CARD_RULES.map((r) => <li key={r}>{r}</li>)}</ol>
+
+        <div className="idb-found">
+          <h5>IF FOUND, PLEASE RETURN TO</h5>
+          <p>CCIS Technical Room (3<sup>rd</sup> floor)</p>
+          <p>College of Computing and Information Sciences</p>
+          <p>Caraga State University - Main Campus</p>
+          <p>KM 7, Ampayon, Butuan City 8600</p>
+          {settings.contact && <p className="idb-contact">{settings.contact}</p>}
         </div>
       </div>
 
-      {/* bottom strip: how the card is used (the valid date is on the front) */}
-      <div className="idb-foot">
-        <span className="idb-tap">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7.5a6.5 6.5 0 0 1 0 9M10.5 5a10 10 0 0 1 0 14M14 2.8a13.5 13.5 0 0 1 0 18.4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><circle cx="4" cy="12" r="1.6" fill="currentColor" /></svg>
-          <span><b>NFC attendance card</b><small>Tap at the MYTRACK kiosk when you arrive and when you leave</small></span>
-        </span>
-        <img src={logo} alt="CSU CCIS" className="idb-ccis" />
+      <div className="idb-coord">
+        {settings.signature ? <img src={settings.signature} alt="" /> : <span className="idb-nosig" />}
+        <i />
+        <b>{settings.coordinator || "Jhoanna Victoria S. Pitao, MSc"}</b>
+        <small>OJT Coordinator</small>
+      </div>
+    </div>
+  );
+}
+
+/* Front and back of the card, scaled to whatever room the panel has (any screen size): measured, then scaled as one piece */
+const FAN_W = 470, FAN_H = 350;          // natural size of the pair (px)
+function CardFan({ u, settings }) {
+  const box = useRef(null);
+  const [k, setK] = useState(0.8);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return undefined;
+    const fit = () => {
+      const w = el.clientWidth - 28, h = el.clientHeight - 28;
+      if (w > 0 && h > 0) setK(Math.max(0.3, Math.min(1.7, w / FAN_W, h / FAN_H)));
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    ro && ro.observe(el);
+    window.addEventListener("resize", fit);
+    return () => { ro && ro.disconnect(); window.removeEventListener("resize", fit); };
+  }, []);
+  return (
+    <div className="idq-fan" ref={box} title="Front and back of the card">
+      <div className="idq-fit" style={{ width: FAN_W * k, height: FAN_H * k }}>
+        <div className="idq-pair" style={{ width: FAN_W, height: FAN_H, transform: `scale(${k})` }}>
+          <div className="idq-fc front"><CardFace u={u} settings={settings} /></div>
+          <div className="idq-fc back"><CardBack u={u} settings={settings} /></div>
+        </div>
       </div>
     </div>
   );
@@ -834,7 +836,7 @@ export function CardRequests({ requests, interns, onChanged }) {
   };
 
   // the intern shown on the right: the one clicked, or the first one in this tab
-  const pv = shown.find((x) => String(x.u.id) === String(preview)) || (typeof window !== "undefined" && !window.matchMedia("(max-width: 900px)").matches ? shown[0] : null) || null;
+  const pv = shown.find((x) => String(x.u.id) === String(preview)) || null;     // nothing is shown until an intern is clicked
   const [showDetail, setShowDetail] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const what = sel.length ? `${sel.length} selected` : `all ${shown.length}`;
@@ -842,28 +844,18 @@ export function CardRequests({ requests, interns, onChanged }) {
   return (
     <>
       <style>{nfcCss}</style>
-      {/* the card's journey: each step is a stage; click one to see the cards in it */}
-      <div className="idq-steps" role="tablist" aria-label="Card stages">
-        {STAGES.map((t, i) => {
-          const at = STAGES.findIndex((x) => x.key === stage);
+      {/* stages as simple tabs (the count shows what needs doing), then search and actions in one row */}
+      <div className="idq-tabs" role="tablist" aria-label="Card stages">
+        {STAGES.map((t) => {
           const n = count(t.key);
-          return [
-            i > 0 && <span key={t.key + "-ar"} className={i <= at ? "idq-ar past" : "idq-ar"} aria-hidden="true">›</span>,
-            <button key={t.key} type="button" role="tab" aria-selected={stage === t.key}
-              className={`idq-step${stage === t.key ? " on" : ""}${i < at ? " past" : ""}`} onClick={() => changeStage(t.key)}>
-              <i>{i + 1}</i>
-              <span className="idq-st"><b>{t.label}</b><small>{STEP_SUB[t.key]}</small></span>
-              <span className={n && t.key !== "released" ? "idq-n hot" : "idq-n"}>{n}</span>
-            </button>,
-          ];
+          return (
+            <button key={t.key} type="button" role="tab" aria-selected={stage === t.key} title={STEP_SUB[t.key]}
+              className={stage === t.key ? "idq-tab on" : "idq-tab"} onClick={() => changeStage(t.key)}>
+              {t.label}<span className={n && t.key !== "released" ? "idq-n hot" : "idq-n"}>{n}</span>
+            </button>
+          );
         })}
       </div>
-      <p className="idq-help">
-        {stage === "toprint" && `Approved interns come to the ${ID_OFFICE} to sign. Make the cards in your printing app after they sign, then mark them as printed so they're told to claim it.`}
-        {stage === "tolink" && "Printed cards. Scan each card and click Link. You can do this ahead of time; the card only becomes active when the intern claims it."}
-        {stage === "toclaim" && "Linked and waiting for the intern. When they pick it up, click Claimed: the card becomes active and their taps start counting. Interns with missing pre-internship requirements can't claim yet."}
-        {stage === "released" && "Cards already linked to the intern's account."}
-      </p>
 
       <div className="ix-toolbar idq-toolbar">
         <div className="ix-search">
@@ -874,7 +866,7 @@ export function CardRequests({ requests, interns, onChanged }) {
           <button className="ix-b ghost" onClick={downloadCsv} disabled={!shown.length} title={`Download ${what} as a CSV for Excel or the printing app`}>
             <Icon name="download" size={16} /> List (CSV)
           </button>
-          <button className="ix-b ghost" onClick={downloadPhotos} disabled={!shown.length || !!busy}>
+          <button className="ix-b ghost" onClick={downloadPhotos} disabled={!shown.length || !!busy} title={`Download ${what} photos`}>
             <Icon name="download" size={16} /> {busy === "photos" ? "Preparing..." : "Photos"}
           </button>
           {stage === "toprint" && (
@@ -889,7 +881,6 @@ export function CardRequests({ requests, interns, onChanged }) {
           )}
         </div>
       </div>
-      <div className="idq-hint">{sel.length ? `${sel.length} selected. The buttons use only these.` : "Tick interns to choose; with none ticked, the buttons use everyone in this tab."}</div>
       <Msg msg={msg} />
 
       {/* list on the left, the selected intern's card on the right (phones: one at a time) */}
@@ -928,79 +919,39 @@ export function CardRequests({ requests, interns, onChanged }) {
 
             <div className="mon-detail">
               <button type="button" className="mon-back" onClick={() => setShowDetail(false)}><Icon name="menu" size={14} /> Back to the list</button>
+              {!pv && (
+                <div className="idq-none">
+                  <Icon name="card" size={30} />
+                  <b>Select an intern</b>
+                  <span>Click a name in the list, or search for one, to see the ID card preview.</span>
+                </div>
+              )}
               {pv && (() => {
                 const { u, r, stage: st } = pv;
                 const { course, year } = courseOf(u.program);
                 const [bl, bt] = STAGE_BADGE[st];
                 return (
-                  <div className="ibx-d" key={u.id}>
-                    <div className="ibx-head"><Avatar name={u.name} photo={u.photo} size={48} />
-                      <div><b>{u.name}</b><small>{u.email}{u.photo ? "" : " · no photo yet"}</small></div>
-                      <span style={{ marginLeft: "auto" }}><Badge label={bl} type={bt} /></span></div>
-
-                    {st !== "released" && r?.pre_missing > 0 && (
-                      <div className="nfc-wait"><Icon name="warn" size={16} />
-                        <span>Pre-internship {r.pre_total - r.pre_missing}/{r.pre_total}: the card can be printed and linked now, but it can only be claimed once every requirement is approved.</span></div>
-                    )}
-
-                    <div className="ibx-kv ibx-sec">
-                      <div><small>Student ID</small><b>{u.student_id || "—"}</b></div>
-                      <div><small>Course</small><b>{course}{year !== "—" ? ` · ${year}` : ""}</b></div>
-                      <div><small>Birthday</small><b>{birthDate(u.date_of_birth)}</b></div>
-                      <div><small>Placement</small><b>{u.placement || "—"}</b></div>
-                      <div><small>Approved</small><b>{r ? fmtDate(r.reviewed_at || r.updated_at) : "—"}</b></div>
-                      <div><small>Printed</small><b>{r?.printed_at ? fmtDate(r.printed_at) : "—"}</b></div>
+                  <div className="ibx-d idq-two" key={u.id}>
+                    <div className="idq-rail">
+                      <Avatar name={u.name} photo={u.photo} size={64} />
+                      <div className="idq-who"><b>{u.name}</b><small>{u.email}{u.photo ? "" : " · no photo yet"}</small></div>
+                      <span className="idq-st"><Badge label={bl} type={bt} /></span>
+                      <dl className="idq-dl">
+                        <dt>Student ID</dt><dd>{u.student_id || "—"}</dd>
+                        <dt>Course</dt><dd>{course}{year !== "—" ? ` · ${year}` : ""}</dd>
+                        <dt>Placement</dt><dd>{u.placement || "—"}</dd>
+                        <dt>Birthday</dt><dd>{birthDate(u.date_of_birth)}</dd>
+                        <dt>Approved</dt><dd>{r ? fmtDate(r.reviewed_at || r.updated_at) : "—"}</dd>
+                        <dt>Printed</dt><dd>{r?.printed_at ? fmtDate(r.printed_at) : "—"}</dd>
+                      </dl>
                     </div>
 
-                    <div className="ibx-sec idq-card">
-                      <span>Card preview <small className="ix-muted">· a guide for the printing app</small>
-                        <button type="button" className="idq-set-btn" onClick={() => setShowSettings((v) => !v)}>
-                          <Icon name="settings" size={13} /> {showSettings ? "Hide card settings" : "Card settings"}</button></span>
-                      <div className="idq-card-row">
-                        <div className="idq-faces">
-                          <div><small className="idq-face-l">Front</small><div className="idc-preview"><CardFace u={u} settings={settings} /></div></div>
-                          <div><small className="idq-face-l">Back</small><div className="idc-preview"><CardBack u={u} settings={settings} /></div></div>
-                        </div>
-                        {showSettings && (
-                          <div className="idq-settings">
-                            <small className={`idq-save ${saveState}`}>
-                              {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved for every computer" : saveState === "error" ? "Couldn't save to the server (kept on this computer only)" : "Saved for every computer"}
-                            </small>
-                            <div className="idc-set">
-                              <label htmlFor="idc-valid">Valid until</label>
-                              <input id="idc-valid" type="date" className="ix-input" value={settings.valid} onChange={(e) => setS("valid", e.target.value)} />
-                            </div>
-                            <div className="idc-set">
-                              <label htmlFor="idc-coord">OJT Coordinator</label>
-                              <input id="idc-coord" type="text" className="ix-input" placeholder="e.g. Juana Dela Cruz, MSc"
-                                value={settings.coordinator} onChange={(e) => setS("coordinator", e.target.value)} />
-                            </div>
-                            <div className="idc-set">
-                              <label htmlFor="idc-contact">Office contact on the back <span className="ix-muted">(optional)</span></label>
-                              <input id="idc-contact" type="text" className="ix-input" placeholder="e.g. (085) 342-1234 · ccis@carsu.edu.ph"
-                                value={settings.contact} onChange={(e) => setS("contact", e.target.value)} />
-                            </div>
-                            <div className="idc-set">
-                              <label>Coordinator's signature <span className="ix-muted">(optional)</span></label>
-                              <div className="idc-sig-pick">
-                                <label className="ix-b ghost sm">
-                                  <input type="file" accept="image/png,image/jpeg" onChange={pickSignature} hidden />
-                                  <Icon name="upload" size={14} /> {settings.signature ? "Change" : "Upload"}
-                                </label>
-                                {settings.signature && (
-                                  <>
-                                    <img src={settings.signature} alt="Signature" />
-                                    <button type="button" className="ix-b ghost sm" onClick={() => setS("signature", "")}>Remove</button>
-                                  </>
-                                )}
-                              </div>
-                              {sigMsg && <small className="idc-err">{sigMsg}</small>}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
+                    <div className="idq-main">
+                      {st !== "released" && r?.pre_missing > 0 && (
+                        <div className="nfc-wait"><Icon name="warn" size={16} />
+                          <span>Pre-internship {r.pre_total - r.pre_missing}/{r.pre_total}: the card can be printed and linked now, but it can only be claimed once every requirement is approved.</span></div>
+                      )}
+                      <CardFan u={u} settings={settings} />
                     {/* what to do next for this card */}
                     {st === "toprint" && r && (
                       <div className="ibx-act">
@@ -1034,6 +985,7 @@ export function CardRequests({ requests, interns, onChanged }) {
                       </div>
                     )}
                     {st === "released" && <div className="ibx-note"><Icon name="check" size={13} /> The card is active. {u.nfc_uid ? `UID ${u.nfc_uid}` : ""}</div>}
+                    </div>
                   </div>
                 );
               })()}
@@ -1048,105 +1000,73 @@ export function CardRequests({ requests, interns, onChanged }) {
 /* ───────────────────────── styles ───────────────────────── */
 /* the ID card (front and back): also used on the intern's NFC Card page */
 export const idCardCss = `
-  /* ── ID card: CR80 85.6mm x 54mm, landscape ── */
-  .idc { position: relative; width: 85.6mm; height: 54mm; border-radius: 3mm; overflow: hidden; flex-shrink: 0;
-    background: #fdf8f5; color: #1f2333; font-family: 'Inter', 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column;
-    padding: 2.4mm 3.6mm 2mm; box-sizing: border-box; box-shadow: 0 12px 30px rgba(15,23,42,0.14); border: 0.2mm solid #eadfd8;
+  /* ── ID card: CR80, portrait 54mm x 85.6mm (lanyard badge) ── */
+  .idc { position: relative; width: 54mm; height: 85.6mm; border-radius: 3mm; overflow: hidden; flex-shrink: 0; box-sizing: border-box;
+    background: #fff; color: #1b1f2a; font-family: 'Poppins', 'Inter', 'Segoe UI', Arial, sans-serif;
+    box-shadow: 0 12px 30px rgba(15,23,42,0.16); border: 0.2mm solid #eadfd8;
     -webkit-print-color-adjust: exact; print-color-adjust: exact; break-inside: avoid; }
-  .idc-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .13; filter: grayscale(.3); pointer-events: none; }
-  .idc::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(253,248,245,.55), rgba(253,248,245,.25) 40%, rgba(253,248,245,.6)); pointer-events: none; }
-  .idc > *:not(.idc-bg) { position: relative; z-index: 1; }
+  .idc *, .idc *::before, .idc *::after { box-sizing: border-box; }
+  .idc img { max-width: none; }
+  .idc-bg { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 48%; object-fit: cover; object-position: center bottom; opacity: .13; filter: grayscale(.3); pointer-events: none;
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 45%); mask-image: linear-gradient(180deg, transparent, #000 45%); }
+  .idc-curve { position: absolute; left: 0; top: 0; width: 100%; height: 34mm; display: block; }
+  .idc .idc-tap { position: absolute; left: 1.6mm; top: 1.2mm; font-size: 1.25mm !important; line-height: 1.6mm !important; font-weight: 700 !important; letter-spacing: .1mm !important; color: rgba(110,30,5,.35); white-space: nowrap !important; }
+  .idc .idc-logos { position: absolute; left: 0; right: 0; top: 4mm; display: flex; justify-content: center; align-items: center; gap: 2.2mm; }
+  .idc .idc-logos img { height: 8mm !important; width: auto !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: none !important; box-shadow: none !important; object-fit: contain; }
+  .idc .idc-logos img.idc-ccis { mix-blend-mode: multiply; }
+  .idc .idc-uni { position: absolute; left: 0; right: 0; top: 12.6mm; text-align: center; color: #fff; font-size: 2.2mm !important; line-height: 3mm !important; font-weight: 500 !important; white-space: nowrap !important; margin: 0; }
+  .idc .idc-photo { position: absolute; left: 50%; top: 16.6mm; width: 22mm; height: 22mm; margin-left: -11mm; border-radius: 50%; overflow: hidden;
+    border: .9mm solid #fff; background: #ffe6d9; box-shadow: 0 .6mm 2mm rgba(0,0,0,.18); display: flex; align-items: center; justify-content: center; }
+  .idc .idc-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .idc .idc-photo b { font-size: 9mm !important; color: #e8582a; }
 
-  .idc-head { display: flex; align-items: center; justify-content: space-between; gap: 2mm; }
-  .idc-logo { height: 11mm; width: 11mm; object-fit: contain; flex-shrink: 0; }
-  .idc-titles { flex: 1; text-align: center; display: flex; flex-direction: column; align-items: center; min-width: 0; }
-  .idc-titles strong { font-family: 'Montserrat', 'Poppins', sans-serif; font-size: 3.5mm; font-weight: 700; letter-spacing: .15mm; line-height: 1.1; color: #262a3a; }
-  .idc-titles span { font-size: 1.45mm; letter-spacing: .12mm; margin-top: .5mm; color: #3b3f50; }
-  .idc-titles b { font-family: 'Montserrat', 'Poppins', sans-serif; font-size: 2mm; font-weight: 700; letter-spacing: .2mm; margin-top: 1mm; color: #262a3a; }
+  .idc .idc-main { position: absolute; left: 4mm; right: 4mm; top: 41.2mm; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .idc .idc-main > * { margin: 0; padding: 0; }
+  .idc .idc-role { display: inline-block; padding: .9mm 4mm; border-radius: 99px; background: #e8582a; color: #fff; font-size: 2.1mm !important; line-height: 2.8mm !important; font-weight: 700 !important; letter-spacing: .25mm !important; }
+  /* the name is never cut: fixed line heights (in mm, so browser zoom can't squeeze it) and a smaller size for long names */
+  .idc .idc-name { display: block; width: 100%; margin-top: 1.6mm !important; font-size: 4.6mm !important; line-height: 5.8mm !important; font-weight: 700 !important; color: #1b1f2a; letter-spacing: -.1mm !important; white-space: nowrap !important; overflow: visible; }
+  .idc .idc-name.n1 { font-size: 3.9mm !important; line-height: 5.4mm !important; }
+  .idc .idc-name.n2 { font-size: 3.3mm !important; line-height: 5mm !important; }
+  .idc .idc-name.n3 { font-size: 2.8mm !important; line-height: 4.6mm !important; }
+  .idc .idc-name.n4 { font-size: 3mm !important; line-height: 3.6mm !important; white-space: normal !important; margin-top: 1.2mm !important; }
+  .idc .idc-sub { display: block; width: 100%; margin-top: .3mm !important; font-size: 1.85mm !important; line-height: 2.8mm !important; color: #6b7280; white-space: nowrap !important; }
+  .idc .idc-line { width: 100%; height: 0; border: 0; border-top: .2mm solid #e5e7eb; margin: 1.8mm 0 0 !important; }
+  .idc .idc-fact { width: 100%; margin-top: 1.6mm !important; display: flex; flex-direction: column; align-items: center; }
+  .idc .idc-fact b { font-size: 2.1mm !important; line-height: 2.9mm !important; font-weight: 700 !important; color: #1b1f2a; }
+  .idc .idc-fact span { font-size: 2.15mm !important; line-height: 2.9mm !important; color: #1b1f2a; max-height: 5.8mm; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .idc .idc-fact span.pl2 { font-size: 1.9mm !important; line-height: 2.5mm !important; max-height: 5mm; }
+  .idc .idc-fact span.pl3 { font-size: 1.7mm !important; line-height: 2.2mm !important; max-height: 6.6mm; -webkit-line-clamp: 3; }
+  .idc .idc-fact + .idc-fact { margin-top: 1.3mm !important; }
 
-  .idc-body { flex: 1; display: flex; gap: 0; margin-top: 1.8mm; min-height: 0; }
-  .idc-photo { width: 20.5mm; height: 26mm; flex-shrink: 0; overflow: hidden; background: #fff; display: flex; align-items: center; justify-content: center;
-    border-right: 0.5mm solid #e8582a; padding-right: 0; margin-right: 2.6mm; box-shadow: 0.5mm 0 0 #fdf8f5; }
-  .idc-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .idc-photo b { font-size: 9mm; color: #e8582a; }
-  .idc-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .idc-role { font-size: 2.1mm; color: #4b4f60; line-height: 1; }
-  /* the name is never cut: a fixed line height (in mm, so browser zoom can't squeeze it) and a smaller size for long names */
-  .idc-name { display: block; font-family: 'Arial', 'Inter', sans-serif; font-size: 4.4mm; font-weight: 700; color: #14123f;
-    line-height: 5.8mm !important; height: auto !important; min-height: 5.8mm; letter-spacing: -.1mm;
-    white-space: nowrap; overflow: visible !important; text-overflow: clip; margin-top: .3mm; padding: 0; }
-  .idc-name.long { font-size: 3.6mm; line-height: 5mm !important; min-height: 5mm; }
-  .idc-name.xlong { font-size: 3mm; line-height: 4.4mm !important; min-height: 4.4mm; }
-  .idc-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5mm 2mm; margin-top: 1.4mm; }
-  .idc-grid > div { min-width: 0; display: flex; flex-direction: column; }
-  .idc-grid .span2 { grid-column: span 2; }
-  .idc-grid small { font-size: 1.55mm; color: #6b6f80; line-height: 1.2; }
-  .idc-grid span { font-size: 2.1mm; color: #1f2333; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-
-  .idc-sign { display: flex; justify-content: space-between; align-items: flex-end; padding: 0 3mm 0 20mm; height: 6.5mm; }
-  .idc-sig { display: flex; flex-direction: column; align-items: center; min-width: 20mm; }
-  .idc-sig i { display: block; width: 20mm; height: 4mm; border-bottom: 0.15mm solid #9a9db0; }
-  .idc-sig img { height: 4.6mm; max-width: 24mm; object-fit: contain; margin-bottom: -.8mm; }
-  .idc-sig span { font-size: 1.5mm; color: #1f2333; line-height: 1.1; }
-  .idc-sig small { font-size: 1.4mm; color: #6b6f80; line-height: 1.2; }
-
-  /* the card keeps its own spacing: page styles (line heights, margins, image boxes) can't stretch it */
-  .idc .idc-photo { margin-right: 2.6mm !important; }
-  .idc .idc-head { height: 11mm !important; align-items: center !important; gap: 2.4mm !important; }
-  .idc .idc-logo { width: 10.5mm !important; height: 10.5mm !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important;
-    background: none !important; box-shadow: none !important; object-fit: contain !important; mix-blend-mode: multiply; }
-  .idc .idc-titles { justify-content: center !important; gap: 0 !important; }
-  .idc .idc-titles > * { display: block !important; margin: 0 !important; padding: 0 !important; white-space: nowrap; }
-  .idc .idc-titles strong { font-size: 3.5mm !important; line-height: 4.2mm !important; }
-  .idc .idc-titles span { font-size: 1.45mm !important; line-height: 2mm !important; margin-top: .3mm !important; }
-  .idc .idc-titles b { font-size: 2mm !important; line-height: 2.6mm !important; margin-top: .9mm !important; padding: .2mm 2mm !important;
-    border-top: .15mm solid #e8582a; border-bottom: .15mm solid #e8582a; }
-  .idc .idc-body { margin-top: 1.6mm !important; overflow: hidden; }
-  .idc .idc-role { line-height: 2.6mm !important; }
-  .idc .idc-grid { margin-top: 1mm !important; gap: 1.1mm 2mm !important; }
-  .idc .idc-grid small { line-height: 2mm !important; }
-  .idc .idc-grid span { line-height: 2.6mm !important; }
-  .idc .idc-sign { flex-shrink: 0; height: 6mm !important; }
+  .idc .idc-signbox { position: absolute; left: 0; right: 0; bottom: 1.8mm; display: flex; flex-direction: column; align-items: center; }
+  .idc .idc-signbox i { display: block; width: 24mm; height: 0; border-top: .25mm solid #1b1f2a; }
+  .idc .idc-signbox small { margin-top: .4mm; font-size: 1.7mm !important; line-height: 2.4mm !important; color: #6b7280; }
 
   /* ── back of the card ── */
-  .idc.idc-back { padding: 0 !important; }
-  .idc .idb-band { display: flex; align-items: center; gap: 1.8mm; height: 8.6mm; padding: 0 3.6mm; flex-shrink: 0;
-    background: linear-gradient(90deg, #e8582a, #f2864f); color: #fff; }
-  .idc .idb-band img { width: 6mm !important; height: 6mm !important; object-fit: contain; padding: .4mm; border-radius: 50%; background: #fff; flex-shrink: 0; }
-  .idc .idb-band span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-  .idc .idb-band b { font-family: 'Montserrat', 'Poppins', sans-serif; font-size: 2.3mm; line-height: 2.8mm; letter-spacing: .12mm; white-space: nowrap; }
-  .idc .idb-band small { font-size: 1.35mm; line-height: 1.8mm; opacity: .95; white-space: nowrap; }
-  .idc .idb-band em { font-style: normal; font-family: 'Montserrat', 'Poppins', sans-serif; font-size: 1.7mm; font-weight: 700; letter-spacing: .2mm;
-    padding: .5mm 1.6mm; border: .15mm solid rgba(255,255,255,.85); border-radius: 1mm; white-space: nowrap; }
-  .idc .idb-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1.08fr; gap: 3mm; padding: 2.6mm 3.6mm 2.8mm; }
-  .idc .idb-left { display: flex; flex-direction: column; gap: 2.2mm; min-width: 0; }
-  .idc .idb-body small { display: block; font-size: 1.45mm !important; line-height: 1.9mm !important; font-weight: 700; letter-spacing: .12mm; text-transform: uppercase; color: #c2410c; }
-  .idc .idb-emg { padding: 1.6mm 2mm; border-left: .7mm solid #e8582a; background: rgba(255,255,255,.75); border-radius: 0 1.2mm 1.2mm 0; }
-  .idc .idb-emg strong { display: block; margin-top: .5mm; font-size: 2.5mm; line-height: 3.1mm; color: #14123f;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .idc .idb-emg b { display: block; font-size: 2.7mm; line-height: 3.3mm; color: #14123f; letter-spacing: .1mm; }
-  .idc .idb-found p { margin: .5mm 0 0 !important; font-size: 1.65mm !important; line-height: 2.2mm !important; color: #3b3f50; }
-  .idc .idb-found p.idb-contact { font-weight: 700; color: #1f2333; }
-  .idc .idb-rules { min-width: 0; padding-left: 3mm; border-left: .15mm solid #e6d6cc; }
-  .idc .idb-rules ol { margin: .8mm 0 0; padding: 0 0 0 3mm; display: flex; flex-direction: column; gap: 1.1mm; }
-  .idc .idb-rules li { font-size: 1.65mm !important; line-height: 2.2mm !important; color: #2b2f40; padding-left: .3mm; }
-  .idc .idb-rules li::marker { color: #e8582a; font-weight: 700; }
-  .idc .idb-body { padding-bottom: 1.6mm !important; }
-  .idc .idb-foot { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 3mm;
-    margin: 0 3.6mm; padding: 1.8mm 0 2.4mm; border-top: .15mm solid #e6d6cc; }
-  .idc .idb-tap { display: flex; align-items: center; gap: 1.6mm; min-width: 0; }
-  .idc .idb-tap svg { width: 5.2mm; height: 5.2mm; flex-shrink: 0; padding: .9mm; border-radius: 1.4mm; color: #fff;
-    background: linear-gradient(135deg, #f2864f, #e8582a); box-sizing: border-box; }
-  .idc .idb-tap > span { display: flex; flex-direction: column; min-width: 0; }
-  .idc .idb-tap b { font-size: 1.9mm !important; line-height: 2.4mm !important; color: #14123f; }
-  .idc .idb-tap small { font-size: 1.45mm !important; line-height: 1.9mm !important; color: #5b5f70; white-space: nowrap; }
-  .idc .idb-ccis { width: 6.4mm !important; height: 6.4mm !important; object-fit: contain; flex-shrink: 0; mix-blend-mode: multiply;
-    padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important; }
+  .idc .idb-bar { position: absolute; left: 0; right: 0; top: 0; height: 1.8mm; background: #e8582a; }
+  .idc .idb-body { position: absolute; left: 3.4mm; right: 3.4mm; top: 5mm; }
+  .idc .idb-body h4 { margin: 0 0 1mm !important; padding: 0 !important; font-size: 2.9mm !important; line-height: 3.8mm !important; font-weight: 800 !important; color: #e8582a; }
+  .idc .idb-body h5 { margin: 0 0 .8mm !important; padding: 0 !important; font-size: 1.95mm !important; line-height: 2.6mm !important; font-weight: 700 !important; color: #e8582a; letter-spacing: .05mm !important; }
+  .idc .idb-body ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .7mm; }
+  .idc .idb-body li { margin: 0; padding: 0; font-size: 2mm !important; line-height: 2.8mm !important; color: #1b1f2a; }
+  .idc .idb-body li span { margin-right: .6mm; }
+  .idc .idb-emg { margin-top: 3.4mm; padding: 1.8mm 2mm; border-radius: 2mm; background: #fff3ee; }
+  .idc .idb-emg p { margin: 0 !important; font-size: 2mm !important; line-height: 2.8mm !important; color: #1b1f2a; }
+  .idc .idb-found { margin-top: 3.2mm; }
+  .idc .idb-found p { margin: 0 !important; font-size: 1.85mm !important; line-height: 3mm !important; white-space: nowrap !important; color: #1b1f2a; }
+  .idc .idb-found p sup { font-size: 1.2mm !important; line-height: 0 !important; }
+  .idc .idb-found p.idb-contact { margin-top: .8mm !important; font-weight: 700 !important; }
+  .idc .idb-coord { position: absolute; left: 0; right: 0; bottom: 2.6mm; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .idc .idb-coord img { height: 6mm; max-width: 26mm; object-fit: contain; margin-bottom: -1.6mm; position: relative; z-index: 1; }
+  .idc .idb-coord .idb-nosig { display: block; height: 4.4mm; }
+  .idc .idb-coord i { display: block; width: 24mm; height: 0; border-top: .25mm solid #1b1f2a; }
+  .idc .idb-coord b { margin-top: .7mm; font-size: 2.2mm !important; line-height: 3mm !important; font-weight: 700 !important; color: #1b1f2a; white-space: nowrap !important; }
+  .idc .idb-coord small { font-size: 1.8mm !important; line-height: 2.5mm !important; color: #6b7280; }
   .idq-faces { display: flex; flex-wrap: wrap; gap: 14px; }
   .idq-face-l { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: #94a3b8; }
 
   /* on screen the preview is shown bigger so it can be read */
-  .idc-preview { zoom: 1.3; }
+  .idc-preview { zoom: 1.15; }
 
   .idc-settings { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px 18px; padding: 14px 18px !important; margin-bottom: 16px; }
   .idc-set { display: flex; flex-direction: column; gap: 6px; min-width: 180px; }
@@ -1199,7 +1119,39 @@ ${idCardCss}
   .idq-table thead th { position: sticky; top: 0; z-index: 1; }
   .idq-table tbody tr.on td { background: #fff6f1; }
   .idq-ck { width: 36px; }
-  .ix-page .mon-split.ibx-split.idq-split { height: calc(100vh / var(--fit, 1) - 320px); min-height: 400px; }
+  .ix-page .mon-split.ibx-split.idq-split { height: calc(100vh / var(--fit, 1) - 285px); min-height: 420px; }
+  .idq-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+  .idq-tab { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 99px; border: 1px solid #e3e6ea; background: #fff;
+    font: inherit; font-size: 13px; font-weight: 600; color: #475569; cursor: pointer; }
+  .idq-tab:hover { border-color: #fdba74; }
+  .idq-tab.on { border-color: #ea580c; background: #fff4ee; color: #c2410c; }
+  .idq-tab .idq-n { min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: #eef0f4; color: #475569; font-size: 11.5px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+  .idq-tab.on .idq-n { background: #ea580c; color: #fff; }
+  .idq-tab .idq-n.hot { background: #ef4444; color: #fff; }
+  .idq-toolbar { margin-bottom: 12px !important; }
+  .idq-two { display: grid !important; grid-template-columns: 220px minmax(0, 1fr); gap: 16px !important; align-items: stretch; padding: 16px !important; }
+  .idq-rail { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; border-right: 1px solid #e7e9ee; padding-right: 18px; min-height: 100%; }
+  .idq-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 100%; }
+  .idq-who b { font-size: 15px; line-height: 1.3; color: #0f172a; }
+  .idq-who small { font-size: 11.5px; color: #6b7280; word-break: break-all; }
+  .idq-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 14px; margin: 6px 0 0; font-size: 12px; width: 100%; }
+  .idq-dl dt { color: #6b7280; } .idq-dl dd { margin: 0; font-weight: 600; color: #0f172a; word-break: break-word; }
+  .idq-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+  .idq-fan { flex: 1 1 0; min-height: 220px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: #f3eeea; overflow: hidden; padding: 14px; box-sizing: border-box; }
+  .idq-fit { position: relative; flex: none; }
+  .idq-pair { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: flex; align-items: center; justify-content: center; gap: 22px; }
+  .idq-fc { flex: none; }
+  .idq-fc.front { transform: rotate(-2deg); position: relative; z-index: 2; }
+  .idq-fc.back { transform: translateY(6px) rotate(3deg); position: relative; z-index: 1; }
+    @media (max-width: 1250px) { .idq-two { grid-template-columns: 1fr; } .idq-rail { border-right: 0; padding-right: 0; border-bottom: 1px solid #e7e9ee; padding-bottom: 12px; } }
+  .idq-body { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+  .idq-body .idq-faces { flex: none; gap: 16px; flex-wrap: nowrap; }
+  .ix-page .mon-detail .ibx-d.idq-two { height: 100%; min-height: 0; box-sizing: border-box; }
+  .idq-none { height: 100%; min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; color: #94a3b8; padding: 24px; }
+  .idq-none b { color: #475569; font-size: 15px; } .idq-none span { font-size: 12.5px; max-width: 280px; line-height: 1.5; }
+  .idq-right { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  .idq-right .ibx-kv { grid-template-columns: 1fr 1fr !important; }
+  .idq-right .idq-set-btn { align-self: flex-start; }
   @media (max-width: 900px) { .ix-page .mon-split.ibx-split.idq-split { height: auto; min-height: 0; } }
   .idq-all { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 11.5px; font-weight: 600; color: #64748b; border-bottom: 1px solid #f1ece9; position: sticky; top: 0; background: #fff; z-index: 1; cursor: pointer; }
   .idq-all input, .idq-row > input { width: 15px; height: 15px; accent-color: #e8582a; cursor: pointer; flex-shrink: 0; }
@@ -1210,7 +1162,7 @@ ${idCardCss}
   .idq-card > span { display: flex !important; align-items: center; gap: 6px; }
   .idq-set-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; cursor: pointer; font: 600 11.5px inherit; font-family: inherit; color: #c2410c; text-transform: none; letter-spacing: 0; }
   .idq-card-row { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
-  .ix-page .mon-detail .idc-preview { zoom: 1.15; }
+  .ix-page .mon-detail .idc-preview { zoom: 1.05; }
   .idq-act-text { flex: 1; font-size: 12.5px; color: #64748b; }
   .idq-link { display: flex; align-items: center; gap: 6px; min-width: 250px; }
   .idq-link .ix-input { height: 34px; min-width: 0; flex: 1; font-size: 12.5px; }

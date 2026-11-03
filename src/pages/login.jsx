@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
+import csuLogo from "../assets/csu-logo.png";
 import campus from "../assets/campus.jpg";
 import { API } from "../config.js";
 
@@ -451,15 +452,13 @@ export default function LoginForm({ variant = "student" }) {
                 </div>
 
                 <div className="lf-tapcard">
-                  <div className="lf-tapcard-top">
-                    <img src={logo} alt="" />
-                    <span className="lf-chip" />
+                    <div className="lf-tc-head"><span className="lf-tc-logos"><img src={csuLogo} alt="" /><img src={logo} alt="" /></span></div>
+                    <span className="lf-tc-photo"><svg viewBox="0 0 24 24" fill="#e8582a"><circle cx="12" cy="9" r="4.2" /><path d="M3.5 22c.8-4.6 4.4-7 8.5-7s7.7 2.4 8.5 7z" /></svg></span>
+                    <span className="lf-tc-pill">STUDENT INTERN</span>
+                    <span className="lf-tc-name" />
+                    <span className="lf-tc-sub" />
+                    <span className="lf-tc-tap">TAP TO LOG ATTENDANCE</span>
                   </div>
-                  <div className="lf-tapcard-lines">
-                    <span />
-                    <span />
-                  </div>
-                </div>
               </div>
             </section>
 
@@ -825,19 +824,22 @@ const css = `
   .lf-reader-ring.r2 { animation-delay: .35s; }
 
   .lf-tapcard {
-    position: absolute; left: 50px; top: 78px; width: 200px; height: 124px; z-index: 2;
-    border-radius: 18px; padding: 14px 16px;
-    background: linear-gradient(135deg, #fff 0%, #ffe6d9 100%);
-    box-shadow: 0 28px 50px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.7);
-    display: flex; flex-direction: column; justify-content: space-between;
-    transform: translate(70px,-90px) rotate(10deg); opacity: 0;
-    animation: lf-card 6s cubic-bezier(.4,0,.2,1) infinite;
+    position: absolute; left: 98px; top: 52px; width: 108px; height: 171px; z-index: 2; border-radius: 12px; overflow: hidden;
+    background: #fff; box-shadow: 0 28px 50px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.7);
+    display: flex; flex-direction: column; align-items: center; transform: translate(70px,-90px) rotate(10deg); opacity: 0;
+    animation: lf-card 6s cubic-bezier(.4,0,.2,1) infinite; will-change: transform, opacity;
   }
-  .lf-tapcard-top { display: flex; align-items: center; justify-content: space-between; }
-  .lf-tapcard-top img { height: 34px; width: auto; object-fit: contain; }
-  .lf-chip { width: 32px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #f9c46b, #e3902b); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
-  .lf-tapcard-lines span { display: block; height: 7px; border-radius: 99px; background: rgba(232,88,42,0.28); }
-  .lf-tapcard-lines span + span { width: 55%; margin-top: 7px; background: rgba(27,20,16,0.12); }
+  .lf-tc-head::after { content: "Caraga State University · CCIS"; position: absolute; left: 0; right: 0; top: 33px; text-align: center; color: #fff; font-size: 4.6px; font-weight: 600; white-space: nowrap; }
+.lf-tc-head { position: absolute; left: 0; right: 0; top: 0; height: 70px; background: #e8582a; border-radius: 0 0 50% 50% / 0 0 22px 22px; }
+  .lf-tc-logos { position: absolute; top: 6px; left: 0; right: 0; display: flex; justify-content: center; gap: 6px; }
+  .lf-tc-logos img { height: 24px; width: auto; object-fit: contain; background: none; }
+.lf-tc-logos img:last-child { mix-blend-mode: multiply; }
+  .lf-tc-photo { position: relative; margin-top: 38px; width: 46px; height: 46px; border-radius: 50%; background: #ffe6d9; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.18); display: flex; align-items: flex-end; justify-content: center; overflow: hidden; flex-shrink: 0; box-sizing: content-box; }
+  .lf-tc-photo svg { width: 34px; height: 34px; margin-bottom: -2px; }
+  .lf-tc-pill { position: relative; margin-top: 8px; padding: 2.5px 7px; border-radius: 99px; background: #e8582a; color: #fff; font-weight: 700; font-size: 5.5px; line-height: 1; letter-spacing: .08em; white-space: nowrap; }
+  .lf-tc-name { margin-top: 8px; width: 74%; height: 7px; border-radius: 99px; background: #1b1f2a; }
+  .lf-tc-sub { margin-top: 5px; width: 52%; height: 5px; border-radius: 99px; background: rgba(27,31,42,.15); }
+  .lf-tc-tap { margin-top: auto; margin-bottom: 9px; color: #e8582a; font-weight: 700; font-size: 5px; letter-spacing: .1em; white-space: nowrap; }
 
   .lf-toast {
     position: absolute; left: 20px; right: 20px; top: 0; z-index: 3;

@@ -172,6 +172,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
   const [r, setR] = useState(() => ex?.ratings || {});
   const [f, setF] = useState({ strengths: ex?.strengths || "", improvements: ex?.improvements || "", comments: ex?.comments || "" });
   const [edit, setEdit] = useState(!ex);
+  const [share, setShare] = useState(ex ? ex.share_comments !== false : true);
   const [busy, setBusy] = useState(false);
   const total = supTotal(cfg, r);
   const rated = (cfg.supervisor || []).reduce((s, c) => s + c.items.filter((it) => r[it.key] >= 1).length, 0);
@@ -182,7 +183,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
     try {
       const res = await fetch(`${API}/evaluations`, {
         method: "POST", headers: { ...J, "Content-Type": "application/json" },
-        body: JSON.stringify({ intern_id: intern.id, mode: "system", ratings: r, ...f }),
+        body: JSON.stringify({ intern_id: intern.id, mode: "system", ratings: r, share_comments: share, ...f }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Couldn't save the appraisal.");
@@ -222,6 +223,9 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
             : f[k] ? <p key={k} className="gr-note"><b>{l}:</b> {f[k]}</p> : null
         ))}
       </div>
+      {edit && !locked && (
+        <label className="gr-share"><input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
+      )}
       <div className="gr-bar">
         <div className="gr-total">
           <b>{total === null ? `${rated} of ${items} rated` : `${num(total)} / 100 points`}</b>
@@ -371,6 +375,7 @@ export function MyGrade() {
     fetch(`${API}/grades/criteria`, { headers: J }).then((r) => (r.ok ? r.json() : null)).then(setCfg).catch(() => setCfg(null));
   }, []);
   if (!d) return null;
+  const supPct = cfg?.supervisor_share ?? 60;
   return (
     <section className="ix-card pf-card gr-mine">
       <style>{GR_CSS}</style>
@@ -387,17 +392,21 @@ export function MyGrade() {
           <div className="gr-final"><b>{fmt(d.final_grade)}%</b>
             {d.equivalent && <span className="gr-eqbig"><b>{d.equivalent.grade}</b>{d.equivalent.rating}</span>}
             <small>Released {day(d.released_at)}</small></div>
-          <div className="gr-parts">
-            <h4 className="gr-ph">HTE supervisor appraisal <span>60%</span></h4>
-            {(cfg?.supervisor || []).map((c) => (
-              <div key={c.key} className="gr-barrow"><span>{c.label}</span><i><em style={{ width: `${((d.supervisor?.categories?.[c.key] || 0) / c.weight) * 100}%` }} /></i><b>{num(d.supervisor?.categories?.[c.key])} / {c.weight}</b></div>
-            ))}
-            <p className="gr-hint">{num(d.supervisor?.score)} / 100 points × 60% = <b>{num((d.supervisor?.score || 0) * 0.6)}</b>{d.supervisor?.by ? ` · rated by ${d.supervisor.by}` : ""}</p>
-            <h4 className="gr-ph">OJT coordinator evaluation <span>40%</span></h4>
-            {(cfg?.coordinator || []).map((c) => (
-              <div key={c.key} className="gr-barrow"><span>{c.label}</span><i><em style={{ width: `${((d.coordinator?.categories?.[c.key] || 0) / c.weight) * 100}%` }} /></i><b>{num(d.coordinator?.categories?.[c.key])} / {c.weight}</b></div>
-            ))}
-            <p className="gr-hint"><b>{num(d.coordinator?.score)}</b> / 40{d.coordinator?.by ? ` · by ${d.coordinator.by}` : ""}</p>
+          <div className="gr-tblwrap">
+            <table className="gr-tbl">
+              <thead><tr><th>Category</th><th>Points</th><th>Counts as</th></tr></thead>
+              <tbody>
+                <tr className="grp"><td>HTE supervisor appraisal <span className="gr-w">{supPct}%</span>{d.supervisor?.by && <small>Rated by {d.supervisor.by}</small>}</td><td>{num(d.supervisor?.score)} / 100</td><td>{num((d.supervisor?.score || 0) * (supPct / 100))}</td></tr>
+                {(cfg?.supervisor || []).map((c) => (
+                  <tr key={c.key} className="item"><td>{c.label}</td><td>{num(d.supervisor?.categories?.[c.key])} / {c.weight}</td><td /></tr>
+                ))}
+                <tr className="grp"><td>OJT coordinator evaluation <span className="gr-w gr-w2">{100 - supPct}%</span>{d.coordinator?.by && <small>Graded by {d.coordinator.by}</small>}</td><td>{num(d.coordinator?.score)} / {100 - supPct}</td><td>{num(d.coordinator?.score)}</td></tr>
+                {(cfg?.coordinator || []).map((c) => (
+                  <tr key={c.key} className="item"><td>{c.label}</td><td>{num(d.coordinator?.categories?.[c.key])} / {c.weight}</td><td /></tr>
+                ))}
+                <tr className="tot"><td>Final grade</td><td /><td>{fmt(d.final_grade)}%</td></tr>
+              </tbody>
+            </table>
           </div>
           {d.supervisor?.strengths && <p className="gr-note"><b>Strengths:</b> {d.supervisor.strengths}</p>}
           {d.supervisor?.improvements && <p className="gr-note"><b>Weaknesses:</b> {d.supervisor.improvements}</p>}
@@ -532,6 +541,21 @@ const GR_CSS = `
 .gr-final { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px 4px; }
 .gr-final b { font-size: 34px; color: #c2410c; letter-spacing: -1px; } .gr-final small { color: #64748b; font-size: 12.5px; }
 .gr-parts { padding: 6px 18px; display: flex; flex-direction: column; gap: 2px; }
+.gr-share { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: #475569; flex: none; }
+.gr-cov { display: block; font-size: 11px; color: #94a3b8; line-height: 1.3; margin-top: 1px; }
+.gr-formula { margin: 8px 0 2px; padding: 8px 12px; border-radius: 10px; background: #fff1ea; color: #7c2d12; font-size: 12.5px; }
+.gr-tblwrap { padding: 6px 18px 8px; overflow-x: auto; }
+.gr-tbl { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.gr-tbl th { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: #64748b; font-weight: 700; text-align: right; padding: 4px 0 8px; }
+.gr-tbl th:first-child, .gr-tbl td:first-child { text-align: left; }
+.gr-tbl td { text-align: right; padding: 9px 0; border-top: 1px solid #eef0f4; color: #0f172a; white-space: nowrap; }
+.gr-tbl td:first-child { white-space: normal; }
+.gr-tbl tr.grp td { background: #f6f7f9; font-weight: 700; padding: 9px 10px; border-top: 0; }
+.gr-tbl tr.grp td small { display: block; font-size: 11px; font-weight: 500; color: #64748b; margin-top: 2px; }
+.gr-tbl tr.item td:first-child { padding-left: 16px; }
+.gr-tbl tr.tot td { border-top: 2px solid #0f172a; font-weight: 700; font-size: 14px; padding-top: 12px; }
+.gr-tbl tr.tot td:last-child { color: #c2410c; font-size: 16px; }
+.gr-w2 { color: #1d4ed8; background: #eaf1ff; }
 .gr-mine .gr-note { padding: 2px 18px; }
 .gr-mine .gr-note:last-child { padding-bottom: 16px; }
 @media (max-width: 640px) {

@@ -17,6 +17,7 @@ import {
 import { internCss, cardUnify, preStatusOf } from "./InternDashboard.jsx";
 import QuarterlyReport from "../components/QuarterlyReport.jsx";
 import Evaluations from "../components/Evaluations.jsx";
+import RequirementForms from "./RequirementForms.jsx";
 import SchoolEventReview, { schoolEventIsMine } from "./SchoolEventReview.jsx";
 import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
@@ -45,7 +46,7 @@ const GROUPS = {
       { key: "online",      label: "Online Attendance", icon: "inbox",  sub: "Remote workdays: the supervisor confirms first, then you give the final decision." },
       { key: "movs",        label: "MOV Submissions",   icon: "folder", sub: "Review intern-submitted documents (MOVs, forms, certificates)." },
       { key: "overtime",    label: "Overtime",          icon: "clock",  sub: "Time after 5:00 PM: the supervisor approves first, then you give the final decision." },
-      { key: "event",       label: "School Events",     icon: "calendar", sub: "Interns attending a CSU event: the supervisor confirms first, then you decide. An approved day is excused: no hours counted, not absent." },
+      { key: "event",       label: "Excused",     icon: "calendar", sub: "Sick days and school events: the supervisor confirms first, then you decide. The excused time is not counted as absent and gives no hours." },
       { key: "nfc",         label: "NFC Cards",         icon: "card",   sub: "ID card requests: approve or reject. The admin prints the card and links it when the intern claims it." },
     ],
   },
@@ -192,7 +193,7 @@ export default function OjtCoordinatorDashboard() {
               canViewFiles   // only the coordinator can open the files interns upload
             />
           )}
-          {tab.key === "records" && <Records records={records} loading={loading} />}
+          {tab.key === "records" && <Records records={records} loading={loading} interns={interns} />}
           {tab.key === "evaluation" && <Evaluations user={user} />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} />}
@@ -258,7 +259,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingNfc = 0, pendi
     { key: "movs", icon: "folder", tone: "purple", title: "MOV submissions", sub: "Documents and certificates", n: pendingMovs, to: "/coordinator/approvals?tab=movs" },
     { key: "ot", icon: "clock", tone: "amber", title: "Overtime", sub: "Approved by the supervisor, your final say", n: pendingOt, to: "/coordinator/approvals?tab=overtime" },
     { key: "nfc", icon: "card", tone: "green", title: "NFC card requests", sub: "Approve or reject ID cards", n: pendingNfc, to: "/coordinator/approvals?tab=nfc" },
-    { key: "event", icon: "calendar", tone: "green", title: "School events", sub: "Excused days for CSU events", n: pendingEv, to: "/coordinator/approvals?tab=event" },
+    { key: "event", icon: "calendar", tone: "green", title: "Excused absences", sub: "Sick days and school events", n: pendingEv, to: "/coordinator/approvals?tab=event" },
   ];
 
   return (
@@ -281,14 +282,16 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingNfc = 0, pendi
       left={(
         <>
         <Panel title="Needs your review" count={toReview} link="Open approvals" onLink={() => go("/coordinator/approvals")}>
-          {review.map((r) => (
-            <DashRow key={r.key} icon={r.icon} tone={r.tone} title={r.title} sub={r.sub}
-              tag={r.n > 0 ? String(r.n) : "None"} tagTone={r.n > 0 ? "orange" : ""} onClick={() => go(r.to)} />
-          ))}
-          {noSup.length > 0 && (
-            <DashRow icon="warn" tone="red" title={`${noSup.length} intern${noSup.length > 1 ? "s have" : " has"} no HTE supervisor`}
-              sub="They can't send time corrections" tag="Assign" tagTone="red" onClick={() => go("/coordinator/supervisors")} />
-          )}
+          <div className="dbx-fill">
+            {review.map((r) => (
+              <DashRow key={r.key} icon={r.icon} tone={r.tone} title={r.title} sub={r.sub}
+                tag={r.n > 0 ? String(r.n) : "None"} tagTone={r.n > 0 ? "orange" : ""} onClick={() => go(r.to)} />
+            ))}
+            {noSup.length > 0 && (
+              <DashRow icon="warn" tone="red" title={`${noSup.length} intern${noSup.length > 1 ? "s have" : " has"} no HTE supervisor`}
+                sub="They can't send time corrections" tag="Assign" tagTone="red" onClick={() => go("/coordinator/supervisors")} />
+            )}
+          </div>
         </Panel>
         {/* interns who need a follow-up */}
         <NeedsAttention interns={interns} records={records} monitorPath="/coordinator/interns" />
@@ -297,7 +300,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingNfc = 0, pendi
       right={<><HomeCalendar /><AnnouncementBoard limit={3} /></>}
     >
       <Panel title="Today's attendance" count={seenToday} link="Monitor" onLink={() => go("/coordinator/interns")} grow>
-        {loading ? <Spinner /> : <TodayPeople records={todayRecs} limit={10} />}
+        {loading ? <Spinner /> : <TodayPeople records={todayRecs} limit={10} interns={interns} />}
       </Panel>
     </DashLayout>
   );
@@ -695,7 +698,7 @@ function Pending({ pending, waiting = [], interns, user, onRefresh }) {
           <Icon name="warn" size={18} /> Couldn't load the reviewed days. Check that the server is running.
         </div>
       )}
-      <OnlineReview role="coordinator" waiting={pending} reviewed={history} onReview={handleValidate} />
+      <OnlineReview role="coordinator" waiting={pending} withSup={waiting} reviewed={history} onReview={handleValidate} />
     </>
   );
 }
@@ -721,6 +724,7 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
     return <Badge label={ph === "post" ? "Post" : ph === "during" ? "During" : "Pre"} type={ph === "post" ? "online" : ph === "during" ? "pending" : "onsite"} />;
   };
   const [showDue, setShowDue] = useState(false);
+  const [formsOpen, setFormsOpen] = useState(false);   // upload the blank forms interns can print
   const phaseOk = (m) => fPhase === "all" || phaseOf(m) === fPhase;
 
   const pendingAll = movs.filter((m) => m.status === "pending");
@@ -799,10 +803,11 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
       <PageHeader title="MOV Submissions" sub="Review intern-submitted documents (MOVs, forms, certificates)." live />
       <div className="dl-bar">
         <span><Icon name="calendar" size={16} /> Set due dates, ask for reports, and remind interns who haven't submitted.</span>
-        {showDue ? (
-          <button type="button" className="ix-b ghost sm" onClick={() => setShowDue(false)}>← Back to MOV submissions</button>
-        ) : (
+        {(
           <span style={{ display: "inline-flex", gap: 8 }}>
+            <button type="button" className="ix-b ghost sm" onClick={() => setFormsOpen(true)}>
+              <Icon name="file" size={14} /> Forms and templates
+            </button>
             <button type="button" className="ix-b ghost sm" onClick={() => setShowDue("reports")}>
               <Icon name="file" size={14} /> Weekly / monthly reports
             </button>
@@ -812,9 +817,18 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
           </span>
         )}
       </div>
-      {showDue === "due" && <DeadlinesPanel onClose={() => setShowDue(false)} />}
-      {showDue === "reports" && <ReportsPanel interns={interns} onClose={() => setShowDue(false)} />}
-      {!showDue && <>
+      {formsOpen && <RequirementForms manage onClose={() => setFormsOpen(false)} />}
+      {showDue === "due" && (
+        <Modal wide title="Due dates & reminders" sub="Leave a date blank for no due date. Weekly / monthly reports are set under Weekly / monthly reports." onClose={() => setShowDue(false)}>
+          <DeadlinesPanel onClose={() => setShowDue(false)} />
+        </Modal>
+      )}
+      {showDue === "reports" && (
+        <Modal wide title="Weekly / monthly reports" sub="Ask for a report whenever you need one. Interns upload each report on its own, and old ones are kept." onClose={() => setShowDue(false)}>
+          <ReportsPanel interns={interns} onClose={() => setShowDue(false)} />
+        </Modal>
+      )}
+      {<>
         <Msg msg={msg} />
         <MovBoard movs={movs} interns={interns} reqLabel={reqLabel} remarks={remarks} setRemarks={setRemarks}
           processing={processing} onReview={handleReview} undoCell={undoCell} />
@@ -1163,7 +1177,7 @@ function OvertimeReview({ overtime, onRefresh }) {
     <>
       <PageHeader title="Overtime" sub="Time after 5:00 PM only counts when you approve it." live />
       <Msg msg={msg} />
-      <OvertimeBoard role="coordinator" waiting={pendingList} reviewed={historyAll} all={overtime} capOf={capOf} onReview={review} />
+      <OvertimeBoard role="coordinator" waiting={pendingList} withSup={overtime.filter((o) => o.ot_status === "pending" && o.supervisor_id)} reviewed={historyAll} all={overtime} capOf={capOf} onReview={review} />
     </>
   );
 }
@@ -1257,16 +1271,13 @@ function DeadlinesPanel({ onClose }) {
   };
 
   return (
-    <div className="ix-card dl-panel">
+    <div className="dl-panel dl-flat">
       <div className="dl-head">
-        <div>
-          <h3>Due dates &amp; reminders</h3>
-          <p>Leave a date blank for no due date. Weekly / monthly reports are set under Reports.</p>
-        </div>
         <div className="ix-search dl-search">
           <Icon name="search" size={16} />
           <input type="text" placeholder="Search requirement..." value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        <button type="button" className="ix-b primary dl-save" disabled={!!busy || loading} onClick={save}>{busy === "save" ? "Saving..." : "Save due dates"}</button>
       </div>
 
       <div className="dl-tabs" role="tablist">
@@ -1352,10 +1363,6 @@ function DeadlinesPanel({ onClose }) {
           ))}
         </div>
       )}
-      <div className="dl-foot">
-        <button type="button" className="ix-b ghost" onClick={onClose}>Back</button>
-        <button type="button" className="ix-b primary" disabled={!!busy || loading} onClick={save}>{busy === "save" ? "Saving..." : "Save due dates"}</button>
-      </div>
     </div>
   );
 }
@@ -1365,15 +1372,17 @@ function DeadlinesPanel({ onClose }) {
    The coordinator decides when a report is needed: she adds one with a name and a due date,
    for all interns, some programs, or specific interns. Interns upload into it; nothing is replaced. */
 const PROGRAM_KEYS = ["BSIT", "BSIS", "BSCS"];
+const BLANK_REPORT = { title: "", due_date: "", audience: "all", programs: [], intern_ids: [] };
 function ReportsPanel({ interns, onClose }) {
   const [list, setList] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(null);
-  const [form, setForm] = useState(null);           // null | { id?, title, due_date, audience, programs, intern_ids }
+  const [form, setForm] = useState(BLANK_REPORT);   // the form on the right: a new report, or the one being edited { id?, title, due_date, audience, programs, intern_ids }
   const [pickQ, setPickQ] = useState("");
   const [openId, setOpenId] = useState(null);
   const [who, setWho] = useState({});
-  const [delAsk, setDelAsk] = useState(null);
+  const [edit, setEdit] = useState(null);       // the report being edited (opens in its own pop-up)
+  const [delRep, setDelRep] = useState(null);   // the report waiting for "Remove?" confirmation (pop-up)
 
   const load = () =>
     fetch(`${API}/reports`, { headers: { Accept: "application/json" } })
@@ -1398,13 +1407,13 @@ function ReportsPanel({ interns, onClose }) {
     } finally { setBusy(null); }
   };
 
-  const save = async (e) => {
+  const save = async (e, f = form, done = () => { setForm(BLANK_REPORT); setPickQ(""); setWho({}); }) => {
     e.preventDefault();
-    const body = { title: form.title, due_date: form.due_date || null, audience: form.audience, programs: form.programs, intern_ids: form.intern_ids };
-    const ok = form.id ? await call("PUT", `/coordinator/reports/${form.id}`, body, "save") : await call("POST", "/coordinator/reports", body, "save");
-    if (ok) { setForm(null); setWho({}); load(); }
+    const body = { title: f.title, due_date: f.due_date || null, audience: f.audience, programs: f.programs, intern_ids: f.intern_ids };
+    const ok = f.id ? await call("PUT", `/coordinator/reports/${f.id}`, body, "save") : await call("POST", "/coordinator/reports", body, "save");
+    if (ok) { done(); load(); }
   };
-  const remove = async (r) => { if (await call("DELETE", `/coordinator/reports/${r.id}`, null, `del${r.id}`)) { setDelAsk(null); load(); } };
+  const remove = async (r) => { if (await call("DELETE", `/coordinator/reports/${r.id}`, null, `del${r.id}`)) { setDelRep(null); load(); } };
   const remind = async (r, ids) => {
     if (await call("POST", `/coordinator/reports/${r.id}/remind`, ids ? { user_ids: ids } : {}, ids ? `${r.id}#${ids[0]}` : `rem${r.id}`)) load();
   };
@@ -1424,59 +1433,47 @@ function ReportsPanel({ interns, onClose }) {
     const label = new Date(v + "T00:00:00").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
     return <span className={`dl-chip ${days < 0 ? "over" : days <= 3 ? "soon" : "ok"}`}>{label}</span>;
   };
-  const blank = { title: "", due_date: "", audience: "all", programs: [], intern_ids: [] };
-  const toggleIn = (k, v) => setForm((f) => ({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] }));
+  const toggleIn = (setF, k, v) => setF((f) => ({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] }));
   const pq = pickQ.trim().toLowerCase();
   const pickable = interns.filter((u) => !pq || `${u.name} ${u.program || ""} ${u.student_id || ""}`.toLowerCase().includes(pq));
 
-  return (
-    <div className="ix-card dl-panel">
-      <div className="dl-head">
-        <div>
-          <h3>Weekly / monthly reports</h3>
-          <p>Ask for a weekly / monthly report whenever you need one. Interns upload each report on its own, and old ones are kept.</p>
-        </div>
-        {!form && <button type="button" className="ix-b primary sm" onClick={() => { setForm(blank); setMsg(null); }}><Icon name="plus" size={14} /> New report</button>}
-      </div>
-      <Msg msg={msg} />
-
-      {form && (
-        <form className="rp-form" onSubmit={save}>
+  const fields = (f, setF) => (
+    <>
           <div className="rp-row">
             <label className="rp-field grow"><span>Report name</span>
               <input className="ix-input" required maxLength={150} placeholder="e.g. Report 1, or Monthly report – November"
-                value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} /></label>
+                value={f.title} onChange={(e) => setF((f) => ({ ...f, title: e.target.value }))} /></label>
             <label className="rp-field"><span>Due date</span>
-              <input type="date" className="ix-input" value={form.due_date || ""} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} /></label>
+              <input type="date" className="ix-input" value={f.due_date || ""} onChange={(e) => setF((f) => ({ ...f, due_date: e.target.value }))} /></label>
           </div>
           <div className="rp-field"><span>Who submits it</span>
             <div className="rp-aud">
               {[["all", "All interns"], ["programs", "By program"], ["interns", "Specific interns"]].map(([k, l]) => (
-                <button key={k} type="button" className={form.audience === k ? "rc-f on" : "rc-f"} onClick={() => setForm((f) => ({ ...f, audience: k }))}>{l}</button>
+                <button key={k} type="button" className={f.audience === k ? "rc-f on" : "rc-f"} onClick={() => setF((f) => ({ ...f, audience: k }))}>{l}</button>
               ))}
             </div>
           </div>
-          {form.audience === "programs" && (
+          {f.audience === "programs" && (
             <div className="rp-aud">
               {PROGRAM_KEYS.map((k) => (
-                <label key={k} className={form.programs.includes(k) ? "rp-check on" : "rp-check"}>
-                  <input type="checkbox" checked={form.programs.includes(k)} onChange={() => toggleIn("programs", k)} /> {k}
+                <label key={k} className={f.programs.includes(k) ? "rp-check on" : "rp-check"}>
+                  <input type="checkbox" checked={f.programs.includes(k)} onChange={() => toggleIn(setF, "programs", k)} /> {k}
                 </label>
               ))}
             </div>
           )}
-          {form.audience === "interns" && (
+          {f.audience === "interns" && (
             <div className="rp-pick">
               <div className="rp-pick-bar">
                 <div className="ix-search"><Icon name="search" size={14} />
                   <input type="text" placeholder="Find an intern..." value={pickQ} onChange={(e) => setPickQ(e.target.value)} /></div>
-                <small>{form.intern_ids.length} picked</small>
+                <small>{f.intern_ids.length} picked</small>
               </div>
               <ul>
                 {pickable.map((u) => (
                   <li key={u.id}>
-                    <label className={form.intern_ids.includes(u.id) ? "on" : ""}>
-                      <input type="checkbox" checked={form.intern_ids.includes(u.id)} onChange={() => toggleIn("intern_ids", u.id)} />
+                    <label className={f.intern_ids.includes(u.id) ? "on" : ""}>
+                      <input type="checkbox" checked={f.intern_ids.includes(u.id)} onChange={() => toggleIn(setF, "intern_ids", u.id)} />
                       <Avatar name={u.name} photo={u.photo} size={24} />
                       <span><b>{u.name}</b><small>{[u.program, u.placement].filter(Boolean).join(" · ")}</small></span>
                     </label>
@@ -1486,70 +1483,96 @@ function ReportsPanel({ interns, onClose }) {
               </ul>
             </div>
           )}
+    </>
+  );
+
+  return (
+    <div className="dl-panel dl-flat rp-two">
+      <div className="rp-left">
+        <Msg msg={msg} />
+        {list === null ? <Spinner /> : list.length === 0 ? (
+          <div className="dl-empty">No reports yet. Fill in the form on the right to ask interns for one.</div>
+        ) : (
+          <div className="dl-table">
+            <div className="dl-tr dl-th rp-tr"><span>Report</span><span>Due date</span><span>Sent</span><span /></div>
+            {list.map((r) => {
+              const miss = Math.max((r.total || 0) - (r.sent || 0), 0);
+              return (
+                <div key={r.id} className={`dl-item${openId === r.id ? " open" : ""}`}>
+                  <div className="dl-tr rp-tr">
+                    <span className="dl-name">{r.title}<small className="rp-for">For {who4(r)}</small></span>
+                    {dueChip(r.due_date)}
+                    {miss > 0 ? (
+                      <button type="button" className="dl-miss link" onClick={() => toggleWho(r)} title="See who hasn't sent it">
+                        {r.sent}/{r.total} · {miss} missing <span className="dl-caret">{openId === r.id ? "▲" : "▼"}</span>
+                      </button>
+                    ) : <span className="dl-miss ok">{r.total ? `All ${r.total} sent` : "No interns"}</span>}
+                    <span className="rp-acts">
+                      <button type="button" className="ix-b ghost sm" disabled={!!busy || !miss} onClick={() => remind(r)} title="Remind everyone who hasn't sent it">
+                        <Icon name="bell" size={13} /> {busy === `rem${r.id}` ? "..." : "Remind"}</button>
+                      <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => { setEdit({ ...r, due_date: r.due_date || "" }); setPickQ(""); setMsg(null); }} title="Edit">
+                        <Icon name="pencil" size={13} /></button>
+                      <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => setDelRep(r)} title="Remove"><Icon name="trash" size={13} /></button>
+                    </span>
+                  </div>
+                  {openId === r.id && (
+                    <div className="dl-who">
+                      {!who[r.id] ? <span className="dl-who-wait">Loading…</span> : who[r.id].length === 0 ? (
+                        <span className="dl-who-wait">Everyone has sent it.</span>
+                      ) : (
+                        <ul>
+                          {who[r.id].map((u) => (
+                            <li key={u.id}>
+                              <Avatar name={u.name} photo={u.photo} size={26} />
+                              <span className="dl-who-name"><strong>{u.name}</strong><small>{[u.program, u.placement].filter(Boolean).join(" · ") || u.email}</small></span>
+                              <button type="button" className="dl-who-remind" disabled={!!busy} onClick={() => remind(r, [u.id])}>
+                                <Icon name="bell" size={13} /> {busy === `${r.id}#${u.id}` ? "..." : "Remind"}</button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+        <form className="rp-form rp-side" onSubmit={save}>
+          <h4 className="rp-ft">New report</h4>
+          {fields(form, setForm)}
           <div className="rp-form-foot">
-            <button type="button" className="ix-b ghost" onClick={() => setForm(null)} disabled={!!busy}>Cancel</button>
-            <button type="submit" className="ix-b primary" disabled={!!busy}>{busy === "save" ? "Saving..." : form.id ? "Save changes" : "Add report and notify interns"}</button>
+            <button type="button" className="ix-b ghost" onClick={() => { setForm(BLANK_REPORT); setPickQ(""); setMsg(null); }} disabled={!!busy}>Clear</button>
+            <button type="submit" className="ix-b primary" disabled={!!busy}>{busy === "save" ? "Saving..." : "Add and notify interns"}</button>
           </div>
         </form>
-      )}
-
-      {list === null ? <Spinner /> : list.length === 0 ? (
-        !form && <div className="dl-empty">No reports yet. Click <b>New report</b> to ask interns for one.</div>
-      ) : (
-        <div className="dl-table">
-          <div className="dl-tr dl-th rp-tr"><span>Report</span><span>Due date</span><span>For</span><span>Sent</span><span /></div>
-          {list.map((r) => {
-            const miss = Math.max((r.total || 0) - (r.sent || 0), 0);
-            return (
-              <div key={r.id} className={openId === r.id ? "dl-item open" : "dl-item"}>
-                <div className="dl-tr rp-tr">
-                  <span className="dl-name">{r.title}</span>
-                  {dueChip(r.due_date)}
-                  <span className="rp-for">{who4(r)}</span>
-                  {miss > 0 ? (
-                    <button type="button" className="dl-miss link" onClick={() => toggleWho(r)} title="See who hasn't sent it">
-                      {r.sent}/{r.total} · {miss} missing <span className="dl-caret">{openId === r.id ? "▲" : "▼"}</span>
-                    </button>
-                  ) : <span className="dl-miss ok">{r.total ? `All ${r.total} sent` : "No interns"}</span>}
-                  <span className="rp-acts">
-                    <button type="button" className="ix-b ghost sm" disabled={!!busy || !miss} onClick={() => remind(r)} title="Remind everyone who hasn't sent it">
-                      <Icon name="bell" size={13} /> {busy === `rem${r.id}` ? "..." : "Remind"}</button>
-                    <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => { setForm({ ...r, due_date: r.due_date || "" }); setMsg(null); }} title="Edit">
-                      <Icon name="pencil" size={13} /></button>
-                    {delAsk === r.id ? (
-                      <>
-                        <button type="button" className="ix-b danger sm" disabled={!!busy} onClick={() => remove(r)}>{busy === `del${r.id}` ? "..." : "Remove"}</button>
-                        <button type="button" className="ix-b ghost sm" onClick={() => setDelAsk(null)}>No</button>
-                      </>
-                    ) : (
-                      <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => setDelAsk(r.id)} title="Remove"><Icon name="trash" size={13} /></button>
-                    )}
-                  </span>
-                </div>
-                {openId === r.id && (
-                  <div className="dl-who">
-                    {!who[r.id] ? <span className="dl-who-wait">Loading…</span> : who[r.id].length === 0 ? (
-                      <span className="dl-who-wait">Everyone has sent it.</span>
-                    ) : (
-                      <ul>
-                        {who[r.id].map((u) => (
-                          <li key={u.id}>
-                            <Avatar name={u.name} photo={u.photo} size={26} />
-                            <span className="dl-who-name"><strong>{u.name}</strong><small>{[u.program, u.placement].filter(Boolean).join(" · ") || u.email}</small></span>
-                            <button type="button" className="dl-who-remind" disabled={!!busy} onClick={() => remind(r, [u.id])}>
-                              <Icon name="bell" size={13} /> {busy === `${r.id}#${u.id}` ? "..." : "Remind"}</button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
+      {edit && (
+        <Modal title="Edit report" sub={edit.title} onClose={() => setEdit(null)}>
+          <div className="rp-two rp-modalbox">
+            <form className="rp-form" onSubmit={(e) => save(e, edit, () => setEdit(null))}>
+              <Msg msg={msg} />
+              {fields(edit, setEdit)}
+              <div className="rp-form-foot">
+                <button type="button" className="ix-b ghost" onClick={() => setEdit(null)} disabled={!!busy}>Cancel</button>
+                <button type="submit" className="ix-b primary" disabled={!!busy}>{busy === "save" ? "Saving..." : "Save changes"}</button>
               </div>
-            );
-          })}
-        </div>
+            </form>
+          </div>
+        </Modal>
       )}
-      <div className="dl-foot"><button type="button" className="ix-b ghost" onClick={onClose}>Back</button></div>
+      {delRep && (
+        <Modal title="Remove this report?" onClose={() => setDelRep(null)}>
+          <div className="rp-two rp-modalbox">
+            <p className="rp-confirm"><b>{delRep.title}</b><br />Interns will no longer be asked for it. Reports they already uploaded stay in their records.</p>
+            <Msg msg={msg} />
+            <div className="rp-form-foot">
+              <button type="button" className="ix-b ghost" onClick={() => setDelRep(null)} disabled={!!busy}>Keep it</button>
+              <button type="button" className="ix-b danger" disabled={!!busy} onClick={() => remove(delRep)}>{busy === `del${delRep.id}` ? "Removing..." : "Yes, remove"}</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1701,6 +1724,54 @@ const coordCss = `
 .ix-content .ix-card.dl-panel { padding: 20px 22px !important; }
 .dl-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
 .dl-head h3 { margin: 0; font-size: 17px; font-weight: 700; }
+/* the same size as Forms and templates: 1180px wide, as tall as the window allows */
+.ix-modal:has(.dl-flat) { width: min(1180px, 96vw) !important; max-width: none !important; height: 90vh; }
+/* reports pop-up: the form on the left (fixed), the reports on the right (scrolls inside when there are many).
+   Same look as the other pages: white cards, light grey lines, 40px inputs, orange only for what is picked. */
+.ix-modal:has(.dl-flat) { display: flex; flex-direction: column; overflow: hidden !important; }
+.ix-modal:has(.dl-flat) > .ix-modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.dl-flat.rp-two { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 1.4fr); grid-template-rows: minmax(0, 1fr); gap: 16px; align-items: stretch; }
+.rp-two .rp-side { order: -1; }
+.rp-two .rp-left { min-width: 0; min-height: 0; overflow-y: auto; border: 1px solid #e8ebf0; border-radius: 12px; background: #fff; }
+.rp-two .dl-table { border: 0; border-radius: 0; overflow: visible; }
+.rp-two .dl-th { position: sticky; top: 0; z-index: 2; background: #f8f9fb; color: #6b7280; border-bottom: 1px solid #eef0f3; text-align: left; }
+.rp-two .dl-th > span { text-align: left; }
+.rp-two .dl-item:nth-child(odd) > .dl-tr { background: transparent; }
+.rp-two .dl-tr { border-top: 1px solid #eef0f3; }
+.rp-two .rp-tr { grid-template-columns: minmax(0, 1fr) 104px 140px auto !important; gap: 10px; padding: 10px 14px; }
+.rp-two .dl-name { display: flex; flex-direction: column; align-items: flex-start; text-align: left; min-width: 0; }
+.rp-two .dl-name .rp-for { font-size: 11.5px; font-weight: 500; color: #8b919b; margin-top: 1px; }
+.rp-modalbox { display: flex; flex-direction: column; gap: 14px; min-width: min(460px, 86vw); }
+.rp-modalbox .rp-form { display: flex; flex-direction: column; gap: 14px; margin: 0; }
+.rp-modalbox .rp-confirm { margin: 0; font-size: 13.5px; line-height: 1.55; color: #374151; }
+.rp-modalbox .rp-confirm b { color: #111827; font-size: 14.5px; }
+.rp-two .rp-form.rp-side { margin: 0; min-height: 0; overflow-y: auto; background: #fff; border: 1px solid #e8ebf0; border-radius: 12px; padding: 16px 18px; gap: 14px; }
+.rp-two .rp-ft { margin: 0; font-size: 14px; font-weight: 600; color: #111827; }
+.rp-two .rp-field { gap: 6px; font-size: 12.5px; font-weight: 600; color: #374151; }
+.rp-two .rp-field.grow { min-width: 0; flex: 1 1 100%; }
+.rp-two .rp-row .rp-field { flex: 1 1 100%; }
+.rp-two .rp-form .ix-input, .rp-modalbox .rp-form .ix-input { width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; border: 1px solid #e3e5ea; border-radius: 10px; background: #fff; font: inherit; font-size: 13px; color: #111827; }
+.rp-two .rp-form .ix-input:focus { border-color: #e8582a; box-shadow: 0 0 0 3px rgba(232,88,42,.12); outline: none; }
+.rp-two .rc-f, .rp-two .rp-check { height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid #e3e5ea; background: #fff; font-size: 12.5px; font-weight: 600; color: #374151; box-sizing: border-box; }
+.rp-two .rc-f.on, .rp-two .rp-check.on { border-color: #e8582a; background: #fff3ec; color: #c2410c; }
+.rp-two .rp-pick { border-color: #e3e5ea; }
+.rp-two .rp-pick ul { max-height: 190px; }
+.rp-two .rp-form-foot { margin-top: auto; padding-top: 4px; }
+@media (max-width: 900px) { .dl-flat.rp-two { grid-template-columns: 1fr; grid-template-rows: auto; } .rp-two .rp-left { overflow: visible; } .rp-two .rp-side { order: 0; } }
+/* due dates & reminders: search on the left, Save always visible on the right; the list scrolls inside, same look as the reports pop-up */
+.dl-flat:not(.rp-two) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.dl-flat:not(.rp-two) .dl-head { justify-content: space-between; align-items: center; margin: 0; flex: none; }
+.dl-flat:not(.rp-two) .dl-search { flex: 0 1 340px; }
+.dl-flat:not(.rp-two) .dl-save { margin-left: auto; flex: none; }
+.dl-flat:not(.rp-two) .dl-tabs, .dl-flat:not(.rp-two) > .ix-msg { flex: none; }
+.dl-flat:not(.rp-two) .dl-table { flex: 1 1 0; min-height: 0; overflow-y: auto; border: 1px solid #e8ebf0; border-radius: 12px; background: #fff; }
+.dl-flat:not(.rp-two) .dl-th { position: sticky; top: 0; z-index: 2; background: #f8f9fb; color: #6b7280; border-bottom: 1px solid #eef0f3; }
+.dl-flat:not(.rp-two) .dl-item:nth-child(odd) > .dl-tr { background: transparent; }
+.dl-flat:not(.rp-two) .dl-tr { border-top: 1px solid #eef0f3; }
+.dl-flat:not(.rp-two) .dl-item.open > .dl-tr { background: #fff3ec; }
+.dl-flat:not(.rp-two) .dl-date { height: 38px; box-sizing: border-box; border: 1px solid #e3e5ea; border-radius: 10px; background: #fff; }
+.dl-flat .dl-head { justify-content: flex-end; }
+.dl-flat .dl-head:empty { display: none; }
 .dl-head p { margin: 4px 0 0; font-size: 12.5px; color: #64748b; }
 .dl-search { width: 300px; max-width: 100%; }
 .dl-tabs { display: flex; gap: 6px; border-bottom: 1px solid #f1e6df; margin-bottom: 12px; }

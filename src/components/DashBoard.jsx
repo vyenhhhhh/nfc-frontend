@@ -111,11 +111,12 @@ export function TimeLine({ parts = [], tone = "" }) {
 export const hm = (v) => (v ? fmtTime(v).replace(/:\d\d(?= )/, "") : "—");
 
 // Today's attendance, one row per intern (first time in, last time out, line of the day)
-export function TodayPeople({ records, limit = 9 }) {
+export function TodayPeople({ records, limit = 9, interns = [] }) {
+  const place = new Map(interns.map((i) => [i.id, i.placement]));   // where each intern is placed (shown under the name)
   const map = new Map();
   records.forEach((r) => {
     const k = r.user_id ?? r.name;
-    if (!map.has(k)) map.set(k, { key: k, name: r.name, photo: r.photo, online: false, parts: [] });
+    if (!map.has(k)) map.set(k, { key: k, name: r.name, photo: r.photo, placement: r.placement || place.get(r.user_id) || "", online: false, parts: [] });
     const p = map.get(k);
     if (r.uid === "ONLINE") p.online = true;
     if (r.checked_in_at) p.parts.push({ in: r.checked_in_at, out: r.checked_out_at || null });
@@ -134,7 +135,7 @@ export function TodayPeople({ records, limit = 9 }) {
       {people.slice(0, limit).map((p) => (
         <li key={p.key} className="dbx-person">
           <Avatar name={p.name} photo={p.photo} size={30} status={p.open ? "on" : undefined} />
-          <b className="dbx-name">{p.name}</b>
+          <span className="dbx-who"><b className="dbx-name">{p.name}</b><small>{p.placement || "No placement yet"}</small></span>
           <span className={`dbx-tag ${p.online ? "purple" : "blue"}`}>{p.online ? "Online" : "Onsite"}</span>
           <span className="dbx-time">{hm(p.first)} → {p.open ? <em className="in">in</em> : hm(p.last)}</span>
           <TimeLine parts={p.parts} tone="green" />
@@ -233,10 +234,12 @@ export function NeedsAttention({ interns, records, monitorPath, limit = 6 }) {
         <DashEmpty title="Everyone is on track" sub="No missing time outs, absences, late reports or pending cards." />
       ) : (
         <>
-          {items.slice(0, limit).map((x) => (
-            <DashRow key={x.key} avatar={{ name: x.u.name, photo: x.u.photo }} title={x.title} sub={x.sub}
-              tag={x.tag} tagTone={x.tagTone} onClick={() => openIntern(x.u)} />
-          ))}
+          <div className="dbx-fill">
+            {items.slice(0, limit).map((x) => (
+              <DashRow key={x.key} avatar={{ name: x.u.name, photo: x.u.photo }} title={x.title} sub={x.sub}
+                tag={x.tag} tagTone={x.tagTone} onClick={() => openIntern(x.u)} />
+            ))}
+          </div>
           {items.length > limit && <div className="dbx-more">+{items.length - limit} more</div>}
         </>
       )}
@@ -338,7 +341,9 @@ export const dbCss = `
 .ix-page .ix-content .dbx-rows { list-style: none; margin: 0; padding: 0; }
 .ix-page .ix-content .dbx-rows > li { display: grid; align-items: center; gap: 10px; padding: 6px 14px; border-bottom: 1px solid var(--dbx-soft); min-height: 44px; box-sizing: border-box; }
 .ix-page .ix-content .dbx-day { grid-template-columns: 34px 58px 150px minmax(60px, 1fr) 46px; }
-.ix-page .ix-content .dbx-person { grid-template-columns: 30px minmax(110px, 190px) 58px 130px minmax(60px, 1fr); }
+.ix-page .ix-content .dbx-person { grid-template-columns: 30px minmax(150px, 280px) 58px 130px minmax(60px, 1fr); }
+.ix-page .ix-content .dbx-who { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ix-page .ix-content .dbx-who small { font-size: 11px; line-height: 1.3; color: var(--dbx-mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ix-page .ix-content .dbx-dd { width: 32px; height: 32px; border-radius: 9px; background: #fff1ea; color: #c2410c; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
 .ix-page .ix-content .dbx-dd b { font-size: 12.5px; }
 .ix-page .ix-content .dbx-dd small { font-size: 8.5px; font-weight: 700; letter-spacing: .03em; }

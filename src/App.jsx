@@ -3,7 +3,7 @@ import schoolLogo from "./assets/logo.png";      // CCIS logo
 import csuLogo from "./assets/csu-logo.png";      // CSU seal
 import campus from "./assets/campus.jpg";        // same photo as the login page
 import { API, STORAGE } from "./config.js";
-import { createPhoneReader, createHelperReader, phoneNfcSupported } from "./kioskReaders.js";
+import { createHelperReader } from "./kioskReaders.js";
 
 const RESET_MS = 6000; // how long the result stays on screen
 const MIN_READING_MS = 650; // the shortest time "Reading your card..." shows (smooth, no flash)
@@ -31,21 +31,22 @@ const KIOSK_KEY = kioskKey();
 // so a gap longer than this between keys means someone is typing by hand → ignore it.
 const MAX_KEY_GAP_MS = 60;
 
-// Which card reader this kiosk uses. Saved on the device; a link can set it: …/?reader=phone
-//   auto    = ACR122U helper if it is running, the phone's NFC on an Android phone, else the old USB reader
-//   phone   = Android phone/tablet NFC (Chrome)      acr122u = ACR122U with the helper program
+// Which card reader this kiosk uses. Saved on the device; a link can set it: …/?reader=acr122u
+//   auto    = ACR122U helper if it is running, else the old USB reader
+//   acr122u = ACR122U with the helper program
 //   usb     = only the old USB reader (types the UID, can't write the one-time code)
 const READER_STORE = "mytrack.reader";
 const readerMode = () => {
   try {
     const url = new URL(window.location.href);
     const fromLink = url.searchParams.get("reader");
-    if (fromLink && ["auto", "phone", "acr122u", "usb"].includes(fromLink)) {
+    if (fromLink && ["auto", "acr122u", "usb"].includes(fromLink)) {
       localStorage.setItem(READER_STORE, fromLink);
       url.searchParams.delete("reader");
       window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
-    return localStorage.getItem(READER_STORE) || "auto";
+    const saved = localStorage.getItem(READER_STORE) || "auto";
+    return saved === "phone" ? "auto" : saved;   // the phone reader is not offered any more
   } catch {
     return "auto";
   }
@@ -82,13 +83,12 @@ export default function App() {
   const [time, setTime] = useState(new Date());
   const [photoBad, setPhotoBad] = useState(false);
 
-  // card readers that can also write the one-time code (phone NFC / ACR122U)
+  // card readers that can also write the one-time code (ACR122U)
   const [reader, setReader] = useState({ state: "idle", text: READER_MODE === "usb" ? "USB reader" : "Starting the card reader..." });
   const [readerFlash, setReaderFlash] = useState("");
-  const writers = useRef({});        // { webnfc: phoneReader, acr122u: helperReader }
+  const writers = useRef({});        // { acr122u: helperReader }
   const lastCard = useRef({ uid: "", at: 0 });
   const tapRef = useRef(null);       // the newest handleTap (the readers are set up once)
-  const phoneRef = useRef(null);
 
   const [online, setOnline] = useState(true);
   const [queued, setQueued] = useState(() => loadQueue().length);
@@ -152,7 +152,7 @@ export default function App() {
 
   useEffect(() => () => clearTimeout(resetTimer.current), []);
 
-  // start the phone NFC / ACR122U reader
+  // start the ACR122U reader
   useEffect(() => {
     if (READER_MODE === "usb") return undefined;
     const onCard = ({ uid, card, writer }) => {
@@ -166,14 +166,8 @@ export default function App() {
       setReader((r) => ({ ...r, ...st }));
       if (st.flash) { setReaderFlash(st.flash); setTimeout(() => setReaderFlash(""), 4000); }
     };
-    const usePhone = READER_MODE === "phone" || (READER_MODE === "auto" && phoneNfcSupported());
-    const useHelper = READER_MODE === "acr122u" || (READER_MODE === "auto" && !phoneNfcSupported());
+    const useHelper = true;   // "auto" and "acr122u" both use the helper (the old USB reader still works without it)
     const started = [];
-    if (usePhone) {
-      const r = createPhoneReader({ onCard, onStatus });
-      writers.current.webnfc = r; phoneRef.current = r; started.push(r);
-      r.start();
-    }
     if (useHelper) {
       const r = createHelperReader({ onCard, onStatus: (st) => {
         // in "auto" on a PC, no helper simply means the old USB reader is used
@@ -183,19 +177,8 @@ export default function App() {
       writers.current.acr122u = r; started.push(r);
       r.start();
     }
-    // keep the phone's screen on while it is the kiosk
-    let lock = null;
-    const wake = async () => { try { lock = await navigator.wakeLock?.request("screen"); } catch { /* not allowed */ } };
-    if (usePhone) { wake(); document.addEventListener("visibilitychange", wake); }
-    return () => {
-      started.forEach((r) => r.stop());
-      document.removeEventListener("visibilitychange", wake);
-      try { lock?.release(); } catch { /* ignore */ }
-    };
+    return () => { started.forEach((r) => r.stop()); };
   }, []);
-
-  // Chrome asks for NFC permission only after a button press
-  const startPhoneNfc = async (e) => { e.currentTarget.blur(); await phoneRef.current?.start(); };
 
   // write the next one-time code on the card that is still on the reader, then tell the server
   const writeNextCode = async (writer, cw, uid) => {
@@ -301,7 +284,7 @@ export default function App() {
       if (res.status >= 500) throw new TypeError("server down");   // the database can't be reached: keep the tap
       setOnline(true);
       const data = await res.json().catch(() => ({}));
-      // phone / ACR122U: put the next one-time code on the card (the intern still holds it there)
+      // ACR122U: put the next one-time code on the card (the intern still holds it there)
       if (res.ok && data.card_write && extra.writer) {
         const w = await writeNextCode(extra.writer, data.card_write, uid);
         if (!w.ok) {
@@ -403,8 +386,12 @@ export default function App() {
                     </div>
                   </div>
                   <div className="kq-tapcard">
-                    <div className="kq-tapcard-top"><img src={schoolLogo} alt="" /><span className="kq-chip" /></div>
-                    <div className="kq-tapcard-lines"><span /><span /></div>
+                    <div className="kq-tc-head"><span className="kq-tc-logos"><img src={csuLogo} alt="" /><img src={schoolLogo} alt="" /></span></div>
+                    <span className="kq-tc-photo"><svg viewBox="0 0 24 24" fill="#e8582a"><circle cx="12" cy="9" r="4.2" /><path d="M3.5 22c.8-4.6 4.4-7 8.5-7s7.7 2.4 8.5 7z" /></svg></span>
+                    <span className="kq-tc-pill">STUDENT INTERN</span>
+                    <span className="kq-tc-name" />
+                    <span className="kq-tc-sub" />
+                    <span className="kq-tc-tap">TAP TO LOG ATTENDANCE</span>
                   </div>
                 </div>
                 </div>
@@ -415,14 +402,11 @@ export default function App() {
                     <>
                       <h1>Tap your<br />NFC card.</h1>
                       <h2>Time in when you arrive, time out when you leave.</h2>
-                      <p>{writers.current.webnfc ? "Hold your ID card flat on the back of this phone until you see your name." : "Hold your ID card flat on the reader until you see your name."}</p>
+                      <p>Hold your ID card flat on the reader until you see your name.</p>
                       <div className="kq-steps">
                         <div className="kq-glass"><b><em>1</em>Arrive</b>Tap to time in</div>
                         <div className="kq-glass"><b><em>2</em>Leave</b>Tap to time out</div>
                       </div>
-                      {reader.state === "needs-permission" && (
-                        <button type="button" className="kq-start" onClick={startPhoneNfc}>Start NFC</button>
-                      )}
                       {readerFlash && <div className="kq-flash">{readerFlash}</div>}
                     </>
                   )}
@@ -596,7 +580,7 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-live { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; padding: 7px 13px; border-radius: 99px;
   background: rgba(34,197,94,.18); border: 1px solid rgba(134,239,172,.45); color: #bbf7d0; }
 .kq-brand + .kq-live, .kq-brand + .kq-reader { margin-left: auto; }
-/* which card reader this kiosk uses (phone NFC / ACR122U / USB) */
+/* which card reader this kiosk uses (ACR122U / USB) */
 .kq-reader { flex: none; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 7px 13px; border-radius: 99px; max-width: 320px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff; }
 .kq-reader i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; }
@@ -656,15 +640,23 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-rd-led { position: absolute; top: 18px; left: 50%; margin-left: -15px; width: 30px; height: 6px; border-radius: 3px; background: var(--peach); box-shadow: 0 0 12px var(--peach); animation: kq-led 6s ease-in-out infinite; }
 .kq-rd-ring { position: absolute; inset: 0; border-radius: 24px; border: 2px solid rgba(232,88,42,.7); opacity: 0; animation: kq-ring 6s ease-out infinite; }
 .kq-rd-ring.r2 { animation-delay: .35s; }
-.kq-tapcard { position: absolute; left: 50px; top: 78px; width: 200px; height: 124px; z-index: 2; border-radius: 18px; padding: 14px 16px;
-  background: linear-gradient(135deg, #fff 0%, #ffe6d9 100%); box-shadow: 0 28px 50px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.7);
-  display: flex; flex-direction: column; justify-content: space-between; transform: translate(70px,-90px) rotate(10deg); opacity: 0;
-  animation: kq-card 6s cubic-bezier(.4,0,.2,1) infinite; will-change: transform, opacity; }
-.kq-tapcard-top { display: flex; align-items: center; justify-content: space-between; }
-.kq-tapcard-top img { height: 34px; width: auto; object-fit: contain; }
-.kq-chip { width: 32px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #f9c46b, #e3902b); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
-.kq-tapcard-lines span { display: block; height: 7px; border-radius: 99px; background: rgba(232,88,42,.28); }
-.kq-tapcard-lines span + span { width: 55%; margin-top: 7px; background: rgba(27,20,16,.12); }
+.kq-tapcard {
+  position: absolute; left: 98px; top: 52px; width: 108px; height: 171px; z-index: 2; border-radius: 12px; overflow: hidden;
+  background: #fff; box-shadow: 0 28px 50px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.7);
+  display: flex; flex-direction: column; align-items: center; transform: translate(70px,-90px) rotate(10deg); opacity: 0;
+  animation: kq-card 6s cubic-bezier(.4,0,.2,1) infinite; will-change: transform, opacity;
+}
+.kq-tc-head::after { content: "Caraga State University · CCIS"; position: absolute; left: 0; right: 0; top: 33px; text-align: center; color: #fff; font-size: 4.6px; font-weight: 600; white-space: nowrap; }
+.kq-tc-head { position: absolute; left: 0; right: 0; top: 0; height: 70px; background: #e8582a; border-radius: 0 0 50% 50% / 0 0 22px 22px; }
+.kq-tc-logos { position: absolute; top: 6px; left: 0; right: 0; display: flex; justify-content: center; gap: 6px; }
+.kq-tc-logos img { height: 24px; width: auto; object-fit: contain; background: none; }
+.kq-tc-logos img:last-child { mix-blend-mode: multiply; }
+.kq-tc-photo { position: relative; margin-top: 38px; width: 46px; height: 46px; border-radius: 50%; background: #ffe6d9; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.18); display: flex; align-items: flex-end; justify-content: center; overflow: hidden; flex-shrink: 0; box-sizing: content-box; }
+.kq-tc-photo svg { width: 34px; height: 34px; margin-bottom: -2px; }
+.kq-tc-pill { position: relative; margin-top: 8px; padding: 2.5px 7px; border-radius: 99px; background: #e8582a; color: #fff; font-weight: 700; font-size: 5.5px; line-height: 1; letter-spacing: .08em; white-space: nowrap; }
+.kq-tc-name { margin-top: 8px; width: 74%; height: 7px; border-radius: 99px; background: #1b1f2a; }
+.kq-tc-sub { margin-top: 5px; width: 52%; height: 5px; border-radius: 99px; background: rgba(27,31,42,.15); }
+.kq-tc-tap { margin-top: auto; margin-bottom: 9px; color: #e8582a; font-weight: 700; font-size: 5px; letter-spacing: .1em; white-space: nowrap; }
 /* while a real card is being read: the card stays on the reader, the rings pulse fast, the light blinks */
 .kq-scene.reading .kq-tapcard { animation: none; opacity: 1; transform: translate(0,-2px) rotate(-5deg); }
 .kq-scene.reading .kq-rd-ring { animation: kq-ring-fast 1.2s ease-out infinite; }
