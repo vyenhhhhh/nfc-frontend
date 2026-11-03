@@ -70,7 +70,9 @@ export function createPhoneReader({ onCard, onStatus }) {
   };
 
   const stop = () => { try { scanAbort?.abort(); } catch { /* ignore */ } reader = null; };
-  return { kind: "phone", start, write, stop };
+  // the phone has no buzzer: a short vibration instead (1 = done, 2 = refused)
+  const beep = (kind = "ok") => { try { navigator.vibrate?.(kind === "ok" ? 150 : [90, 90, 90]); } catch { /* ignore */ } };
+  return { kind: "phone", start, write, stop, beep };
 }
 
 // ───────────────────────── ACR122U (helper program) ─────────────────────────
@@ -117,5 +119,7 @@ export function createHelperReader({ onCard, onStatus, url = HELPER_URL }) {
   });
 
   const stop = () => { stopped = true; clearTimeout(retry); try { ws?.close(); } catch { /* ignore */ } };
-  return { kind: "acr122u", start, write, stop };
+  // the ACR122U beeps once the whole tap is finished (it no longer beeps when it first sees the card)
+  const beep = (kind = "ok") => { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "beep", kind })); } catch { /* ignore */ } };
+  return { kind: "acr122u", start, write, stop, beep };
 }

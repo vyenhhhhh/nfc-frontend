@@ -291,6 +291,14 @@ export default function App() {
     // keep "Reading your card..." up for a moment so the screen doesn't flash when the server is fast
     const t0 = performance.now();
     const hold = () => new Promise((r) => setTimeout(r, Math.max(0, MIN_READING_MS - (performance.now() - t0))));
+    // ACR122U / phone: ONE signal when everything is finished (recorded + new card code written),
+    // so the intern learns to keep the card on the reader until it beeps. ok = 1 beep, refused = 2 short beeps.
+    let signaled = false;
+    const signal = (ok) => {
+      if (signaled || !extra.writer) return;
+      signaled = true;
+      try { writers.current[extra.writer]?.beep?.(ok ? "ok" : "error"); } catch { /* the beep is only a help */ }
+    };
     try {
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw new TypeError("offline");
       const res = await fetch(`${API}/tap`, {
@@ -308,6 +316,7 @@ export default function App() {
           data.note = [data.note, "Your time was recorded, but the card was moved away too soon to update it. It will update on your next tap."].filter(Boolean).join(" ");
         }
       }
+      signal(res.ok);
       await hold();
       // nothing was recorded, just tell the intern why:
       //   DUPLICATE_TAP = tapped again within 5 minutes
@@ -319,6 +328,7 @@ export default function App() {
       setLog((prev) => [data, ...prev].slice(0, 50));
       syncRef.current();                    // anything saved while offline goes now too
     } catch (err) {
+      signal(err instanceof TypeError);   // saved offline = ok, refused = error
       await hold();
       if (err instanceof TypeError) setStatus(saveOffline(uid));   // offline: saved on the kiosk, sent later
       else setError(err.message);
@@ -419,7 +429,7 @@ export default function App() {
                     <>
                       <h1>Tap your<br />NFC card.</h1>
                       <h2>Time in when you arrive, time out when you leave.</h2>
-                      <p>{writers.current.webnfc ? "Hold your ID card flat on the back of this phone until you see your name." : "Hold your ID card flat on the reader until you see your name."}</p>
+                      <p>{writers.current.webnfc ? "Hold your ID card flat on the back of this phone until you see your name." : "Hold your ID card on the reader until it beeps."}</p>
                       <div className="kq-steps">
                         <div className="kq-glass"><b><em>1</em>Arrive</b>Tap to time in</div>
                         <div className="kq-glass"><b><em>2</em>Leave</b>Tap to time out</div>
