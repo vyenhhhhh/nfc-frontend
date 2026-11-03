@@ -738,6 +738,10 @@ export function HomeCalendar() {
 /* ───────────────────────── Records ───────────────────────── */
 /* Attendance Records: the days on the left, that day's taps on the right
    (each row shows when the intern was in on a 7 AM – 7 PM line). */
+// a tap the kiosk saved while it had no internet and sent later (the coordinator may want to check it)
+const OFFLINE_TAG = { color: "#b45309", fontWeight: 600 };
+const OFFLINE_TIP = "Saved on the kiosk while it was offline, and sent when it was back online";
+
 export function Records({ records, loading, interns = [] }) {
   const placeOf = (r) => r.placement || interns.find((i) => String(i.id) === String(r.user_id))?.placement || "—";
   // One list of every tap: search an intern, filter by date or type.
@@ -884,8 +888,10 @@ export function Records({ records, loading, interns = [] }) {
               r.checked_out_at
                 ? <Badge label="Time out" type="out" />
                 : <Badge label="Time in" type="in" />,
-              hm(r.checked_in_at),
-              r.checked_out_at ? hm(r.checked_out_at) : <span className="rec-open">No time out yet</span>,
+              <>{hm(r.checked_in_at)}{r.offline_in ? <small style={OFFLINE_TAG} title={OFFLINE_TIP}> · offline</small> : null}</>,
+              r.checked_out_at
+                ? <>{hm(r.checked_out_at)}{r.offline_out ? <small style={OFFLINE_TAG} title={OFFLINE_TIP}> · offline</small> : null}</>
+                : <span className="rec-open">No time out yet</span>,
               hrs(r),
             ])}
             empty="No records match your filters."
@@ -3188,7 +3194,7 @@ function EndOfTerm({ users, records, onRefresh }) {
       s2["!cols"] = [12, 28, 12, 8, 10, 10, 7, 18].map((w) => ({ wch: w }));
       XLSX.utils.book_append_sheet(wb, s1, "Summary");
       XLSX.utils.book_append_sheet(wb, s2, "Attendance");
-      XLSX.writeFile(wb, `MYTRACK_interns_${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" })}.xlsx`);
+      XLSX.writeFile(wb, `CCIS-OJT_interns_${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" })}.xlsx`);
       setMsg({ type: "success", text: `Exported ${chosen.length} intern${chosen.length > 1 ? "s" : ""} (${detail.length} attendance rows).` });
     } catch (err) {
       setMsg({ type: "error", text: "Couldn't create the Excel file (no internet to load the Excel tool?). " + (err?.message || "") });
@@ -3538,13 +3544,13 @@ function ImportInterns({ onClose, onDone }) {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Interns");
       XLSX.utils.book_append_sheet(wb, ex, "Example");
-      XLSX.writeFile(wb, "MYTRACK-interns-template.xlsx");
+      XLSX.writeFile(wb, "CCIS-OJT-interns-template.xlsx");
     } catch {
       // no internet for the Excel helper: give a CSV (Excel opens it too)
       const csv = [head].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
-      a.download = "MYTRACK-interns-template.csv"; a.click();
+      a.download = "CCIS-OJT-interns-template.csv"; a.click();
     }
   };
 
@@ -3616,7 +3622,7 @@ function ImportInterns({ onClose, onDone }) {
       .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
-    a.download = "MYTRACK-temporary-passwords.csv"; a.click();
+    a.download = "CCIS-OJT-temporary-passwords.csv"; a.click();
   };
 
   const ready = checked ? checked.rows.filter((x) => !x.errors.length) : [];

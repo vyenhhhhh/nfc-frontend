@@ -14,7 +14,8 @@ import { HomeCalendar, Calendar, adminCss } from "./AdminDashboard.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TimeLine } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
-import { API, STORAGE } from "../config.js";
+import { API } from "../config.js";
+import { fileHref, openFile, useFileLink } from "../files.js";
 import RequirementForms from "./RequirementForms.jsx";   // blank forms to download and print
 import { MyGrade } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
 import { ID_OFFICE, CardFace, CardBack, idCardCss, loadCardSettings } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
@@ -1482,7 +1483,7 @@ function SubmitOnline({ user }) {
                       <div className="so-more">
                         <div><span>{d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span><p>{x.description}{x.isEv && x.mandatory ? " (mandatory school event)" : ""}{x.isEv ? ` · excused ${PORTION_LBL[x.portion] || "whole day"}` : ""}</p></div>
                         {x.isEv && x.reason && <div><span>Note</span><p>{x.reason}</p></div>}
-                        {x.isEv && x.proof_path && <div><span>Proof</span><p><a className="ix-link" href={`${STORAGE}${x.proof_path}`} target="_blank" rel="noopener noreferrer">{x.proof_name || "View file"}</a></p></div>}
+                        {x.isEv && x.proof_path && <div><span>Proof</span><p><a className="ix-link" href={fileHref(x.proof_path)} onClick={(e) => openFile(x.proof_path, e)} target="_blank" rel="noopener noreferrer">{x.proof_name || "View file"}</a></p></div>}
                         {x.remarks && <div><span>Remarks</span><p>“{x.remarks}”</p></div>}
                         {(x.status || "pending") === "pending" && (
                           <div className="so-act"><small>You can remove it while it's still waiting.</small><RemoveBtn onConfirm={() => removeSub(x.id, x.isEv)} /></div>
@@ -1649,7 +1650,7 @@ function WorkModeCard({ user }) {
 /* ───────────────────────── Submit MOV ───────────────────────── */
 /* a look at the submitted file inside the drawer: PDF and images show right there; Word files can only be opened */
 function FilePreview({ x }) {
-  const url = `${STORAGE}${x.file_path}`;
+  const url = useFileLink(x.file_path) || "";   // private: a short-lived link from the server
   const ext = String(x.original_name || x.file_path || "").split(".").pop().toLowerCase();
   const isImg = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext);
   const isPdf = ext === "pdf";
@@ -1762,7 +1763,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   };
 
   const fileLink = (m) => (
-    <a className="ix-link" href={`${STORAGE}${m.file_path}`} target="_blank" rel="noopener noreferrer">
+    <a className="ix-link" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer">
       {m.original_name}
     </a>
   );
@@ -2102,7 +2103,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                   </button>
                   <span className="mv-rt">
                     {m && (
-                      <a className="mv-file" href={`${STORAGE}${m.file_path}`} target="_blank" rel="noopener noreferrer" title={m.original_name}>
+                      <a className="mv-file" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer" title={m.original_name}>
                         <span>{m.original_name}</span>
                         {m.created_at && !isNaN(new Date(m.created_at)) && <em>· sent {new Date(m.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</em>}
                       </a>
@@ -3210,7 +3211,6 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
                 <span className="pf-tag o">OJT Intern</span>
                 <span className="pf-tag">{MODALITIES[modalityOf(u)]}</span>
                 {scopeOf(u) !== "local" && <span className="pf-tag">{SCOPES[scopeOf(u)]}</span>}
-                {modalityOf(u) !== "virtual" && u.work_mode === "offsite" && <span className="pf-tag">Work from home</span>}
                 <span className={u.nfc_uid ? "pf-tag g" : "pf-tag"}>{u.nfc_uid ? "Card linked" : "No card yet"}</span>
               </div>
             </div>
@@ -3248,7 +3248,6 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
                 {kv("Required hours", `${requiredHoursFor(u.program)}h`)}
                 {kv("Modality", MODALITIES[modalityOf(u)])}
                 {kv("Scope", SCOPES[scopeOf(u)])}
-                {kv("Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite")}
                 {kv("DTR type", DTR_MODES[dtrModeOf(u)])}
               </div>
             </section>

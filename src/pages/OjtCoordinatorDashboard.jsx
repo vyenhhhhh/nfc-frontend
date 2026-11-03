@@ -23,7 +23,8 @@ import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../comp
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 
-import { API, STORAGE } from "../config.js";
+import { API } from "../config.js";
+import { fileHref, openFile, useFileLink } from "../files.js";
 const NAV = [
   { path: "/coordinator",               label: "Dashboard",     icon: "dashboard" },
   { path: "/coordinator/approvals",     label: "Approvals",     icon: "inbox" },
@@ -784,7 +785,7 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
   );
 
   const fileLink = (m) => (
-    <a className="ix-link rv-file" href={`${STORAGE}${m.file_path}`} target="_blank" rel="noopener noreferrer" title={m.original_name}>
+    <a className="ix-link rv-file" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer" title={m.original_name}>
       <Icon name="clip" size={13} /> {m.original_name}
     </a>
   );
@@ -912,7 +913,7 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
   const docs = cur ? cur.docs : [];
   const doc = docs.find((m) => m.id === docId) || cur?.waiting.slice().sort((a, b) => mvTime(a).localeCompare(mvTime(b)))[0] || null;
   const pickWho = (id) => { setWho(id); setDocId(null); setOpen(true); };
-  const fileUrl = doc ? `${STORAGE}${doc.file_path}` : "";
+  const fileUrl = useFileLink(doc ? doc.file_path : null) || "";   // private: a short-lived link from the server
 
   const ext = doc ? mvExt(doc) : "";
 

@@ -1,7 +1,8 @@
 // SchoolEventReview.jsx — page for the HTE supervisor AND the OJT coordinator / admin.
 // Supervisor: confirms (then it goes to the coordinator) or rejects.  Coordinator / admin: final decision.
 import { useState, useEffect } from "react";
-import { API, STORAGE } from "../config.js";
+import { API } from "../config.js";
+import { fileHref, openFile } from "../files.js";
 import { Spinner, PageHeader, Badge, Msg, Icon, Avatar, liveRefresh, OA_CSS } from "../components/DashKit.jsx";
 
 
@@ -151,7 +152,7 @@ export default function SchoolEventReview({ user, embedded = false }) {
               {(cur.reason || cur.proof_path) && (
                 <div className="ev-note">
                   {cur.reason && <p>{cur.reason}</p>}
-                  {cur.proof_path && <a className="ix-link" href={`${STORAGE}${cur.proof_path}`} target="_blank" rel="noopener noreferrer"><Icon name="file" size={13} /> View proof{cur.proof_name ? ` (${cur.proof_name})` : ""}</a>}
+                  {cur.proof_path && <a className="ix-link" href={fileHref(cur.proof_path)} onClick={(e) => openFile(cur.proof_path, e)} target="_blank" rel="noopener noreferrer"><Icon name="file" size={13} /> View proof{cur.proof_name ? ` (${cur.proof_name})` : ""}</a>}
                 </div>
               )}
               {steps(cur)}

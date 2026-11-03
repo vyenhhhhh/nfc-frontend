@@ -113,7 +113,7 @@ function RecoverFlow({ onDone }) {
   // Step 2: shown only after step 1 matched
   const setNew = async (e) => {
     e.preventDefault();
-    if (pw.length < 6) { setMsg({ type: "error", text: "New password must be at least 6 characters." }); return; }
+    if (pw.length < 8) { setMsg({ type: "error", text: "New password must be at least 8 characters." }); return; }
     if (pw !== pw2) { setMsg({ type: "error", text: "The passwords don't match." }); return; }
     const d = await post("/recovery/reset", { reset_token: pass.reset_token, new_password: pw });
     if (d) { setMsg({ type: "success", text: d.message }); setTimeout(onDone, 2200); }
@@ -154,9 +154,9 @@ function RecoverFlow({ onDone }) {
           <p className="lf-modal-lead">Verified{pass?.name ? `: ${pass.name}` : ""}. Choose a new password.</p>
           <form onSubmit={setNew}>
             <label>New password</label>
-            <input type={showPw ? "text" : "password"} value={pw} onChange={(e) => setPw(e.target.value)} required minLength={6} autoComplete="new-password" autoFocus />
+            <input type={showPw ? "text" : "password"} value={pw} onChange={(e) => setPw(e.target.value)} required minLength={8} autoComplete="new-password" autoFocus />
             <label>Confirm new password</label>
-            <input type={showPw ? "text" : "password"} value={pw2} onChange={(e) => setPw2(e.target.value)} required minLength={6} autoComplete="new-password" />
+            <input type={showPw ? "text" : "password"} value={pw2} onChange={(e) => setPw2(e.target.value)} required minLength={8} autoComplete="new-password" />
             <label className="lf-rec-check"><input type="checkbox" checked={showPw} onChange={(e) => setShowPw(e.target.checked)} /> Show passwords</label>
             <Msg />
             <button type="submit" className="lf-rec-btn" disabled={busy || msg?.type === "success"}>{busy ? "Saving..." : "Change password"}</button>
@@ -359,7 +359,7 @@ export default function LoginForm({ variant = "student" }) {
         <button className="lf-logo-btn" onClick={() => go("/login")} aria-label="Home">
           <img src={logo} alt="CSU CCIS" className="lf-nav-logo" />
           <span className="lf-brand-name show">
-            CSU CCIS<br />MYTRACK
+            CSU CCIS<br />OJT
           </span>
         </button>
 

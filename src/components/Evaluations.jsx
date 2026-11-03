@@ -9,7 +9,8 @@
 // The signed paper evaluation form is still uploaded by the intern as a post-internship requirement.
 import { useState, useEffect } from "react";
 import { Icon, Msg, Spinner, Badge, Avatar, OA_CSS, esc } from "./DashKit.jsx";
-import { API, STORAGE } from "../config.js";
+import { API } from "../config.js";
+import { fileHref, openFile } from "../files.js";
 
 const J = { Accept: "application/json" };
 const num = (v, d = 2) => (v === null || v === undefined || v === "" ? "—" : Number(v).toFixed(d).replace(/\.?0+$/, (m) => (m.startsWith(".") ? "" : m)));
@@ -314,7 +315,7 @@ function CoordPanel({ intern, cfg, onDone, onError }) {
       <div className="gr-docs">
         {docs.length === 0 ? <span className="gr-hint">No post-internship documents uploaded yet (narrative report, signed evaluation form).</span>
           : docs.map(([k, d]) => (
-            <a key={k} className="gr-doc" href={`${STORAGE}${d.file_path}`} target="_blank" rel="noopener noreferrer">
+            <a key={k} className="gr-doc" href={fileHref(d.file_path)} onClick={(e) => openFile(d.file_path, e)} target="_blank" rel="noopener noreferrer">
               <Icon name="file" size={14} /> {DOC_LABEL[k] || k} <small className={`st ${d.status}`}>{d.status}</small>
             </a>
           ))}

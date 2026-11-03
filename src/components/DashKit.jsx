@@ -7,6 +7,7 @@ import { currentFit } from "../fit.js";
 import logo from "../assets/logo.png";
 
 import { API, STORAGE } from "../config.js";
+import { fileHref, openFile, useFileLink } from "../files.js";
 export const REQUIRED_HOURS = 486; // fallback when an intern has no program set
 
 /* ── Required OJT hours per program (from the OJT coordinator) ── */
@@ -171,7 +172,7 @@ export function dueStatus(due, sub, today = todayManila()) {
 }
 
 // Two lines shown next to the logo when the sidebar is open
-const BRAND_LINES = ["CSU CCIS", "MYTRACK"]; // e.g. ["CARAGA STATE", "UNIVERSITY"]
+const BRAND_LINES = ["CSU CCIS", "OJT"]; // e.g. ["CARAGA STATE", "UNIVERSITY"]
 
 // Turns a stored photo path (e.g. "profiles/abc.jpg") into a full URL
 export const photoUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
@@ -552,6 +553,12 @@ export function Avatar({ name, photo, status, size = 44 }) {
   );
 }
 
+// a private image (a staff signature): shown once the server gives its short-lived link
+function PrivateImg({ path, alt }) {
+  const src = useFileLink(path);
+  return src ? <img src={src} alt={alt} /> : <b>…</b>;
+}
+
 // Square profile photo for the sidebar
 function SquarePhoto({ name, photo }) {
   const [bad, setBad] = useState(false);
@@ -737,7 +744,7 @@ export function AccountSecurity({ user }) {
     e.preventDefault();
     setErr(null);
     if (ask === "pw") {
-      if (np.length < 6) { setErr("New password must be at least 6 characters."); return; }
+      if (np.length < 8) { setErr("New password must be at least 8 characters."); return; }
       if (np !== np2) { setErr("The new passwords don't match."); return; }
     }
     const path = ask === "show" ? "/account/recovery-code"
@@ -1081,7 +1088,7 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
                       <small>{report ? report.text : SUB[st](m || {})}</small>
                     </span>
                     {canViewFiles && m?.file_path && (
-                      <a className="rc-view" href={`${STORAGE}${m.file_path}`} target="_blank" rel="noopener noreferrer" title={m.original_name || "Open file"}>
+                      <a className="rc-view" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer" title={m.original_name || "Open file"}>
                         <Icon name="eye" size={13} /> View
                       </a>
                     )}
@@ -1837,7 +1844,7 @@ export function UserDetails({ u, interns = [] }) {
               ["Role", ROLE_LABEL[u.role] || u.role],
             ])}
             <div className="ipa-sigv"><small>Signature</small>
-              {u.signature ? <img src={photoUrl(u.signature)} alt="Signature" /> : <b>Not uploaded</b>}
+              {u.signature ? <PrivateImg path={u.signature} alt="Signature" /> : <b>Not uploaded</b>}
             </div>
           </div>
         )}
@@ -1868,7 +1875,6 @@ export function UserDetails({ u, interns = [] }) {
               ["Placement", u.placement],
               ["Modality", MODALITIES[modalityOf(u)]],
               ["Scope", SCOPES[scopeOf(u)]],
-              ["Work mode", u.work_mode === "offsite" ? "Offsite (WFH)" : "Onsite"],
               ["DTR type", DTR_MODES[dtrModeOf(u)]],
               ["HTE supervisor", u.supervisor_name || "Not assigned yet"],
               ["Required hours", `${requiredHoursFor(u.program)}h`],
@@ -1891,7 +1897,8 @@ function SigPicker({ file, onChange, current }) {
     setPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [file]);
-  const shown = preview || photoUrl(current);
+  const currentUrl = useFileLink(current);   // a saved signature is private: the server gives a short-lived link
+  const shown = preview || currentUrl;
   return (
     <div className="sig-pick">
       <div className="sig-box">{shown ? <img src={shown} alt="Signature" /> : <span>No signature yet</span>}</div>
@@ -2007,8 +2014,8 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
           ))}
           {(add || !noPassword) && fld(add ? "Password" : "Set new password",
             text("password", {
-              type: "text", autoComplete: "off", required: add, minLength: add ? 6 : undefined,
-              placeholder: add ? "At least 6 characters" : "Leave blank to keep",
+              type: "text", autoComplete: "off", required: add, minLength: add ? 8 : undefined,
+              placeholder: add ? "At least 8 characters" : "Leave blank to keep",
             }))}
         </div>
         {isIntern && (
@@ -2079,12 +2086,6 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                   {!add && <option value="">Select semester</option>}
                   <option value="1st Semester">1st Semester</option>
                   <option value="2nd Semester">2nd Semester</option>
-                </select>
-              ))}
-              {fld("Work mode", (
-                <select className="uf-input" value={f.work_mode} onChange={set("work_mode")}>
-                  <option value="onsite">Onsite</option>
-                  <option value="offsite">Offsite (WFH)</option>
                 </select>
               ))}
               {fld("Placement", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }), { full: true })}
@@ -3502,10 +3503,10 @@ function PrivacyGate({ user, onDecline }) {
     <div className="ix-modal-wrap pv-wrap">
       <style>{PRIVACY_CSS}</style>
       <div className="ix-modal pv-modal" role="dialog" aria-modal="true" aria-label="Data Privacy Notice">
-        <header><div><h2>Data Privacy Notice</h2><p>Please read this before using MYTRACK.</p></div></header>
+        <header><div><h2>Data Privacy Notice</h2><p>Please read this before using the CSU CCIS OJT system.</p></div></header>
         <div className="ix-modal-body pv-body">
           <p>Caraga State University – College of Computing and Information Sciences (CCIS) collects and uses your personal information
-            through MYTRACK in line with the <b>Data Privacy Act of 2012 (Republic Act No. 10173)</b>.</p>
+            through this system in line with the <b>Data Privacy Act of 2012 (Republic Act No. 10173)</b>.</p>
           <h3>What we collect</h3>
           <p>Your name, student ID, program, contact details, emergency contact, photo, OJT placement, attendance taps,
             online attendance, and the requirements you upload.</p>

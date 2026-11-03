@@ -511,7 +511,7 @@ export default function App() {
 
           <footer className="kq-foot">
             <span className="kq-foot-l">
-              MYTRACK · CSU CCIS OJT
+              CSU CCIS OJT
               {/* only while developing (npm run dev); it never appears in the built site */}
               {import.meta.env.DEV && (
                 <button type="button" className="kq-test" onClick={(e) => { e.currentTarget.blur(); handleTap(import.meta.env.VITE_TEST_UID || "1248158722"); }} disabled={loading}>

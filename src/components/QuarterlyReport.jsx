@@ -442,7 +442,7 @@ export default function QuarterlyReport({ user }) {
             </tbody>
           </table>
         )}
-        <p className="qr-hint">The modality starts from each intern's work arrangement (onsite / work from home). The category of an HTE is remembered for next time.{t.unplaced ? ` ${t.unplaced} intern${t.unplaced === 1 ? "" : "s"} with no placement set are not listed.` : ""}</p>
+        <p className="qr-hint">The modality comes from each intern's internship modality (on-site, hybrid, virtual or project-based). The category of an HTE is remembered for next time.{t.unplaced ? ` ${t.unplaced} intern${t.unplaced === 1 ? "" : "s"} with no placement set are not listed.` : ""}</p>
         <textarea className="ix-input" rows={2} placeholder="Note under the table (optional)" value={d.deploy_note} onChange={(e) => set("deploy_note", e.target.value)} />
         <Sub>Pre-Deployment Orientation</Sub>
         <Photos onError={(text) => setMsg({ type: "error", text })} list={d.orientation_photos} max={3} onChange={(l) => set("orientation_photos", l)} />
