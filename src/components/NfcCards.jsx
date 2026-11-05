@@ -486,7 +486,8 @@ const birthDate = (v) => {
 const cardName = (u) => {
   if (u.first_name && u.last_name) {
     const mi = (u.middle_name || "").trim().charAt(0);
-    return `${u.first_name.trim()} ${mi ? mi.toUpperCase() + ". " : ""}${u.last_name.trim()}`;
+    const ext = (u.name_extension || "").trim();
+    return `${u.first_name.trim()} ${mi ? mi.toUpperCase() + ". " : ""}${u.last_name.trim()}${ext ? " " + ext : ""}`;
   }
   const p = String(u.name || "").trim().split(/\s+/);
   return p.length > 2 ? `${p.slice(0, -2).join(" ")} ${p[p.length - 2].charAt(0)}. ${p[p.length - 1]}` : u.name || "";

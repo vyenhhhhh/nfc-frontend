@@ -33,7 +33,8 @@ const SECTIONS = [
   { key: "s5", label: "5. Future plans" },
   { key: "sign", label: "Prepared / Noted by" },
 ];
-const CATEGORIES = ["Government Agency", "Educational Institution", "Private Company / Industry", "IT Company", "NGO", "Research Center", "Hospital", "Other"];
+// the categories used in the CCIS quarterly reports (Table 4)
+const CATEGORIES = ["Government Agency", "Academic / University Office", "Educational Institution", "IT Company", "Private Company / Industry", "Research Center", "Hospital", "NGO", "NGO / Religious", "Utility Service", "Transportation", "Engineering", "Other"];
 const MODALITIES = ["On-site", "Hybrid", "Virtual", "Project-based"];
 
 // the semester(s) a quarter usually falls in (the coordinator can change it)
@@ -194,10 +195,12 @@ export default function QuarterlyReport({ user }) {
       mine.forEach((i) => { const h = i.placement.trim(); if (!byHte.has(h)) byHte.set(h, []); byHte.get(h).push(i); });
       const rows = [...byHte.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([h, arr]) => {
         // the coordinator's modality per intern (On-site / Hybrid / Virtual); older data falls back to the work mode
-        const LBL = { onsite: "On-site", hybrid: "Hybrid", virtual: "Virtual" };
+        const LBL = { onsite: "On-site", hybrid: "Hybrid", virtual: "Virtual", project: "Project-based" };
         const mods = [...new Set(arr.map((i) => LBL[i.modality] || (i.work_mode === "offsite" ? "Virtual" : "On-site")))];
-        const autoMod = ["On-site", "Hybrid", "Virtual"].filter((m) => mods.includes(m)).join(", ");
-        return { hte: h, n: arr.length, cat: d.hte_cat?.[h] || "", mod: d.hte_mod?.[h] || autoMod };
+        const autoMod = MODALITIES.filter((m) => mods.includes(m)).join(", ");
+        // a CSU / CCIS office is an academic / university office unless the coordinator picked something else
+        const uni = /^(CSU|CCIS|Caraga State University)\b/i.test(h);
+        return { hte: h, n: arr.length, cat: d.hte_cat?.[h] || (uni ? "Academic / University Office" : ""), mod: d.hte_mod?.[h] || autoMod };
       });
       return { p, rows };
     }).filter((g) => g.rows.length);
@@ -435,7 +438,7 @@ export default function QuarterlyReport({ user }) {
                     <td><select className="ix-select" value={r.cat} onChange={(e) => set("hte_cat", { ...d.hte_cat, [r.hte]: e.target.value })}>
                       <option value="">Choose…</option>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></td>
                     <td><select className="ix-select" value={r.mod} onChange={(e) => set("hte_mod", { ...d.hte_mod, [r.hte]: e.target.value })}>
-                      {MODALITIES.map((m) => <option key={m}>{m}</option>)}</select></td>
+                      {!MODALITIES.includes(r.mod) && <option>{r.mod}</option>}{MODALITIES.map((m) => <option key={m}>{m}</option>)}</select></td>
                   </tr>
                 )),
               ])}

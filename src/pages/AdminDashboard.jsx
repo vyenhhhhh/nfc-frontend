@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   navWithTabs,
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker, Inbox,
-  InternMonitor, AccountSecurity, UserDetails, UserForm, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
+  InternMonitor, AccountSecurity, UserDetails, UserForm, RolePickModal, outputRequired, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
   DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL,
 } from "../components/DashKit.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
@@ -931,11 +931,12 @@ export function Records({ records, loading, interns = [] }) {
 
 /* ───────────────────────── Manage Accounts ───────────────────────── */
 const BLANK_FORM = {
-  first_name: "", middle_name: "", last_name: "",
+  first_name: "", middle_name: "", last_name: "", name_extension: "",
   email: "", password: "", date_of_birth: "", role: "intern",
   student_id: "", contact_number: "", address: "",
   placement: "", semester: "1st Semester", program: "BSIT - 4",
   uid: "", work_mode: "onsite", tracking_type: "hours", modality: "onsite", scope: "local", dtr_mode: "two", supervisor_id: "", photo: null,
+  output_required: "1", prior_hours: "",
   emergency_contact_name: "", emergency_contact_relation: "",
   emergency_contact_number: "", emergency_contact_address: "",
 };
@@ -951,6 +952,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
   const [deleting, setDeleting] = useState(null);
   const [msg, setMsg] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [pickRole, setPickRole] = useState(false);   // the "What kind of account?" window
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [scanning, setScanning] = useState(false);
@@ -1084,6 +1086,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
       first_name: u.first_name || parts[0] || "",
       middle_name: u.middle_name || "",
       last_name: u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""),
+      name_extension: u.name_extension || "",
       email: u.email || "",
       student_id: u.student_id || "",
       contact_number: u.contact_number || "",
@@ -1107,6 +1110,8 @@ export function Accounts({ users, onRefresh, limited = false }) {
       position: u.position || "",
       hte_address: u.hte_address || "",
       moa_valid_until: u.moa_valid_until ? String(u.moa_valid_until).slice(0, 10) : "",
+      output_required: outputRequired(u) ? "1" : "0",
+      prior_hours: Number(u.prior_hours) ? String(Number(u.prior_hours)) : "",
     });
     setEditPhoto(null);
     setEditSig(null);
@@ -1230,7 +1235,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
         .ix-page .acc-table td { vertical-align: middle; }
         /* the account opens in the side panel (like the calendar): a wider panel, the profile in one column */
         .ix-page .ix-drawer:has(.acc-detail) { width: min(1040px, calc(100vw - 24px)); }
-        .ix-page .ix-drawer:has(.acc-detail .ipa-staff) { width: min(820px, calc(100vw - 24px)); }
+        .ix-page .ix-drawer:has(.acc-detail .uz-staff) { width: min(960px, calc(100vw - 24px)); }
         .ix-drawer .acc-detail .acc-detail-bar { position: sticky; top: -16px; z-index: 2; background: #fff; padding: 4px 0 10px; margin: 0; display: flex; gap: 8px; justify-content: flex-start; }
         .ix-drawer .acc-detail :is(.ipv-grid, .uf-grid).c3, .ix-drawer .acc-detail .uf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }`}</style>
       {importing && <ImportInterns onClose={() => setImporting(false)} onDone={onRefresh} />}
@@ -1238,15 +1243,23 @@ export function Accounts({ users, onRefresh, limited = false }) {
 
       {!showForm && !editUser && <Msg msg={msg} />}
 
+      {pickRole && (
+        <RolePickModal
+          roles={limited ? ["intern", "supervisor"] : null}
+          current={showForm ? form.role : null}
+          onClose={() => setPickRole(false)}
+          onPick={(k) => {
+            setPickRole(false);
+            if (showForm) setForm((s) => ({ ...s, role: k }));   // "Change" on the open form keeps what was typed
+            else { setForm({ ...BLANK_FORM, role: k }); openModal(); }
+          }}
+        />
+      )}
+
       {showForm ? (
         /* ───────── Add a user on the page (same layout as the profile / edit view) ───────── */
         <>
-          <div className="acc-bar">
-            <button type="button" className="ix-b ghost sm" onClick={closeModal} disabled={adding}>
-              ‹ Back to all users
-            </button>
-          </div>
-          <div className="ix-card">
+          <div className="acc-addwrap">
             <Msg msg={msg} />
             <form
               onSubmit={handleAdd}
@@ -1254,11 +1267,13 @@ export function Accounts({ users, onRefresh, limited = false }) {
             >
               <UserForm
                 mode="add"
+                back={<button type="button" className="ix-b ghost sm uz-back" onClick={closeModal} disabled={adding}>‹ Back</button>}
                 f={form}
                 set={(k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }))}
                 isIntern={form.role === "intern"}
                 supervisors={supervisors}
                 roles={limited ? ["intern", "supervisor"] : null}
+                onChangeRole={() => setPickRole(true)}
                 sigFile={form.signature || null}
                 onSig={(file) => setForm((s) => ({ ...s, signature: file }))}
                 header={<PhotoPicker file={form.photo} onChange={(file) => setForm((s) => ({ ...s, photo: file }))} />}
@@ -1289,13 +1304,17 @@ export function Accounts({ users, onRefresh, limited = false }) {
             </select>
             <span className="mon-chip on">{shownUsers.length} shown</span>
             <button className="ix-b ghost sm acc-add" onClick={() => setImporting(true)}><Icon name="upload" size={14} /> Import interns (Excel)</button>
-            <button className="ix-b primary sm" onClick={openModal}><Icon name="plus" size={14} /> Add New User</button>
+            <button className="ix-b primary sm" onClick={() => setPickRole(true)}><Icon name="plus" size={14} /> Add New User</button>
           </div>
 
           <div className="ix-card flush rec-card acc-table">
             <Table
-              headers={["User", "Role", "Email", "ID", "Program / HTE", "Status", ""]}
-              rows={shownUsers.map((u) => [
+              headers={cur ? ["User", "Role"] : ["User", "Role", "Email", "ID", "Program / HTE", "Status", ""]}
+              rows={shownUsers.map((u) => cur ? [
+                <button type="button" className="acc-name" onClick={() => openView(u)}>
+                  <Avatar name={u.name} photo={u.photo} size={28} /><strong>{u.name}</strong></button>,
+                <span className={`acc-role-tag ${u.role}`}>{ROLE_NAME[u.role] || u.role}</span>,
+              ] : [
                 <button type="button" className="acc-name" onClick={() => openView(u)}>
                   <Avatar name={u.name} photo={u.photo} size={28} /><strong>{u.name}</strong></button>,
                 <span className={`acc-role-tag ${u.role}`}>{ROLE_NAME[u.role] || u.role}</span>,
@@ -1310,11 +1329,9 @@ export function Accounts({ users, onRefresh, limited = false }) {
           </div>
           {cur && (
             <Drawer inPage key={cur.id} icon={editUser ? "pencil" : "user"} kicker={editUser ? "Edit account" : (ROLE_NAME[cur.role] || cur.role)}
-              title={cur.name} onClose={() => { if (!savingEdit) backToList(); }}>
-              {(
-                <div className="acc-detail">
-                  {!editUser && (
-                    <div className="acc-detail-bar">
+              title={cur.name} onClose={() => { if (!savingEdit) backToList(); }}
+              actions={editUser ? null : (
+                <>
                       <button type="button" className="ix-b primary sm" onClick={() => openEdit(cur)}>
                         <Icon name="pencil" size={14} /> Edit
                       </button>
@@ -1334,8 +1351,10 @@ export function Accounts({ users, onRefresh, limited = false }) {
                         <Icon name="trash" size={14} /> {deleting === cur.id ? "..." : "Delete"}
                       </button>
                       )}
-                    </div>
-                  )}
+                </>
+              )}>
+              {(
+                <div className="acc-detail">
 
                   {!editUser && cur.deactivated_at && (
                     <div className="acc-off-note"><Icon name="lock" size={15} />
@@ -1660,7 +1679,7 @@ export function Reports({ interns, records }) {
     const onsite = recs.filter((r) => r.uid !== "ONLINE").length;
     const online = recs.filter((r) => r.uid === "ONLINE").length;
     const total = calcHours(recs);
-    return { name: u.name, email: u.email, days, onsite, online, total, pct: Math.min(Math.round((total / requiredHoursFor(u.program)) * 100), 100) };
+    return { name: u.name, email: u.email, days, onsite, online, total, pct: Math.min(Math.round((total / requiredHoursFor(u.program, u.prior_hours)) * 100), 100) };
   });
 
   const monthLabel = new Date(month + "-01").toLocaleDateString("en-PH", { month: "long", year: "numeric" });
@@ -2374,7 +2393,7 @@ export function AdminProfile({ user }) {
   const role = { admin: "Admin", ojt_coordinator: "OJT Coordinator", supervisor: "HTE Supervisor" }[me.role] || me.role;
   const parts = (me.name || "").trim().split(/\s+/);
   // First / middle / last always agree with the full name shown at the top
-  const joined = [me.first_name, me.middle_name, me.last_name].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  const joined = [me.first_name, me.middle_name, me.last_name, me.name_extension].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   const nm = joined && joined.toLowerCase() === (me.name || "").trim().replace(/\s+/g, " ").toLowerCase()
     ? { first: me.first_name, middle: me.middle_name, last: me.last_name }
     : { first: parts[0] || "", middle: parts.length > 2 ? parts.slice(1, -1).join(" ") : "", last: parts.length > 1 ? parts[parts.length - 1] : "" };
@@ -2442,7 +2461,7 @@ export function AdminProfile({ user }) {
 
           <div className="pf-grid">
             <section className="ix-card flush pf-card">
-              <header>Personal information</header>
+              <header><span>Personal information</span></header>
               <div className="pf-body">
                 {kv("First name", nm.first, "first_name", { required: true })}
                 {kv("Middle name", nm.middle, "middle_name")}
@@ -2453,7 +2472,7 @@ export function AdminProfile({ user }) {
               </div>
             </section>
             <section className="ix-card flush pf-card">
-              <header>{me.role === "supervisor" ? "HTE details" : "Work details"}</header>
+              <header><span>{me.role === "supervisor" ? "HTE details" : "Work details"}</span></header>
               <div className="pf-body">
                 {kv("Role", role)}
                 {kv("Employee ID", me.student_id, "student_id")}
@@ -2517,6 +2536,13 @@ const STAFF_PF_CSS = `
 .ix-page .pf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
 .ix-page .ix-card.pf-card { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .ix-page .pf-card > header { padding: 13px 18px; border-bottom: 1px solid #eef0f3; font-size: 14px; font-weight: 600; color: #111827; }
+
+/* small orange accents (same on every role's My Profile) */
+.ix-page .ix-card.pf-head::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #e8582a; z-index: 2; }
+.ix-page .pf-card > header, .ix-page .pf-sec .sec-card > .ipv-title { position: relative; box-sizing: border-box; height: clamp(40px, 5.2vh, 48px); display: flex; align-items: center; }
+.ix-page .pf-page .pf-card > header, .ix-page .pf-page .pf-sec .sec-card > .ipv-title { padding-top: 0 !important; padding-bottom: 0 !important; }
+.ix-page .pf-card > header > span, .ix-page .pf-sec .sec-card > .ipv-title > span { position: relative; align-self: stretch; display: inline-flex; align-items: center; }
+.ix-page .pf-card > header > span::after, .ix-page .pf-sec .sec-card > .ipv-title > span::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: #e8582a; }
 .ix-page .pf-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; padding: 16px 18px 18px; }
 .ix-page .pf-kv { min-width: 0; }
 .ix-page .pf-kv.full { grid-column: 1 / -1; }
@@ -3148,7 +3174,7 @@ function EndOfTerm({ users, records, onRefresh }) {
     const recs = recsOf(u.id);
     const days = [...new Set(recs.map((r) => r.date))].sort();
     const hours = calcHours(recs);
-    const required = requiredHoursFor(u.program);
+    const required = requiredHoursFor(u.program, u.prior_hours);
     return { u, recs, days, hours, required, done: hours >= required, active: !u.deactivated_at };
   }).filter(({ u, recs, done, active }) =>
     (!f.program || programKey(u.program) === f.program)
@@ -3433,6 +3459,8 @@ const ACT_CSS = `
   .ix-page .al-det { display: inline-block; max-width: 420px; font-size: 12px; color: #4b5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
   .ix-page .al-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; }
   .ix-page .al-pager span { margin-right: auto; }
+  /* the search box fits its whole hint (phones keep the full-width box) */
+  @media (min-width: 901px) { .ix-page .al-wrap .mon-search { width: 340px; flex: 0 1 340px; } }
 `;
 const ACC_OFF_CSS = `
   .ix-page .acc-role-tag.off { background: #e5e7eb; color: #4b5563; }
@@ -3451,6 +3479,7 @@ const IMPORT_COLUMNS = [
   ["last_name", "Last name", "Dela Cruz"],
   ["first_name", "First name", "Juan"],
   ["middle_name", "Middle name", "Santos"],
+  ["name_extension", "Name extension (Jr., III)", ""],
   ["email", "Email", "juan.delacruz@carsu.edu.ph"],
   ["program", "Program (BSIT, BSIS or BSCS)", "BSIT"],
   ["semester", "Semester (1st or 2nd)", "1st"],
@@ -3467,6 +3496,7 @@ const HEADER_ALIASES = {
   last_name: ["lastname", "surname", "familyname"],
   first_name: ["firstname", "givenname"],
   middle_name: ["middlename", "middleinitial", "mi"],
+  name_extension: ["nameextension", "extension", "ext", "extname", "suffix", "namesuffix", "nameextensionjriii"],
   email: ["email", "emailaddress", "carsuemail", "schoolemail"],
   program: ["program", "course", "programbsitbsisorbscs", "degree"],
   semester: ["semester", "sem", "semester1stor2nd"],
@@ -3639,7 +3669,7 @@ function ImportInterns({ onClose, onDone }) {
           <>
             <ol className="im-steps">
               <li><b>Get the list in the right columns.</b> Download the template, or use the coordinator's own sheet if it has these headings:
-                <span className="im-cols">{IMPORT_COLUMNS.map((c) => <em key={c[0]} className={["middle_name", "contact_number", "placement", "emergency_contact_name", "emergency_contact_relation", "emergency_contact_number"].includes(c[0]) ? "opt" : ""}>{c[1].replace(/ \(.*\)/, "")}</em>)}</span>
+                <span className="im-cols">{IMPORT_COLUMNS.map((c) => <em key={c[0]} className={["middle_name", "name_extension", "contact_number", "placement", "emergency_contact_name", "emergency_contact_relation", "emergency_contact_number"].includes(c[0]) ? "opt" : ""}>{c[1].replace(/ \(.*\)/, "")}</em>)}</span>
                 <small>Orange = required. A single "Name" column ("Dela Cruz, Juan") works too. Placement can be blank and filled in later.</small>
               </li>
               <li><b>Choose the file.</b> Every row is checked first. Nothing is saved until you press Create.</li>

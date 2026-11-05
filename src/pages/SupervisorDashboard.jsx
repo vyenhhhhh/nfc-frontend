@@ -200,7 +200,7 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
             <div className="dbx-fill">
               {[...interns].map((u) => {
                 const h = Math.round(calcHours(records.filter((r) => r.user_id === u.id)) * 10) / 10;
-                const req = requiredHoursFor(u.program);
+                const req = requiredHoursFor(u.program, u.prior_hours);
                 return { u, h, req, pct: Math.min(Math.round((h / req) * 100), 100) };
               }).sort((a, b) => a.pct - b.pct).slice(0, 3).map(({ u, h, req, pct }) => (
                 <DashRow key={u.id} avatar={{ name: u.name, photo: u.photo }} title={u.name} sub={`${h}h of ${req}h`}

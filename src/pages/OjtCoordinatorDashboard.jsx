@@ -8,7 +8,7 @@ import Shell, {
   navWithTabs,
   Spinner, PageHeader, Badge, Table, Section, Msg, Avatar, Icon, Inbox, Empty,
   InternMonitor, AnnouncementManager, AnnouncementBoard, OnlineReview, OvertimeBoard, OA_CSS, calcHours, requiredHoursFor, todayManila, fmtTime, greeting,
-  PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, SCHEDULE, fmtMinutes, Modal, liveRefresh,
+  PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, outputRequired, PHASE_LABEL, SCHEDULE, fmtMinutes, Modal, liveRefresh,
 } from "../components/DashKit.jsx";
 import { NfcReview } from "../components/NfcCards.jsx";
 import {
@@ -376,7 +376,7 @@ function AssignSupervisors({ interns, supervisors, records = [], online = [], ov
   // one intern: status, hours and a "Move" (or "Assign") link that opens a small picker under the row
   const internRow = (i, label = "Move") => {
     const hrs = calcHours(recsOf(i.id));
-    const req = requiredHoursFor(i.program);
+    const req = requiredHoursFor(i.program, i.prior_hours);
     const duty = onDuty(i.id);
     const diff = i.supervisor_id && sameHte(i, supById(i.supervisor_id)) === false;
     const isMoving = moving === i.id;
@@ -842,6 +842,7 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
    middle, and the picked document's preview on the right with Approve / Reject. */
 const MV_PHASES = [["pre", "Pre", PRE_REQUIREMENTS], ["during", "During", DURING_REQUIREMENTS], ["post", "Post", POST_REQUIREMENTS]];
 const MV_TOTAL = MV_PHASES.reduce((n, [, , l]) => n + l.length, 0);
+const mvSkip = (p, r) => r.key === "system_output" && p.noOutput;   // the HTE doesn't require a presentation
 const mvTime = (m) => String(m.created_at || "");
 const mvExt = (m) => String(m.original_name || m.file_path || "").split(".").pop().toLowerCase();
 const MV_CHIP = { approved: ["Approved", "ok"], pending: ["Waiting", "wait"], rejected: ["Rejected", "bad"], missing: ["Missing", "miss"] };
@@ -863,7 +864,7 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
   // every intern with their documents (also interns who sent documents but are not in the list)
   const people = (() => {
     const map = new Map();
-    interns.forEach((u) => map.set(u.id, { id: u.id, name: u.name, photo: u.photo, docs: [] }));
+    interns.forEach((u) => map.set(u.id, { id: u.id, name: u.name, photo: u.photo, docs: [], noOutput: !outputRequired(u) }));
     movs.forEach((m) => {
       if (!map.has(m.user_id)) map.set(m.user_id, { id: m.user_id, name: m.intern_name, photo: m.intern_photo, docs: [] });
       map.get(m.user_id).docs.push(m);
@@ -871,10 +872,11 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
     return [...map.values()].map((p) => {
       const latest = {};
       [...p.docs].sort((a, b) => mvTime(a).localeCompare(mvTime(b))).forEach((m) => { if (m.requirement) latest[m.requirement] = m; });
-      const done = MV_PHASES.reduce((n, [, , l]) => n + l.filter((r) => latest[r.key]?.status === "approved").length, 0);
+      const done = MV_PHASES.reduce((n, [, , l]) => n + l.filter((r) => !mvSkip(p, r) && latest[r.key]?.status === "approved").length, 0);
+      const total = MV_TOTAL - (p.noOutput ? 1 : 0);
       const waiting = p.docs.filter((m) => m.status === "pending");
       const oldest = waiting.map(mvTime).sort()[0] || "";
-      return { ...p, latest, done, waiting, oldest };
+      return { ...p, latest, done, total, waiting, oldest };
     });
   })();
   const sq = q.trim().toLowerCase();
@@ -892,6 +894,7 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
       if (phase !== "all" && phase !== key) return;
       rows.push({ head: key === "pre" ? "Pre-internship" : key === "during" ? "During internship" : "Post-internship" });
       list.forEach((r) => {
+        if (mvSkip(cur, r)) return;
         if (r.repeat) {
           const subs = cur.docs.filter((m) => m.requirement === r.key || (m.report_id && !m.requirement)).sort((a, b) => mvTime(b).localeCompare(mvTime(a)));
           const ok = subs.filter((m) => m.status === "approved").length;
@@ -946,9 +949,9 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
             <button key={p.id} type="button" role="listitem" className={cur && cur.id === p.id ? "oa-item on" : "oa-item"} onClick={() => pickWho(p.id)}>
               <Avatar name={p.name} photo={p.photo} size={34} />
               <span className="oa-who"><b>{p.name}</b>
-                <small className="mv2-mini"><i style={{ width: `${Math.round((p.done / MV_TOTAL) * 100)}%` }} /></small>
-                <small>{p.done} of {MV_TOTAL} approved</small></span>
-              {p.waiting.length > 0 ? <span className="oa-n hot">{p.waiting.length}</span> : p.done === MV_TOTAL ? <Badge label="Complete" type="approved" /> : null}
+                <small className="mv2-mini"><i style={{ width: `${Math.round((p.done / p.total) * 100)}%` }} /></small>
+                <small>{p.done} of {p.total} approved</small></span>
+              {p.waiting.length > 0 ? <span className="oa-n hot">{p.waiting.length}</span> : p.done === p.total ? <Badge label="Complete" type="approved" /> : null}
             </button>
           ))}
         </div>
@@ -969,8 +972,8 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
             <div className="mv2-head">
               <Avatar name={cur.name} photo={cur.photo} size={42} />
               <div className="mv2-hn"><b>{cur.name}</b>
-                <span className="mv2-bar"><i style={{ width: `${Math.round((cur.done / MV_TOTAL) * 100)}%` }} /></span>
-                <small>{cur.done} of {MV_TOTAL} requirements approved{cur.waiting.length ? ` · ${cur.waiting.length} waiting for you` : ""}</small></div>
+                <span className="mv2-bar"><i style={{ width: `${Math.round((cur.done / cur.total) * 100)}%` }} /></span>
+                <small>{cur.done} of {cur.total} requirements approved{cur.waiting.length ? ` · ${cur.waiting.length} waiting for you` : ""}</small></div>
               <div className="mv2-ph" role="tablist" aria-label="Phase">
                 {[["all", "All"], ["pre", "Pre"], ["during", "During"], ["post", "Post"]].map(([k, l]) => (
                   <button key={k} type="button" className={phase === k ? "on" : ""} onClick={() => setPhase(k)}>{l}</button>

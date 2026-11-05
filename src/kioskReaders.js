@@ -94,7 +94,11 @@ export function createHelperReader({ onCard, onStatus, url = HELPER_URL }) {
       } else if (m.type === "card") {
         if (m.error) onStatus({ state: "ready", text: "ACR122U ready", flash: "Couldn't read the card. Take it away and tap again." });
         else onCard({ uid: hexUid(m.uid), card: m.payload || null, writer: "acr122u" });
+      } else if (m.type === "waiting") {
+        // the card was lifted before the server answered: the helper writes it when it is put back
+        onStatus({ waiting: true });
       } else if (m.type === "written") {
+        onStatus({ waiting: false });
         const done = waiting.get(m.id);
         if (done) { waiting.delete(m.id); done({ ok: !!m.ok, error: m.error }); }
       }

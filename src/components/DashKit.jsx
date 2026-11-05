@@ -20,7 +20,13 @@ export function programKey(program) {
   if (/BSCS|COMPUTER\s+SCI/.test(p)) return "BSCS";
   return null;
 }
-export const requiredHoursFor = (program) => PROGRAM_HOURS[programKey(program)] ?? REQUIRED_HOURS;
+// prior = hours already rendered in an earlier term (users.prior_hours): they are taken off
+export const requiredHoursFor = (program, prior = 0) => Math.max(0, (PROGRAM_HOURS[programKey(program)] ?? REQUIRED_HOURS) - (Number(prior) || 0));
+export const priorHoursOf = (u) => Number(u?.prior_hours) || 0;
+// is the System Output Presentation required for this intern? (the HTE decides; the coordinator can change it)
+export const outputRequired = (u) => !(u?.output_required === false || u?.output_required === 0 || u?.output_required === "0");
+// the requirements of a phase for one intern (no System Output Presentation when the HTE doesn't require it)
+export const reqsFor = (phase, u) => (REQUIREMENTS_BY_PHASE[phase] || []).filter((r) => r.key !== "system_output" || !u || outputRequired(u));
 
 /* ── DTR type, set per intern (depends on the HTI) ──
    four = 4 taps: AM in / AM out, PM in / PM out (8–12 and 1–5)
@@ -41,6 +47,7 @@ export function DtrModeField({ u }) {
   try { me = JSON.parse(sessionStorage.getItem("user") || "{}"); } catch { /* not signed in */ }
   const label = (m) => (m === "four" ? "4 taps (AM/PM in and out)" : "2 taps (in and out)");
   const canSet = me.role === "supervisor" && Number(u?.supervisor_id) === Number(me.id);
+  if (u?.modality === "virtual") return "Not needed (virtual: Submit Online)";   // a virtual intern never taps
   if (!canSet) return label(mode);
   const change = async (e) => {
     const next = e.target.value, prev = mode;
@@ -71,11 +78,13 @@ export function DtrModeField({ u }) {
 /* ── Internship modality and scope (the CCIS internship modalities) ──
    modality: how the internship is done · scope: where the intern / HTE is from. Set by the OJT coordinator. */
 export const MODALITIES = { onsite: "On-site", hybrid: "Hybrid", virtual: "Virtual", project: "Project-based" };
-// local = a CSU student at an HTE in the Philippines · inbound = a foreign student interning at CSU ·
+// local = a CSU student at an HTE in the Caraga Region · out_of_region = at an HTE elsewhere in the Philippines ·
+// inbound = a foreign student interning at CSU ·
 // outbound = a CSU student interning with a foreign HTE (abroad, or virtually for a foreign company)
-export const SCOPES = { local: "Local", inbound: "Inbound", outbound: "Outbound" };
+export const SCOPES = { local: "Local", out_of_region: "Out-of-region", inbound: "Inbound", outbound: "Outbound" };
 export const SCOPE_HINT = {
-  local: "CSU student at an HTE in the Philippines",
+  local: "CSU student at an HTE in the Caraga Region",
+  out_of_region: "CSU student at an HTE in the Philippines, outside the Caraga Region",
   inbound: "Foreign student interning at CSU",
   outbound: "CSU student with a foreign HTE (abroad or virtual)",
 };
@@ -129,7 +138,7 @@ export function PlacementField({ u }) {
 
 /* ── Internship requirements (edit the lists here) ── */
 export const PRE_REQUIREMENTS = [
-  { key: "capstone_summary", label: "Capstone/Thesis Summary Sheet", hint: "With a passed rating — proof you may enroll in the internship" },
+  { key: "capstone_summary", label: "Capstone/Thesis Summary Sheet with Passed Rating", hint: "With a passed rating — proof you may enroll in the internship" },
   { key: "letter_of_intent", label: "Letter of Intent", hint: "With your CV attached" },
   { key: "endorsement_letter", label: "Endorsement Letter", hint: "Signed by the OJT Coordinator, Chairperson and Dean of CCIS" },
   { key: "moa", label: "Memorandum of Agreement (MOA)", hint: "Approved and notarized, long bond paper (7 copies) — hours are not credited without it" },
@@ -140,8 +149,8 @@ export const PRE_REQUIREMENTS = [
   { key: "parents_consent", label: "Parents' Consent", hint: "Long bond paper, notarized" },
   { key: "pledge", label: "Student's Pledge", hint: "Signed in front of the SIP Coordinator (A4)" },
   { key: "acceptance_form", label: "Acceptance Form", hint: "Signed by your parent/guardian and the HTE representative (A4)" },
-  { key: "insurance", label: "Insurance", hint: "Scanned copy from any reliable insurance company" },
-  { key: "orientation", label: "Deployment Orientation Attendance", hint: "Proof you attended the internship deployment orientation" },
+  { key: "insurance", label: "Insurance", hint: "Scanned copy of any insurance (e.g. Palawan Insurance)" },
+  { key: "orientation", label: "Deployment Orientation Attendance", hint: "Proof of your attendance at the internship deployment orientation" },
 ];
 // During the internship (weekly / monthly reports can be submitted many times)
 export const DURING_REQUIREMENTS = [
@@ -607,7 +616,7 @@ export function PhotoPicker({ file, onChange }) {
       <div className="ix-photo-info">
         <strong>Profile photo</strong>
         <span>Square photo works best. JPG or PNG, max 2 MB.</span>
-        {file && <button type="button" onClick={() => { setErr(null); onChange(null); }}>Remove photo</button>}
+        {file && <button type="button" title="Remove photo" aria-label="Remove photo" onClick={() => { setErr(null); onChange(null); }}>Remove photo</button>}
         {err && <em>{err}</em>}
       </div>
     </div>
@@ -654,6 +663,8 @@ const DRAWER_CSS = `
 .ix-drawer-head { display: flex; align-items: center; gap: 14px; padding: 16px 20px 14px; border-bottom: 1px solid #eef0f3; }
 .ix-drawer-ico { width: 46px; height: 46px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: #fff3ec; color: #e8582a; border: 1px solid #fbe0d2; }
 .ix-drawer-ttl { flex: 1; min-width: 0; }
+.ix-drawer-act { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-right: 4px; }
+@media (max-width: 640px) { .ix-drawer-head { flex-wrap: wrap; } .ix-drawer-act { order: 3; flex-basis: 100%; justify-content: flex-start; margin: 2px 0 0; } }
 .ix-drawer-ttl small { display: block; font-size: 12px; color: #8b919b; margin-bottom: 2px; }
 .ix-drawer-ttl h2 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.25; color: #111827; }
 .ix-drawer-x { width: 36px; height: 36px; padding: 0 !important; flex-shrink: 0; border-radius: 50%; border: 1px solid #e7e9ee; background: #fff; color: #4b5563;
@@ -683,7 +694,7 @@ const DRAWER_CSS = `
 @media (max-height: 700px) { .ix-drawer-steps { display: none; } }
 @media (prefers-reduced-motion: reduce) { .ix-drawer, .ix-drawer-wrap { animation-duration: .01s !important; } }
 `;
-export function Drawer({ title, kicker, sub, icon = "calendar", onClose, footer, inPage, children }) {
+export function Drawer({ title, kicker, sub, icon = "calendar", onClose, footer, inPage, actions = null, children }) {
   const [closing, setClosing] = useState(false);
   const close = () => { if (closing) return; setClosing(true); setTimeout(onClose, 200); };
   useEffect(() => {
@@ -698,6 +709,7 @@ export function Drawer({ title, kicker, sub, icon = "calendar", onClose, footer,
         <header className="ix-drawer-head">
           <span className="ix-drawer-ico"><Icon name={icon} size={20} /></span>
           <div className="ix-drawer-ttl">{kicker && <small>{kicker}</small>}<h2>{title}</h2></div>
+          {actions && <div className="ix-drawer-act">{actions}</div>}
           <button type="button" className="ix-drawer-x" onClick={close} aria-label="Close"><Icon name="x" size={16} /></button>
         </header>
         {sub && <p className="ix-drawer-sub">{sub}</p>}
@@ -1013,8 +1025,8 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
   const inPhase = (m, ph) => (m.phase || "pre") === ph;
   // newest first from the server, so find() gives the latest submission
   const statusOf = (key, ph) => (movs || []).find((m) => m.requirement === key && inPhase(m, ph));
-  const list = REQUIREMENTS_BY_PHASE[phase] || [];
-  const approvedIn = (ph) => (REQUIREMENTS_BY_PHASE[ph] || []).filter((r) => r.key === "weekly_report"
+  const list = reqsFor(phase, intern);
+  const approvedIn = (ph) => reqsFor(ph, intern).filter((r) => r.key === "weekly_report"
     ? reports.length > 0 && reports.every((rp) => (movs || []).find((x) => Number(x.report_id) === Number(rp.id))?.status === "approved")
     : statusOf(r.key, ph)?.status === "approved").length;
   const LABEL = { approved: "Approved", pending: "Pending", rejected: "Rejected" };
@@ -1027,7 +1039,7 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
           {["pre", "during", "post"].map((ph) => (
             <button key={ph} type="button" className={phase === ph ? "rc-tab on" : "rc-tab"} onClick={() => setPhase(ph)}>
               {PHASE_LABEL[ph].replace("-internship", "").replace(" internship", "")}
-              {movs && <span>{approvedIn(ph)}/{(REQUIREMENTS_BY_PHASE[ph] || []).length}</span>}
+              {movs && <span>{approvedIn(ph)}/{reqsFor(ph, intern).length}</span>}
             </button>
           ))}
         </div>
@@ -1146,7 +1158,7 @@ function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFil
   };
   const ICON = { approved: "check", pending: "clock", rejected: "warn", none: "file" };
   const phases = ["pre", "during", "post"].map((ph) => {
-    const rows = (REQUIREMENTS_BY_PHASE[ph] || []).map((r) => ({ r, st: stateOf(r, ph) }));
+    const rows = reqsFor(ph, intern).map((r) => ({ r, st: stateOf(r, ph) }));
     return { ph, rows, ok: rows.filter((x) => x.st === "approved").length };
   });
   const totalAll = phases.reduce((s, p) => s + p.rows.length, 0);
@@ -1169,10 +1181,10 @@ function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFil
     </Modal>
   );
 
-  // compact tiles for the intern profile's summary column
+  // the intern profile's summary card: a plain section
   if (compact) return (
-    <div className="ipx-card ipx-grow ipx-req">
-      <div className="ipx-sh"><h3>Requirements</h3>{movs && <em>{okAll}/{totalAll}</em>}</div>
+    <div className="uz-sec ipx-req">
+      <div className="uz-sh"><h3>Requirements</h3>{movs && <em>{okAll}/{totalAll} approved</em>}</div>
       {!movs ? <Spinner /> : (
         <div className="ipx-phs">
           {sums.map((r) => {
@@ -1192,7 +1204,7 @@ function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFil
           })}
         </div>
       )}
-      <button type="button" className="ipx-btn" onClick={openFiles}>{canViewFiles ? "Review submitted files" : "View requirements"}</button>
+      <button type="button" className="ix-b ghost sm uz-wide" onClick={openFiles}>{canViewFiles ? "Review submitted files" : "View requirements"}</button>
       {detailModal}
     </div>
   );
@@ -1219,12 +1231,18 @@ function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFil
   );
 }
 
+/* a date as "April 17, 2003" */
+const ipxDate = (v) => {
+  if (!v) return null;
+  const d = new Date(String(v).slice(0, 10) + "T00:00:00");
+  return isNaN(d) ? String(v) : d.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
+};
 function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFiles = null, canViewFiles = false }) {
   const recs = records.filter((r) => r.user_id === u.id);
   const isIn = recs.some((r) => r.date === today && r.uid !== "ONLINE" && r.action === "CHECK_IN" && !r.checked_out_at);
   const days = [...new Set(recs.map((r) => r.date))].length;
   const total = calcHours(recs);
-  const required = requiredHoursFor(u.program);
+  const required = requiredHoursFor(u.program, u.prior_hours);
   const pct = Math.min(Math.round((total / required) * 100), 100);
   const left = Math.max(Math.round((required - total) * 10) / 10, 0);
   const onsite = recs.filter((r) => r.uid !== "ONLINE").length;
@@ -1235,6 +1253,7 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
   const tIn = todaySessions[0]?.in;
   const tOut = [...todaySessions].reverse().find((s) => s.out)?.out;
   const lastDate = recs.map((r) => r.date).sort().pop();
+  const firstDate = recs.map((r) => r.date).sort()[0];
   const fmtDate = (d) => {
     const x = new Date(d + "T00:00:00");
     return isNaN(x) ? d : x.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
@@ -1283,84 +1302,75 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
     : null;
   const isOnline = portalOnline(u);
   const field = (k, v, wide) => (
-    <div className={wide ? "ipx-f wide" : "ipx-f"} key={k}><small>{k}</small><b>{v || "—"}</b></div>
+    <div className={wide ? "ipx-f w2" : "ipx-f"} key={k}><small>{k}</small><b>{v || "—"}</b></div>
   );
   const DAY_TXT = { present: "Present", excused: "Excused", none: "No record", wait: "Not in yet", future: "Upcoming" };
 
+  const v = (k, val, full) => (
+    <div className={full ? "uz-f full" : "uz-f"} key={k}><small>{k}</small><b>{val || "—"}</b></div>
+  );
+
   return (
-    <section className="ipx" aria-label={`Profile of ${u.name}`}>
-      <style>{IPA_CSS + IPX_CSS}</style>
+    <section className="uz uz-view uz-mon" aria-label={`Profile of ${u.name}`}>
+      <style>{IPX_CSS + UZ_CSS}</style>
+      <div className="uz-body three">
+        {/* LEFT: photo and quick facts */}
+        <aside className="uz-side">
+          <div className="uz-photo"><Avatar name={u.name} photo={u.photo} size={180} /></div>
+          <div className="uz-nm"><b>{u.name}</b><small>#{studentId}</small></div>
+          <div className="uz-meta">
+            <div className="uz-f"><small>Role</small><span className="uz-chip">OJT Intern</span></div>
+            <div className="uz-f"><small>Status</small>
+              <span className={isOnline ? "uz-st" : "uz-st off"}><i />{isOnline ? "Online now" : `Offline · ${seenText(u)}`}</span></div>
+            <div className="uz-f"><small>NFC card</small><b>{u.nfc_uid ? "Linked" : "No card yet"}</b></div>
+            {pct >= 100 && <div className="uz-f"><small>Hours</small><span className="uz-chip g">Hours complete</span></div>}
+            {onViewRecords && <button type="button" className="ix-b ghost sm uz-wide" onClick={onViewRecords}><Icon name="list" size={14} /> View records</button>}
+          </div>
+        </aside>
 
-      {/* header */}
-      <div className="ipx-hero">
-        <div className="ipx-band" aria-hidden="true"><i /><i /><i /></div>
-        <div className="ipx-hb">
-          <div className="ipx-av"><Avatar name={u.name} photo={u.photo} size={80} /></div>
-          <div className="ipx-who">
-            <div className="ipx-nm">
-              <h2>{u.name}</h2>
-              <span className={isOnline ? "ipx-pill on" : "ipx-pill"}><u />{isOnline ? "Online now" : `Offline · ${seenText(u)}`}</span>
-            </div>
-            <div className="ipx-tags">
-              <span>#{studentId}</span>
-              {u.program && <span>{u.program}</span>}
-              <span>{u.placement || "No placement"}</span>
-              <span className="b">{MODALITIES[modalityOf(u)]} · {SCOPES[scopeOf(u)]}</span>
-              {pct >= 100 && <span className="g">Hours complete</span>}
-              <span className={u.nfc_uid ? "" : "w"}><Icon name="card" size={13} /> {u.nfc_uid ? "Card linked" : "No card yet"}</span>
+        {/* MIDDLE: the intern's information */}
+        <div className="uz-card">
+          <div className="uz-sec">
+            <div className="uz-sh"><h3>Personal details</h3></div>
+            <div className="uz-grid">
+              {v("Student ID", studentId)}
+              {v("Birthday", bday)}
+              {v("Phone", u.contact_number)}
+              {v("Email", u.email)}
+              {v("Address", u.address, true)}
             </div>
           </div>
-          {onViewRecords && <button type="button" className="ipx-btn ghost" onClick={onViewRecords}>View records</button>}
-        </div>
-      </div>
-
-      <div className="ipx-cols">
-        {/* LEFT: intern information */}
-        <div className="ipx-main">
-          <div className="ipx-card">
-            <div className="ipx-sh"><span className="ipx-ic"><Icon name="user" size={18} /></span><h3>Personal information</h3></div>
-            <div className="ipx-fg two">
-              {field("Student ID", studentId)}
-              {field("Birthday", bday)}
-              {field("Phone", u.contact_number)}
-              {field("Email", u.email)}
-              {field("Address", u.address, true)}
+          <div className="uz-sec">
+            <div className="uz-sh"><h3>Internship details</h3></div>
+            <div className="uz-grid">
+              {v("Placement (HTE)", u.placement || "No placement yet")}
+              {v("HTE supervisor", u.supervisor_name || "Not assigned yet")}
+              {v("Program", u.program)}
+              {v("Semester", u.semester)}
+              {v("Modality", MODALITIES[modalityOf(u)])}
+              {v("Scope", SCOPES[scopeOf(u)])}
+              {v("Time record (DTR)", dtrModeOf(u) === "four" ? "4 taps (AM/PM)" : "2 taps (in and out)")}
+              {v("Required hours", `${required} hours`)}
+              {v("College", u.college || "CCIS")}
+              {v("First day", firstDate ? fmtDate(firstDate) : "No records yet")}
             </div>
           </div>
-
-          <div className="ipx-card ipx-grow">
-            <div className="ipx-sh big"><span className="ipx-ic solid"><Icon name="briefcase" size={20} /></span>
-              <div><h3>Internship details</h3><em>Placement and time record setup</em></div></div>
-            <div className="ipx-plc">
-              <div><small>Placement (HTE)</small><b>{u.placement || "No placement yet"}</b></div>
-              <div className="r"><small>HTE supervisor</small><strong>{u.supervisor_name || "Not assigned yet"}</strong></div>
+          <div className="uz-sec">
+            <div className="uz-sh"><h3>Emergency contact</h3>
+              {u.emergency_contact_number && <a className="ix-b ghost sm" href={`tel:${u.emergency_contact_number}`}>Call</a>}</div>
+            <div className="uz-grid">
+              {v("Full name", u.emergency_contact_name || "Not set")}
+              {v("Relationship", u.emergency_contact_relation)}
+              {v("Contact number", u.emergency_contact_number)}
+              {v("Address", u.emergency_contact_address)}
             </div>
-            <div className="ipx-tiles">
-              {[
-                ["Program", u.program],
-                ["Semester", u.semester],
-                ["Required hours", `${required} hours`],
-                ["Modality", MODALITIES[modalityOf(u)]],
-                ["Scope", SCOPES[scopeOf(u)]],
-                ["Time record", dtrModeOf(u) === "four" ? "4 taps (AM/PM)" : "2 taps (in and out)"],
-              ].map(([k, v]) => <div key={k}><small>{k}</small><b>{v || "—"}</b></div>)}
-            </div>
-          </div>
-
-          <div className="ipx-emg">
-            <span className="ipx-ic"><Icon name="heart" size={18} /></span>
-            <div className="ipx-emg-t">
-              <small>Emergency contact</small>
-              <b>{emergencyWho || "Not set"}{u.emergency_contact_number ? <em> · {u.emergency_contact_number}</em> : null}</b>
-            </div>
-            {u.emergency_contact_number && <a className="ipx-btn ghost" href={`tel:${u.emergency_contact_number}`}>Call</a>}
           </div>
         </div>
 
-        {/* RIGHT: compact summary */}
-        <div className="ipx-side">
-          <div className="ipx-card sm">
-            <div className="ipx-sh"><h3>Attendance</h3>
+        {/* RIGHT: attendance summary */}
+        <div className="uz-card uz-sum">
+          <div className="uz-sec">
+            <div className="uz-sh"><h3>Attendance</h3>
               {onViewRecords && <button type="button" className="ipa-lk" onClick={onViewRecords}>All records ›</button>}</div>
             <div className="ipx-ring">
               <Ring pct={pct} size={54} stroke={7} track="#fbe3d6" color="#e8582a"><strong>{pct}%</strong></Ring>
@@ -1376,8 +1386,8 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
             </div>
           </div>
 
-          <div className="ipx-card sm">
-            <div className="ipx-sh"><h3>This week</h3><em>{weekTotal}h so far</em></div>
+          <div className="uz-sec">
+            <div className="uz-sh"><h3>This week</h3><em>{weekTotal}h so far</em></div>
             <div className="ipx-today"><span>Today · In <b>{tIn ? short(tIn) : "—"}</b></span><span>Out <b>{isIn ? "Still in" : tOut ? short(tOut) : "—"}</b></span></div>
             <div className="ipx-week">
               {week.map((w) => (
@@ -1629,74 +1639,115 @@ const IPA_CSS = `
 /* ── Intern profile (monitor) — info on the left, compact summary on the right ── */
 const IPX_CSS = `
 .ipx { display: flex; flex-direction: column; gap: 12px; color: #1f2430; width: 100%; max-width: 1120px; }
-.ipx small, .ipx em { font-style: normal; }
-.ipx-card { background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
-.ipx-card.sm { padding: 13px 14px; gap: 10px; border-radius: 14px; }
-.ipx-sh { display: flex; align-items: center; gap: 10px; }
-.ipx-sh h3 { margin: 0; font-size: 14.5px; font-weight: 700; color: #1f2430; }
+.ipx small, .ipx em { font-style: normal; line-height: 1.35; }
+.ipx-card { background: #fff; border: 1px solid #e9ebef; border-radius: 14px; padding: 14px 16px; min-width: 0; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+.ipx-card.sm { padding: 13px 14px; gap: 10px; }
+.ipx-sh { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.ipx-sh h3 { margin: 0; font-size: 14px; font-weight: 700; color: #1f2430; }
+.ipx-sht { flex: 1; min-width: 0; }
+.ipx-sht em { display: block; font-size: 12px; color: #6b7280; margin-top: 1px; }
 .ipx-card.sm .ipx-sh h3 { font-size: 13.5px; font-weight: 600; }
 .ipx-sh > em { margin-left: auto; font-size: 12px; color: #6b7280; }
 .ipx-sh .ipa-lk { font-size: 12px; }
-.ipx-sh.big h3 { font-size: 16px; }
-.ipx-sh.big em { display: block; font-size: 12px; color: #6b7280; }
-.ipx-ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; background: #fdeee5; color: #c2410c; }
-.ipx-ic.solid { width: 36px; height: 36px; border-radius: 10px; background: #e8582a; color: #fff; }
-.ipx-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 14px; border: 0; border-radius: 10px; background: #f4f5f7; color: #1f2430; font: inherit; font-size: 12.5px; font-weight: 600; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.ipx-sh.big h3 { font-size: 15.5px; }
+.ipx-ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; background: #fdeee5; color: #c2410c; }
+.ipx-ic.solid { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #f07a4b, #d9481a); color: #fff; box-shadow: 0 6px 14px -8px rgba(217,72,26,.8); }
+.ipx-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 0 14px; border: 0; border-radius: 10px; background: #f4f5f7; color: #1f2430; font: inherit; font-size: 12.5px; font-weight: 600; text-decoration: none; cursor: pointer; white-space: nowrap; }
 .ipx-btn:hover { background: #eceef2; }
 .ipx-btn.ghost { background: #fff; border: 1px solid #e3e5ea; }
-.ipx-btn.ghost:hover { background: #fafbfc; }
+.ipx-btn.ghost:hover { background: #fafbfc; border-color: #d5d8de; }
 
-/* header */
-.ipx-hero { background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; overflow: hidden; }
-.ipx-band { position: relative; height: 64px; background: #fde6da; overflow: hidden; }
+/* header: a warm card with the photo, name, status and tags */
+.ipx-hero { position: relative; overflow: hidden; border-radius: 16px; border: 1px solid #f5d3c0; background: linear-gradient(115deg, #fff6f0 0%, #ffe9dc 55%, #fddcc9 100%); }
+.ipx-band { position: absolute; inset: 0; pointer-events: none; }
 .ipx-band i { position: absolute; border-radius: 50%; }
-.ipx-band i:nth-child(1) { width: 280px; height: 280px; right: 6%; top: -170px; background: #f9d3be; }
-.ipx-band i:nth-child(2) { width: 180px; height: 180px; right: 22%; top: 40px; background: #fbdccb; }
-.ipx-band i:nth-child(3) { width: 92px; height: 92px; right: 2%; top: 58px; background: #f6c2a5; }
-.ipx-hb { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; padding: 0 18px 14px; margin-top: -38px; position: relative; }
-.ipx-av { flex: none; width: 80px; height: 80px; border-radius: 50%; border: 4px solid #fff; background: #fff; overflow: hidden; box-sizing: content-box; }
-.ipx-av .ix-av { width: 100% !important; height: 100% !important; border: 0 !important; box-shadow: none !important; background: #1f2430 !important; color: #fff !important; }
+.ipx-band i:nth-child(1) { width: 230px; height: 230px; right: -50px; top: -120px; background: rgba(232,88,42,.10); }
+.ipx-band i:nth-child(2) { width: 130px; height: 130px; right: 150px; bottom: -80px; background: rgba(232,88,42,.07); }
+.ipx-band i:nth-child(3) { width: 54px; height: 54px; right: 110px; top: 14px; border: 8px solid rgba(232,88,42,.10); }
+.ipx-hb { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 16px 18px; }
+.ipx-av { flex: none; width: 72px; height: 72px; border-radius: 50%; border: 3px solid #fff; background: #fff; overflow: hidden; box-shadow: 0 8px 18px -10px rgba(194,65,12,.7); }
+.ipx-av .ix-av { width: 100% !important; height: 100% !important; border: 0 !important; box-shadow: none !important; background: linear-gradient(135deg, #f07a4b, #c2410c) !important; color: #fff !important; }
 .ipx-av .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-.ipx-who { flex: 999 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-bottom: 2px; }
-.ipx-nm { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.ipx-av label.ix-photo-box { width: 100% !important; height: 100% !important; border-radius: 50% !important; }
+.ipx-av label.ix-photo-box .ix-photo-badge { right: 2px; bottom: 2px; width: 22px; height: 22px; }
+.ipx-avr { flex: none; }
+.ipx-avr .ix-photo-pick { display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: none; }
+.ipx-avr .ix-photo-box { width: 72px; height: 72px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 8px 18px -10px rgba(194,65,12,.7); }
+.ipx-avr .ix-photo-ph small { display: none; }
+.ipx-avr .ix-photo-box .ix-photo-badge { right: 2px; bottom: 2px; width: 22px; height: 22px; }
+.ipx-avr { position: relative; }
+.ipx-avr .ix-photo-pick { position: relative; }
+.ipx-avr .ix-photo-info strong, .ipx-avr .ix-photo-info > span { display: none; }
+.ipx-avr .ix-photo-info { position: absolute; left: 0; top: 0; width: 78px; height: 78px; pointer-events: none; }
+.ipx-avr .ix-photo-info button { pointer-events: auto; position: absolute; top: -2px; right: -2px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: #fff; color: #b91c1c; font-size: 0; cursor: pointer; box-shadow: 0 2px 8px rgba(16,24,40,.25); display: grid; place-items: center; }
+.ipx-avr .ix-photo-info button::before { content: "×"; font-size: 17px; font-weight: 700; line-height: 1; }
+.ipx-avr .ix-photo-info button:hover { background: #fdecec; }
+.ipx-avr .ix-photo-info em { position: absolute; top: 84px; left: 0; white-space: nowrap; font-size: 11px; color: #b91c1c; }
+.ipx-who { flex: 999 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.ipx-nm { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
 .ipx-nm h2 { margin: 0; font-size: 19px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.ipx-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #f1f2f4; color: #4b5563; font-size: 11.5px; font-weight: 500; }
+.ipx-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #fff; color: #4b5563; font-size: 11.5px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(16,24,40,.08); }
 .ipx-pill u { width: 7px; height: 7px; border-radius: 50%; background: #9ca3af; }
-.ipx-pill.on { background: #e6f7ee; color: #15803d; } .ipx-pill.on u { background: #16a34a; }
+.ipx-pill.on { background: #e6f7ee; color: #15803d; box-shadow: none; } .ipx-pill.on u { background: #16a34a; }
 .ipx-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.ipx-tags span { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 7px; background: #f4f5f7; color: #374151; font-size: 11.5px; font-weight: 500; }
-.ipx-tags span.b { background: #e8f0ff; color: #1d4ed8; }
-.ipx-tags span.g { background: #e6f7ee; color: #15803d; }
-.ipx-tags span.w { background: #fff4e0; color: #b45309; }
+.ipx-tags span { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 7px; background: rgba(255,255,255,.8); color: #374151; font-size: 11.5px; font-weight: 500; box-shadow: inset 0 0 0 1px rgba(232,88,42,.12); }
+.ipx-tags span.o { background: #e8582a; color: #fff; font-weight: 600; box-shadow: none; }
+.ipx-tags span.b { background: #e8f0ff; color: #1d4ed8; box-shadow: none; }
+.ipx-tags span.g { background: #e6f7ee; color: #15803d; box-shadow: none; }
+.ipx-tags span.w { background: #fff4e0; color: #b45309; box-shadow: none; }
+.ipx-tags span.r { background: #fdecec; color: #b91c1c; box-shadow: none; }
+.ipx-tags .sub { background: none; box-shadow: none; padding: 0; color: #6b7280; font-size: 12px; }
+.ipx-act { margin-left: auto; display: flex; gap: 8px; }
 
 /* columns: both stretch so the bottoms line up */
 .ipx-cols { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
 .ipx-main { flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .ipx-side { flex: 1 1 280px; max-width: 320px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .ipx-grow { flex: 1; }
+.ipx-grow > .ipx-tiles { flex: 1; grid-auto-rows: 1fr; }
+.ipx-grow > .ipx-tiles > div { flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; padding: 12px 14px; }
+.ipx-grow > .ipx-tiles b { font-size: 14px; }
 
-/* personal */
-.ipx-fg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; }
+/* fields */
+.ipx-fg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.ipx-fg.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ipx-fg.one { grid-template-columns: 1fr; }
+.ipx-fg.names { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(90px, 0.55fr); }
+.ipx-card > .ipx-fg + .ipx-fg { margin-top: -2px; }
 .ipx-f { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ipx-f.w2 { grid-column: span 2; }
 .ipx-f.wide { grid-column: 1 / -1; }
 .ipx-f small { font-size: 11.5px; color: #6b7280; }
-.ipx-f b { font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.ipx-f b { font-size: 13.5px; font-weight: 600; line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
+.ipx-kv { display: flex; flex-direction: column; }
+.ipx-kv > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 0; border-top: 1px solid #f0f1f4; font-size: 12.5px; }
+.ipx-kv > div:first-child { border-top: 0; padding-top: 0; }
+.ipx-kv > div:last-child { padding-bottom: 0; }
+.ipx-kv span { color: #6b7280; flex: none; }
+.ipx-kv b { font-weight: 600; line-height: 1.4; text-align: right; overflow-wrap: break-word; min-width: 0; }
+.ipx-kv span { line-height: 1.4; }
 
-/* internship */
-.ipx-plc { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 18px; padding: 12px 16px; border-radius: 12px; background: #fff7f2; border: 1px solid #f8dccb; }
-.ipx-plc small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #b8461a; }
+/* internship: an orange placement banner and small tiles */
+.ipx-plc { position: relative; overflow: hidden; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 8px 18px; padding: 14px 16px; border-radius: 12px; background: linear-gradient(115deg, #e8582a 0%, #f07a4b 100%); color: #fff; }
+.ipx-plc::before { content: ""; position: absolute; right: -40px; top: -60px; width: 160px; height: 160px; border-radius: 50%; background: rgba(255,255,255,.12); }
+.ipx-plc::after { content: ""; position: absolute; right: 120px; bottom: -50px; width: 90px; height: 90px; border-radius: 50%; background: rgba(255,255,255,.08); }
+.ipx-plc > div { position: relative; z-index: 1; min-width: 0; }
+.ipx-plc small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: rgba(255,255,255,.82); }
 .ipx-plc b { display: block; font-size: 17px; font-weight: 700; margin-top: 2px; overflow-wrap: anywhere; }
-.ipx-plc strong { display: block; font-size: 14px; font-weight: 600; margin-top: 2px; }
+.ipx-plc strong { display: block; font-size: 13.5px; font-weight: 600; margin-top: 2px; }
 .ipx-plc .r { text-align: right; }
 .ipx-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.ipx-tiles > div { background: #f6f7f9; border-radius: 10px; padding: 9px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ipx-tiles small { font-size: 11.5px; color: #6b7280; }
-.ipx-tiles b { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.ipx-tiles > div { display: flex; align-items: center; gap: 10px; background: #f7f8fa; border: 1px solid #eef0f3; border-radius: 10px; padding: 9px 11px; min-width: 0; }
+.ipx-tiles .ti { width: 28px; height: 28px; border-radius: 8px; flex: none; display: grid; place-items: center; background: #fff; color: #e8582a; box-shadow: inset 0 0 0 1px #f5dccd; }
+.ipx-tiles .tt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ipx-tiles small { font-size: 11px; color: #6b7280; }
+.ipx-tiles b { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 
 /* emergency */
-.ipx-emg { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 11px 16px; border-radius: 14px; background: #fff7f2; border: 1px solid #f8dccb; }
+.ipx-emg { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 11px 14px; border-radius: 14px; background: #fff; border: 1px solid #e9ebef; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+.ipx-emg .ipx-ic { background: #fdecec; color: #dc2626; }
 .ipx-emg-t { flex: 999 1 220px; min-width: 0; }
-.ipx-emg-t small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #b8461a; }
+.ipx-emg-t small { display: block; font-size: 11.5px; color: #6b7280; }
 .ipx-emg-t b { font-size: 13.5px; font-weight: 600; }
 .ipx-emg-t em { font-weight: 400; color: #4b5563; }
 
@@ -1709,7 +1760,7 @@ const IPX_CSS = `
 .ipx-ring small { font-size: 12px; font-weight: 600; color: #6b7280; }
 .ipx-ring small.ok { color: #15803d; }
 .ipx-mini { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.ipx-mini > div { background: #f6f7f9; border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #6b7280; }
+.ipx-mini > div { background: #f7f8fa; border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #6b7280; }
 .ipx-mini b { display: block; font-size: 15px; font-weight: 700; color: #1f2430; }
 .ipx-today { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 10px; background: #1f2430; color: #fff; font-size: 12px; }
 .ipx-week { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
@@ -1724,7 +1775,7 @@ const IPX_CSS = `
 .ipx-day.today { border: 2px solid #e8582a; background: #fff7f2; padding: 6px 1px; } .ipx-day.today small { color: #b8461a; font-weight: 600; } .ipx-day.today b { color: #1f2430; } .ipx-day.today i { background: #e8582a; }
 .ipx-last { font-size: 11.5px; color: #6b7280; }
 .ipx-req .ipx-phs { flex: 1; display: flex; flex-direction: column; gap: 8px; }
-.ipx-ph { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 9px 12px; border-radius: 10px; background: #f6f7f9; }
+.ipx-ph { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 9px 12px; border-radius: 10px; background: #f7f8fa; }
 .ipx-ph-t { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
 .ipx-ph-t span { font-weight: 500; }
 .ipx-ph-t b { font-weight: 600; text-align: right; } .ipx-ph-t b.ok { color: #15803d; } .ipx-ph-t b.bad { color: #b91c1c; } .ipx-ph-t b.wait { color: #b45309; }
@@ -1732,156 +1783,260 @@ const IPX_CSS = `
 .ipx-bar i { display: block; height: 100%; border-radius: inherit; background: #e8582a; }
 .ipx-bar i.ok { background: #16a34a; }
 
+/* View window (Manage Accounts) */
+.ipx-sig { height: 76px; border: 1px dashed #d8dce3; border-radius: 10px; background: #fafbfc; display: grid; place-items: center; overflow: hidden; font-size: 12px; color: #9aa1ad; }
+.ipx-sig img { max-width: 90%; max-height: 64px; object-fit: contain; }
+.ipx-sig b { font-weight: 500; }
+.ipx-mine { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ipx-mine li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #f0f1f4; font-size: 13px; min-width: 0; }
+.ipx-mine li:first-child { border-top: 0; padding-top: 0; }
+.ipx-mine li b { font-weight: 600; }
+.ipx-mine li small { margin-left: auto; color: #6b7280; font-size: 12px; text-align: right; }
+.ipx-cnt { font-size: 12px; font-weight: 700; background: #fdeee5; color: #c2410c; padding: 2px 9px; border-radius: 99px; }
+.ipx-emgc .ipx-ic { background: #fdecec; color: #dc2626; }
+.ipx-none { font-size: 12.5px; color: #6b7280; }
+.ipx-moa { display: inline-flex; align-items: center; gap: 6px; }
+.ipx-moa.bad { color: #b91c1c; }
+
+/* Add / Edit form */
+.ipx-form .ipx-f { gap: 5px; }
+.ipx-form .ipx-f > small { font-size: 12px; font-weight: 600; color: #4b5563; }
+.ipx-form .ipx-f > small i.rq { font-style: normal; color: #e8582a; }
+.ipx-form .ipx-fg { gap: 10px 14px; }
+.ipx-form .uf-input { width: 100%; box-sizing: border-box; height: 38px; font-size: 13px; }
+.ipx-form .uf-hint, .ipx-form .ipx-f small.uf-hint { font-style: normal; font-size: 11px; font-weight: 400; color: #9aa1ad; line-height: 1.35; }
+.ipx-form .uf-prefix .uf-input { border-radius: 0 8px 8px 0; }
+.ipx-form .ix-row-gap { display: flex; gap: 8px; align-items: center; }
+.ipx-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-radius: 14px; background: #fff; border: 1px solid #e9ebef; position: sticky; bottom: 0; z-index: 3; box-shadow: 0 -8px 18px -14px rgba(16,24,40,.35); }
+.ipx-actions .ix-b { flex: 0 0 auto; padding: 9px 22px; font-size: 13px; }
+.ipx-actions .note { margin-right: auto; align-self: center; font-size: 12px; color: #6b7280; }
+.ipx-actions .note i { font-style: normal; color: #e8582a; }
+.sig-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sig-box { width: 180px; height: 64px; border: 1px dashed #d8dce3; border-radius: 10px; background: #fafbfc; display: grid; place-items: center; overflow: hidden; font-size: 12px; color: #9aa1ad; }
+.sig-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
 @media (max-width: 1100px) { .ipx-side { max-width: none; flex-basis: 100%; } }
 @media (max-width: 760px) {
-  .ipx-hb { padding: 0 18px 18px; } .ipx-nm h2 { font-size: 21px; }
-  .ipx-card { padding: 18px; } .ipx-fg, .ipx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ipx-plc .r { text-align: left; } .ipx-plc b { font-size: 20px; }
+  .ipx-fg, .ipx-fg.three, .ipx-fg.names, .ipx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ipx-plc .r { text-align: left; }
+  .ipx-act { margin-left: 0; }
 }
-@media (max-width: 460px) { .ipx-fg, .ipx-tiles { grid-template-columns: 1fr; } }
+@media (max-width: 460px) { .ipx-fg, .ipx-fg.three, .ipx-fg.names, .ipx-tiles { grid-template-columns: 1fr; } .ipx-f.w2 { grid-column: auto; } }
 `;
 
-/* Read-only details (same look as the Monitor Interns profile). Used in the View window in Manage Accounts. */
+/* ── Add / Edit / View account: simple layout ── */
+const UZ_CSS = `
+.uz { display: flex; flex-direction: column; gap: 16px; color: #1f2430; width: 100%; max-width: 1080px; }
+.uz small, .uz em { font-style: normal; }
+.uz-top { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.uz-top h2 { margin: 0 auto 0 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.uz-top .uz-back { flex: none; }
+.uz-act { display: flex; gap: 8px; margin-left: auto; }
+.uz-act .ix-b { flex: 0 0 auto; padding: 9px 22px; font-size: 13px; }
+.uz-body { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
+.uz-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* the photo / role / ID column sits in its own card like the form, and stays in view while the long form scrolls */
+.uz.uz-form { max-width: none; }   /* the add / edit form uses the full width of the page */
+.uz-form .uz-body { grid-template-columns: 224px minmax(0, 1fr); }
+.uz-form .uz-side { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; position: sticky; top: 12px; }
+.uz-role { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.uz-role-chg { border: 0; background: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 600; color: #e8582a; cursor: pointer; }
+.uz-role-chg:hover { text-decoration: underline; }
+
+
+/* photo */
+.uz-photo { width: 100%; }
+.uz-photo .ix-photo-pick { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 0; border: 0; background: none; }
+.uz-photo .ix-photo-box, .uz-photo label.ix-photo-box { width: 100% !important; height: auto !important; aspect-ratio: 1 / 1; border-radius: 12px !important; border: 1px solid #e5e7eb; background: #f7f8fa; color: #9aa1ad; }
+.uz-photo .ix-photo-box:hover { transform: none; border-color: #e8582a; }
+.uz-photo .ix-photo-ph { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; }
+.uz-photo .ix-av { width: 100% !important; height: auto !important; aspect-ratio: 1 / 1; border-radius: 12px !important; font-size: 64px !important; box-shadow: none !important; border: 1px solid #e5e7eb !important; background: #fdeee5 !important; color: #c2410c !important; }
+.uz-photo .ix-av img { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; }
+.uz-photo .ix-photo-info { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: #6b7280; line-height: 1.4; }
+.uz-photo .ix-photo-info strong { display: none; }
+.uz-photo .ix-photo-info button { align-self: flex-start; margin-top: 2px; border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: #b91c1c; cursor: pointer; }
+.uz-photo .ix-photo-info em { color: #b91c1c; }
+.uz-nm { display: flex; flex-direction: column; gap: 2px; }
+.uz-nm b { font-size: 15px; font-weight: 700; overflow-wrap: break-word; }
+.uz-nm small { font-size: 12px; color: #6b7280; }
+.uz-meta { display: flex; flex-direction: column; gap: 14px; }
+
+/* the card */
+.uz-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 2px 22px; min-width: 0; }
+.uz-sec { padding: 18px 0 20px; }
+.uz-sec + .uz-sec { border-top: 1px solid #eef0f3; }
+.uz-sec h3 { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 16px; padding-bottom: 7px; font-size: 15px; font-weight: 700; position: relative; }
+.uz-sec h3::after { content: ""; position: absolute; left: 0; bottom: 0; width: 100%; height: 2.5px; border-radius: 2px; background: #e8582a; }
+.uz-sh { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.uz-sh > em { font-size: 12px; color: #6b7280; padding-top: 2px; }
+.uz-sh .ipa-lk { margin-left: 0; font-size: 12.5px; padding: 2px 0 0; border: 0 !important; background: none !important; box-shadow: none !important; height: auto; color: #e8582a; }
+.uz-sh a.ix-b { text-decoration: none; }
+.uz-sh .ix-b { margin-top: -4px; }
+.uz-wide { width: 100%; justify-content: center; }
+.uz-chip.g { background: #e6f7ee; color: #15803d; }
+/* Monitor Interns profile: photo | information | attendance summary */
+.uz.uz-mon { max-width: 1360px; }
+.uz-body.three { grid-template-columns: 190px minmax(0, 1fr) 300px; gap: 20px; }
+.uz-sum .uz-sec { display: flex; flex-direction: column; gap: 12px; padding: 16px 0 18px; }
+.uz-sum .uz-sec h3 { margin-bottom: 0; }
+.uz-sum .ipx-phs { display: flex; flex-direction: column; gap: 8px; }
+.uz-mon .uz-card { padding: 2px 20px; }
+@media (max-width: 1250px) { .uz-body.three { grid-template-columns: 190px minmax(0, 1fr); } .uz-body.three .uz-sum { grid-column: 2; } }
+.uz-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+
+/* fields */
+.uz-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.uz-f.full { grid-column: 1 / -1; }
+.uz-f > small { font-size: 12px; font-weight: 500; color: #374151; }
+.uz-f > small i { font-style: normal; font-weight: 400; color: #9aa1ad; }
+.uz .uf-input { width: 100%; box-sizing: border-box; height: 40px; font-size: 13px; }
+.uz .uf-hint { font-style: normal; font-size: 11px; font-weight: 400; color: #9aa1ad; line-height: 1.35; }
+.uz .ix-row-gap { display: flex; gap: 8px; align-items: center; }
+.uz-view .uz-f { gap: 3px; }
+.uz-view .uz-f > small { color: #6b7280; font-weight: 400; }
+.uz-view .uz-f > b { font-size: 14px; font-weight: 500; line-height: 1.4; overflow-wrap: break-word; }
+.uz-chip { align-self: flex-start; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 7px; background: #fdeee5; color: #c2410c; font-size: 12.5px; font-weight: 600; }
+.uz-st { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 12.5px; font-weight: 500; }
+.uz-st i { width: 7px; height: 7px; border-radius: 2px; background: #14b8a6; }
+.uz-st.off i { background: #9ca3af; }
+.uz-bad { color: #b91c1c; }
+.uz-cnt { font-size: 12px; font-weight: 600; color: #6b7280; background: #f3f4f6; padding: 1px 8px; border-radius: 99px; }
+.uz-none { font-size: 13px; color: #6b7280; }
+.uz-mine { list-style: none; margin: 0; padding: 0; }
+.uz-mine li { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid #f0f1f4; font-size: 13px; min-width: 0; }
+.uz-mine li:first-child { border-top: 0; padding-top: 0; }
+.uz-mine li b { font-weight: 600; }
+.uz-mine li small { margin-left: auto; font-size: 12px; color: #6b7280; text-align: right; }
+.sig-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sig-box { width: 200px; height: 70px; border: 1px dashed #d8dce3; border-radius: 10px; background: #fafbfc; display: grid; place-items: center; overflow: hidden; font-size: 12px; color: #9aa1ad; }
+.sig-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+@media (max-width: 760px) {
+  .uz-body, .uz-body.three { grid-template-columns: 1fr; }
+  .uz-body.three .uz-sum { grid-column: auto; }
+  .uz-photo { width: 150px; }
+  .uz-form .uz-side { position: static; }
+  .uz-form .uz-body { grid-template-columns: 1fr; }
+  .uz-grid { grid-template-columns: 1fr; }
+}
+`;
+
+/* Read-only details, simple layout: photo and account on the left, one card on the right.
+   Used in the View window in Manage Accounts. */
 export function UserDetails({ u, interns = [] }) {
   const isIntern = u.role === "intern";
+  const isSup = u.role === "supervisor";
   const parts = (u.name || "").trim().split(/\s+/);
-  const bday = u.date_of_birth
-    ? new Date(String(u.date_of_birth).slice(0, 10) + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
-    : "—";
-  const li = (k, v) => <div className="ipa-li" key={k}><i>{k}</i><b>{v || "—"}</b></div>;
-  const kv = (items) => (
-    <div className="ipa-kvg">
-      {items.map(([k, v, full]) => (
-        <div className={full ? "c full" : "c"} key={k}><small>{k}</small><b>{v || "—"}</b></div>
-      ))}
-    </div>
+  const online = portalOnline(u);
+  const v = (k, val, full) => (
+    <div className={full ? "uz-f full" : "uz-f"} key={k}><small>{k}</small><b>{val || "—"}</b></div>
   );
-  const emergencyWho = [u.emergency_contact_name, u.emergency_contact_relation && `(${u.emergency_contact_relation})`]
-    .filter(Boolean).join(" ");
+  const created = u.created_at ? ipxDate(String(u.created_at).replace(" ", "T")) : null;
+  const moa = u.moa_valid_until ? (() => {
+    const d = new Date(String(u.moa_valid_until).slice(0, 10) + "T00:00:00");
+    const expired = d < new Date(new Date().toDateString());
+    return <span className={expired ? "uz-bad" : ""}>{ipxDate(u.moa_valid_until)}{expired ? " (expired)" : ""}</span>;
+  })() : "No MOA yet";
+  const mine = isSup ? interns.filter((x) => String(x.supervisor_id) === String(u.id)) : [];
 
   return (
-    <section className={"ipa ipa2 ipa-acc" + (isIntern ? "" : " ipa-staff")} aria-label={`Profile of ${u.name}`}>
-      <style>{IPA_CSS}{`
-        .ipa-staff .ipa-kvg { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .ipa-sigv { padding: 10px 0 4px; border-bottom: 1px solid #f0f1f4; }
-        .ipa-sigv small { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9aa1ad; margin-bottom: 4px; }
-        .ipa-sigv img { max-height: 56px; max-width: 220px; object-fit: contain; }
-        .ipa-sigv b { font-size: 13px; font-weight: 600; color: #1f2430; }
-        .ipa-mine { list-style: none; margin: 4px 0 0; padding: 0; border-top: 1px solid #eef0f3; }
-        .ipa-mine li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f1f4; font-size: 13px; }
-        .ipa-mine li b { font-weight: 600; color: #1f2430; }
-        .ipa-mine li small { margin-left: auto; color: #6b7280; font-size: 12px; }
-        .ipa.ipa2.ipa-acc { grid-template-columns: 320px minmax(0, 1fr); }
-        .ipa-acc .ipa-pn .ipa-pill { background: #fdeee5; color: #c8461c; }
-        .ipa-kvg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid #eef0f3; margin-top: 2px; }
-        .ipa-kvg .c { padding: 8px 12px 8px 0; border-bottom: 1px solid #f0f1f4; min-width: 0; }
-        .ipa-kvg .c.full { grid-column: 1 / -1; }
-        .ipa-acc .ipa-sect { padding: 10px 0 4px; }
-        .ipa-acc .ipa-rt { padding: 4px 22px 8px; }
-        @media (max-width: 1100px) { .ipa-kvg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-        .ipa-kvg small { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9aa1ad; margin-bottom: 2px; }
-        .ipa-kvg b { font-size: 13px; font-weight: 600; color: #1f2430; overflow-wrap: anywhere; }
-        @media (max-width: 900px) { .ipa.ipa2.ipa-acc { grid-template-columns: 1fr; } }
-      `}</style>
-      <aside className="ipa-side">
-        <div className="ipa-p1">
-          <div className="ipa-phw"><Avatar name={u.name} photo={u.photo} size={76} /></div>
-          <div className="ipa-pn">
-            <h2>{u.name}</h2>
-            <span className="ipa-id">#{u.student_id || "—"}</span>
-            <span className="ipa-pill">{isIntern ? "OJT Intern" : (ROLE_LABEL[u.role] || u.role)}</span>
+    <section className={"uz uz-view" + (isIntern ? "" : " uz-staff")} aria-label={`Profile of ${u.name}`}>
+      <style>{UZ_CSS}</style>
+      <div className="uz-body">
+        <aside className="uz-side">
+          <div className="uz-photo"><Avatar name={u.name} photo={u.photo} size={180} /></div>
+          <div className="uz-nm"><b>{u.name}</b><small>#{u.student_id || "—"}</small></div>
+          <div className="uz-meta">
+            <div className="uz-f"><small>Role</small><span className="uz-chip">{isIntern ? "OJT Intern" : (ROLE_LABEL[u.role] || u.role)}</span></div>
+            <div className="uz-f"><small>Status</small>
+              <span className={u.deactivated_at ? "uz-st off" : "uz-st"}><i />{u.deactivated_at ? "Deactivated" : "Active"}</span></div>
+            <div className="uz-f"><small>Last online</small><b>{online ? "Online now" : seenText(u)}</b></div>
+            {isIntern && <div className="uz-f"><small>NFC card</small><b>{u.nfc_uid || "Not linked"}</b></div>}
+            <div className="uz-f"><small>Created</small><b>{created || "—"}</b></div>
           </div>
-        </div>
-        <h4>About</h4>
-        {li("Phone", u.contact_number)}
-        {li("Email", u.email)}
-        {li("Address", u.address)}
-        {isIntern && (
-          <>
-            <hr />
-            <h4>Emergency contact</h4>
-            {li("Name", emergencyWho || "Not set")}
-            {li("Phone", u.emergency_contact_number)}
-            {li("Address", u.emergency_contact_address)}
-          </>
-        )}
-      </aside>
+        </aside>
 
-      <div className="ipa-rt">
-        <div className="ipa-sect">
-          <div className="ipa-sh"><b>Personal information</b></div>
-          {kv([
-            ["First name", u.first_name || parts[0]],
-            ["Middle name", u.middle_name],
-            ["Last name", u.last_name || (parts.length > 1 ? parts[parts.length - 1] : "")],
-            ["Birthday", bday],
-          ])}
-        </div>
-
-        {u.role === "supervisor" && (
-          <div className="ipa-sect">
-            <div className="ipa-sh"><b>HTE details</b></div>
-            {kv([
-              ["HTE (company / office)", u.placement || "Not set", true],
-              ["HTE address", u.hte_address, true],
-              ["MOA valid until", u.moa_valid_until ? (() => {
-                const d = new Date(String(u.moa_valid_until).slice(0, 10) + "T00:00:00");
-                const txt = d.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
-                return d < new Date(new Date().toDateString()) ? `${txt} (expired)` : txt;
-              })() : "No MOA yet"],
-            ])}
-          </div>
-        )}
-
-        {!isIntern && (
-          <div className="ipa-sect">
-            <div className="ipa-sh"><b>Account</b></div>
-            {kv([
-              ["Position", u.position || "Not set", true],
-              ["Status", u.deactivated_at ? "Deactivated" : "Active"],
-              ["Last online", portalOnline(u) ? "Online now" : seenText(u)],
-              ["Created", u.created_at ? new Date(String(u.created_at).replace(" ", "T")).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" }) : "—"],
-              ["Role", ROLE_LABEL[u.role] || u.role],
-            ])}
-            <div className="ipa-sigv"><small>Signature</small>
-              {u.signature ? <PrivateImg path={u.signature} alt="Signature" /> : <b>Not uploaded</b>}
+        <div className="uz-card">
+          <div className="uz-sec">
+            <h3>Personal details</h3>
+            <div className="uz-grid">
+              {v("First name", u.first_name || parts[0])}
+              {v("Middle name", u.middle_name)}
+              {v("Last name", u.last_name || (parts.length > 1 ? parts[parts.length - 1] : ""))}
+              {v("Extension", u.name_extension)}
+              {v("Birthday", ipxDate(u.date_of_birth))}
+              {v("Contact number", u.contact_number)}
+              {v("Email", u.email)}
+              {v("Address", u.address)}
             </div>
           </div>
-        )}
 
-        {u.role === "supervisor" && (() => {
-          const mine = interns.filter((x) => String(x.supervisor_id) === String(u.id));
-          return (
-            <div className="ipa-sect">
-              <div className="ipa-sh"><b>Assigned interns</b><em>{mine.length}</em></div>
-              {mine.length === 0 ? <div className="ipa-muted2" style={{ fontSize: 12.5, color: "#6b7280", padding: "6px 0" }}>No interns assigned yet.</div> : (
-                <ul className="ipa-mine">
+          {isIntern && (
+            <div className="uz-sec">
+              <h3>Internship details</h3>
+              <div className="uz-grid">
+                {v("Placement (HTE)", u.placement || "No placement yet")}
+                {v("HTE supervisor", u.supervisor_name || "Not assigned yet")}
+                {v("Program", u.program)}
+                {v("Semester", u.semester)}
+                {v("Modality", MODALITIES[modalityOf(u)])}
+                {v("Scope", SCOPES[scopeOf(u)])}
+                {v("Time record (DTR)", u.modality === "virtual" ? "Not needed (virtual: logs through Submit Online)" : DTR_MODES[dtrModeOf(u)])}
+                {v("System output presentation", outputRequired(u) ? "Required" : "Not required by the HTE")}
+                {v("Required hours", priorHoursOf(u) ? `${requiredHoursFor(u.program, u.prior_hours)} hours (${priorHoursOf(u)}h from an earlier term)` : `${requiredHoursFor(u.program, u.prior_hours)} hours`)}
+              </div>
+            </div>
+          )}
+
+          {isIntern && (
+            <div className="uz-sec">
+              <h3>Emergency contact</h3>
+              <div className="uz-grid">
+                {v("Full name", u.emergency_contact_name || "Not set")}
+                {v("Relationship", u.emergency_contact_relation)}
+                {v("Contact number", u.emergency_contact_number)}
+                {v("Address", u.emergency_contact_address)}
+              </div>
+            </div>
+          )}
+
+          {isSup && (
+            <div className="uz-sec">
+              <h3>HTE details</h3>
+              <div className="uz-grid">
+                {v("HTE (company / office)", u.placement || "Not set", true)}
+                {v("HTE address", u.hte_address)}
+                {v("MOA valid until", moa)}
+                {v("System output presentation", outputRequired(u) ? "Required by this HTE" : "Not required by this HTE")}
+              </div>
+            </div>
+          )}
+
+          {!isIntern && (
+            <div className="uz-sec">
+              <h3>Position & signature</h3>
+              <div className="uz-grid">
+                {v("Position / job title", u.position || "Not set", true)}
+                <div className="uz-f full"><small>Signature</small>
+                  <div className="sig-box">{u.signature ? <PrivateImg path={u.signature} alt="Signature" /> : <span>Not uploaded yet</span>}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isSup && (
+            <div className="uz-sec">
+              <h3>Assigned interns <em className="uz-cnt">{mine.length}</em></h3>
+              {mine.length === 0 ? <div className="uz-none">No interns assigned yet.</div> : (
+                <ul className="uz-mine">
                   {mine.map((x) => (
                     <li key={x.id}><Avatar name={x.name} photo={x.photo} size={28} /><b>{x.name}</b><small>{x.program || ""}{x.placement ? ` · ${x.placement}` : ""}</small></li>
                   ))}
                 </ul>
               )}
             </div>
-          );
-        })()}
-
-        {isIntern && (
-          <div className="ipa-sect">
-            <div className="ipa-sh"><b>Internship details</b></div>
-            {kv([
-              ["College", u.college || "CCIS"],
-              ["Program", u.program],
-              ["Semester", u.semester],
-              ["Placement", u.placement],
-              ["Modality", MODALITIES[modalityOf(u)]],
-              ["Scope", SCOPES[scopeOf(u)]],
-              ["DTR type", DTR_MODES[dtrModeOf(u)]],
-              ["HTE supervisor", u.supervisor_name || "Not assigned yet"],
-              ["Required hours", `${requiredHoursFor(u.program)}h`],
-              ["NFC UID", u.nfc_uid || "Not linked"],
-            ])}
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </section>
   );
@@ -1917,11 +2072,50 @@ function SigPicker({ file, onChange, current }) {
   );
 }
 
+/* "What kind of account?" — the first step of Add New User (admin: all roles, coordinator: intern + supervisor) */
+const ROLE_KEYS = ["intern", "supervisor", "ojt_coordinator", "admin"];
+const ROLE_PICK = {
+  intern: ["user", "OJT Intern", "A CCIS student on OJT. Taps the NFC card, submits requirements and online attendance."],
+  supervisor: ["briefcase", "HTE Supervisor", "The intern's supervisor at the HTE. Confirms attendance, rates the intern and certifies the DTR."],
+  ojt_coordinator: ["users", "OJT Coordinator", "Manages the interns: approvals, requirements, grades and reports."],
+  admin: ["lock", "Admin", "Manages accounts, ID cards, kiosks, the activity log and backups."],
+};
+const PICK_CSS = `
+.uz-pick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; font-family: inherit; }
+@media (max-width: 560px) { .uz-pick-grid { grid-template-columns: 1fr; } }
+.uz-pick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.uz-pick-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; padding: 16px; border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; font: inherit; color: #1f2430; cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.uz-pick-tile:hover, .uz-pick-tile:focus-visible, .uz-pick-tile.on { border-color: #e8582a; box-shadow: 0 0 0 3px rgba(232,88,42,.12); outline: none; transform: translateY(-1px); }
+.uz-pick-tile b { font-size: 14.5px; font-weight: 700; }
+.uz-pick-tile small { font-size: 12.5px; color: #6b7280; line-height: 1.45; }
+.uz-pick-ic { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 10px; background: #fff1ea; color: #e8582a; margin-bottom: 4px; }
+`;
+export function RolePickModal({ roles = null, current = null, onPick, onClose }) {
+  const list = ROLE_KEYS.filter((k) => !roles || roles.includes(k));
+  return (
+    <Modal title="What kind of account?" sub="Pick a role first. The form shows only the details that role needs." onClose={onClose}>
+      <style>{PICK_CSS}</style>
+      <div className="uz-pick-grid">
+        {list.map((k) => (
+          <button key={k} type="button" className={"uz-pick-tile" + (current === k ? " on" : "")} onClick={() => onPick(k)}>
+            <span className="uz-pick-ic"><Icon name={ROLE_PICK[k][0]} size={20} /></span>
+            <b>{ROLE_PICK[k][1]}</b>
+            <small>{ROLE_PICK[k][2]}</small>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+
 /* Shared form for "Add New User" and "Edit User" (same look as the View window) */
-export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions, supervisors, role, roles = null, noPassword = false, sigFile = null, onSig = null, sigCurrent = null }) {
+export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField, actions, supervisors, role, roles = null, noPassword = false, sigFile = null, onSig = null, sigCurrent = null, back = null, onChangeRole = null }) {
   const add = mode === "add";
   // when editing, the form has no "role" field, so the page passes the account's role
   const formRole = role || f.role;
+  // adding: the role is picked first in the "What kind of account?" window (RolePickModal)
+  const roleList = ROLE_KEYS.filter((k) => !roles || roles.includes(k));
   const today = todayManila();
 
   const cell = (label, control, { full = false, hint, plain = false } = {}) => {
@@ -1938,185 +2132,204 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
     <input className="uf-input" value={f[k] ?? ""} onChange={set(k)} {...props} />
   );
 
-  const fld = (label, control, { full = false, hint, plain = false, className = "" } = {}) => {
+  const fld = (label, control, { full = false, hint, plain = false, opt = false } = {}) => {
     const Tag = plain ? "div" : "label";
     return (
-      <Tag className={"c uf-cell" + (full ? " full" : "") + (className ? " " + className : "")} key={label}>
-        <small>{label}</small>
+      <Tag className={"uz-f uf-cell" + (full ? " full" : "")} key={label}>
+        <small>{label}{opt && <i> (optional)</i>}</small>
         {control}
         {hint && <em className="uf-hint">{hint}</em>}
       </Tag>
     );
   };
-  const empId = isIntern
-    ? text("student_id", { required: add, placeholder: "e.g. 2021-00123" })
-    : (
-      <div className="uf-prefix">
-        <span>EMP-</span>
-        <input
-          className="uf-input"
-          required={add}
-          placeholder="0001"
-          value={String(f.student_id ?? "").replace(/^EMP-?/i, "")}
-          onChange={(e) => {
-            const rest = e.target.value.replace(/^EMP-?/i, "").replace(/\s+/g, "").toUpperCase();
-            set("student_id")({ target: { value: rest ? `EMP-${rest}` : "" } });
-          }}
-        />
-      </div>
-    );
+  // Placement and HTE supervisor go together: picking an HTE fills in its supervisor (and the other way around)
+  const hteKey = (v) => String(v || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const sups = supervisors || [];
+  const [supAuto, setSupAuto] = useState(false);
+  const hteNames = [...new Set(sups.map((s) => String(s.placement || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const atHte = f.placement ? sups.filter((s) => hteKey(s.placement) === hteKey(f.placement)) : [];
+  const others = sups.filter((s) => !atHte.includes(s));
+  const curSup = sups.find((s) => String(s.id) === String(f.supervisor_id ?? ""));
+  const autoSup = !!curSup && atHte.includes(curSup) && supAuto;
+  const onPlacement = (e) => {
+    set("placement")(e);
+    const match = sups.filter((s) => hteKey(s.placement) === hteKey(e.target.value));
+    const keep = curSup && match.includes(curSup);
+    if (match.length && !keep) {
+      set("supervisor_id")({ target: { value: String(match[0].id) } });
+      if (isIntern) set("output_required")({ target: { value: outputRequired(match[0]) ? "1" : "0" } });   // the HTE's presentation rule
+      setSupAuto(true);
+    }
+  };
+  const onSupervisor = (e) => {
+    set("supervisor_id")(e);
+    setSupAuto(false);
+    const s = sups.find((x) => String(x.id) === e.target.value);
+    if (s && isIntern) set("output_required")({ target: { value: outputRequired(s) ? "1" : "0" } });
+    if (s?.placement && !String(f.placement || "").trim()) set("placement")({ target: { value: s.placement } });
+  };
+  const empId = text("student_id", { required: add, placeholder: isIntern ? "e.g. 2021-00123" : "e.g. 0001" });
 
+  const ROLE_TXT = { intern: "OJT Intern", ojt_coordinator: "OJT Coordinator", supervisor: "HTE Supervisor", admin: "Admin" };
   return (
-    <section className={"ipa ipa2 ipa-acc ipa-form" + (isIntern ? "" : " ipa-staff")}>
-      <style>{IPA_CSS}{`
-        .ipa.ipa2.ipa-acc { grid-template-columns: 320px minmax(0, 1fr); }
-        .ipa-kvg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 14px; margin-top: 2px; }
-        .ipa-kvg .c { padding: 6px 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-        .ipa-kvg .c.full { grid-column: 1 / -1; }
-        .ipa-kvg .c.w2 { grid-column: span 2; }
-        .ipa-kvg small { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9aa1ad; }
-        .ipa-form .uf-input { width: 100%; box-sizing: border-box; height: 36px; font-size: 13px; }
-        .ipa-form .uf-hint { font-style: normal; font-size: 11px; color: #9aa1ad; line-height: 1.3; }
-        .ipa-form .ipa-side .ipa-kvg { grid-template-columns: 1fr; }
-        .ipa-form .ipa-side .ipa-kvg .c.full { grid-column: auto; }
-        .ipa-form .ipa-sect { padding: 10px 0 4px; }
-        .ipa-form .ipa-rt { padding: 4px 22px 14px; }
-        .ipa-form .ipa-p1 { align-items: center; }
-        .ipa-form .ipa-pn h2 { font-size: 16px; }
-        .sig-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-        .sig-box { width: 180px; height: 64px; border: 1px dashed #d8dce3; border-radius: 10px; background: #fafbfc; display: grid; place-items: center; overflow: hidden; font-size: 12px; color: #9aa1ad; }
-        .sig-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .ipa-form .ix-form-actions { margin-top: 12px; justify-content: flex-end; }
-        .ipa-form .ix-form-actions .ix-b { flex: 0 0 auto; padding: 9px 22px; font-size: 13px; }
-        @media (max-width: 1100px) { .ipa-kvg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-        @media (max-width: 900px) { .ipa.ipa2.ipa-acc { grid-template-columns: 1fr; } }
-      `}</style>
-      <aside className="ipa-side">
-        <div className="ipa-p1">
-          {header}
-          {title && (
-            <div className="ipa-pn">
-              <h2>{title}</h2>
-              {sub && <span className="ipa-id">{sub}</span>}
+    <section className={"uz uz-form" + (isIntern ? "" : " uz-staff")}>
+      <style>{UZ_CSS}</style>
+
+      <div className="uz-top">
+        {back}
+        <h2>{add ? "New account" : "Edit account"}</h2>
+        <div className="uz-act">{actions}</div>
+      </div>
+
+      <div className="uz-body">
+        <aside className="uz-side">
+          <div className="uz-photo">{header}</div>
+          {!add && title && <div className="uz-nm"><b>{title}</b>{sub && <small>{sub}</small>}</div>}
+          <div className="uz-meta">
+            {fld("Role", (
+              <span className="uz-role">
+                <span className="uz-chip">{ROLE_TXT[formRole] || formRole}</span>
+                {add && roleList.length > 1 && onChangeRole && <button type="button" className="uz-role-chg" onClick={onChangeRole}>Change</button>}
+              </span>
+            ), { plain: true })}
+            {fld(isIntern ? "Student ID" : "Employee ID", empId, { hint: "Used for account recovery." })}
+            {(add || !noPassword) && fld(add ? "Password" : "New password",
+              text("password", {
+                type: "text", autoComplete: "off", required: add, minLength: add ? 8 : undefined,
+                placeholder: add ? "At least 8 characters" : "Leave blank to keep",
+              }), { opt: !add })}
+          </div>
+        </aside>
+
+        <div className="uz-card">
+          <div className="uz-sec">
+            <h3>Personal details</h3>
+            <div className="uz-grid">
+              {fld("First name", text("first_name", { required: true }))}
+              {fld("Middle name", text("middle_name"), { opt: true })}
+              {fld("Last name", text("last_name", { required: true }))}
+              {fld("Extension", <>
+                {text("name_extension", { list: "name-ext-list", maxLength: 20, placeholder: "e.g. Jr., III" })}
+                <datalist id="name-ext-list">{["Jr.", "Sr.", "II", "III", "IV", "V"].map((x) => <option key={x} value={x} />)}</datalist>
+              </>, { plain: true, opt: true })}
+              {fld("Birthday", text("date_of_birth", { type: "date", max: today, required: add }), { opt: !add })}
+              {fld("Contact number", text("contact_number", { type: "tel", placeholder: "e.g. 09123456789" }), { opt: true })}
+              {fld("Email", text("email", { type: "email", required: true, placeholder: "e.g. juan@csu.edu.ph" }))}
+              {fld("Address", text("address", { placeholder: "Street, Barangay, City" }), { opt: true })}
+            </div>
+          </div>
+
+          {formRole === "supervisor" && (
+            <div className="uz-sec">
+              <h3>HTE details</h3>
+              <div className="uz-grid">
+                {fld("HTE (company / office)", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }),
+                  { full: true, opt: !add, hint: "Use the same name as the interns' Placement, so the coordinator can match them." })}
+                {fld("HTE address", text("hte_address", { placeholder: "Street, Barangay, City" }), { opt: true })}
+                {fld("MOA valid until", text("moa_valid_until", { type: "date" }), { opt: true, hint: "Leave empty if there is no MOA yet." })}
+                {fld("System output presentation", (
+                  <select className="uf-input" value={outputRequired(f) ? "1" : "0"} onChange={set("output_required")}>
+                    <option value="1">Required by this HTE</option>
+                    <option value="0">Not required by this HTE</option>
+                  </select>
+                ), { hint: "Applies to every intern under this supervisor." })}
+              </div>
+            </div>
+          )}
+
+          {isIntern && (
+            <div className="uz-sec">
+              <h3>Internship details</h3>
+              <div className="uz-grid">
+                {fld("Placement (HTE)", (
+                  <>
+                    <input className="uf-input" list="uz-hte-list" value={f.placement ?? ""} onChange={onPlacement}
+                      required={add} placeholder="e.g. Provincial IT Office, Butuan City" autoComplete="off" />
+                    {hteNames.length > 0 && <datalist id="uz-hte-list">{hteNames.map((n) => <option key={n} value={n} />)}</datalist>}
+                  </>
+                ), { opt: !add, hint: hteNames.length ? "Pick an HTE from the list to fill in its supervisor." : undefined })}
+                {supervisors ? fld("HTE supervisor", (
+                  <select className="uf-input" value={f.supervisor_id ?? ""} onChange={onSupervisor}>
+                    <option value="">Not assigned yet</option>
+                    {atHte.length > 0 && (
+                      <optgroup label={`At ${f.placement}`}>
+                        {atHte.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+                      </optgroup>
+                    )}
+                    {atHte.length > 0
+                      ? <optgroup label="Other HTEs">{others.map((s) => <option key={s.id} value={String(s.id)}>{s.name}{s.placement ? ` (${s.placement})` : ""}</option>)}</optgroup>
+                      : supervisors.map((s) => <option key={s.id} value={String(s.id)}>{s.name}{s.placement ? ` (${s.placement})` : ""}</option>)}
+                  </select>
+                ), { opt: true, hint: autoSup ? "Filled in from the HTE. You can change it." : undefined }) : <div />}
+                {fld("Program", (
+                  <select className="uf-input" value={f.program} onChange={set("program")}>
+                    {!add && <option value="">Select program</option>}
+                    <option value="BSIT - 4">BSIT - 4</option>
+                    <option value="BSCS - 4">BSCS - 4</option>
+                    <option value="BSIS - 4">BSIS - 4</option>
+                  </select>
+                ), { hint: `Required hours: ${requiredHoursFor(f.program)}h` })}
+                {fld("Semester", (
+                  <select className="uf-input" value={f.semester} onChange={set("semester")}>
+                    {!add && <option value="">Select semester</option>}
+                    <option value="1st Semester">1st Semester</option>
+                    <option value="2nd Semester">2nd Semester</option>
+                  </select>
+                ))}
+                {fld("Modality", (
+                  <select className="uf-input" value={f.modality || "onsite"} onChange={set("modality")}>
+                    {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                ))}
+                {fld("Scope", (
+                  <select className="uf-input" value={f.scope || "local"} onChange={set("scope")}>
+                    {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                ))}
+                {f.modality === "virtual"
+                  /* a virtual intern never taps the kiosk: each approved online day counts as one official day */
+                  ? fld("Time record (DTR)", <span className="uz-none">Not needed. Virtual interns log their days through Submit Online.</span>, { plain: true })
+                  : fld("Time record (DTR)", (
+                    <select className="uf-input" value={f.dtr_mode || "two"} onChange={set("dtr_mode")}>
+                      <option value="two">{DTR_MODES.two}</option>
+                      <option value="four">{DTR_MODES.four}</option>
+                    </select>
+                  ), { hint: "Depends on the intern's HTE." })}
+                {fld("System output presentation", (
+                  <select className="uf-input" value={outputRequired(f) ? "1" : "0"} onChange={set("output_required")}>
+                    <option value="1">Required</option>
+                    <option value="0">Not required by the HTE</option>
+                  </select>
+                ), { hint: "Set from the HTE supervisor. Change it only for this intern." })}
+                {fld("Hours from an earlier term", text("prior_hours", { type: "number", min: 0, step: "0.5", placeholder: "0" }),
+                  { opt: true, hint: `Already rendered in a past term. The intern needs ${requiredHoursFor(f.program, f.prior_hours)}h more.` })}
+                {uidField && fld("NFC card", uidField, { plain: true, full: true })}
+              </div>
+            </div>
+          )}
+
+          {isIntern && (
+            <div className="uz-sec">
+              <h3>Emergency contact</h3>
+              <div className="uz-grid">
+                {fld("Full name", text("emergency_contact_name"), { opt: true })}
+                {fld("Relationship", text("emergency_contact_relation", { placeholder: "e.g. Mother" }), { opt: true })}
+                {fld("Contact number", text("emergency_contact_number", { type: "tel" }), { opt: true })}
+                {fld("Address", text("emergency_contact_address"), { opt: true })}
+              </div>
+            </div>
+          )}
+
+          {!isIntern && (
+            <div className="uz-sec">
+              <h3>Position & signature</h3>
+              <div className="uz-grid">
+                {fld("Position / job title", text("position", { placeholder: "e.g. OJT Coordinator, CCIS" }), { full: true, opt: true })}
+                {onSig && fld("Signature", <SigPicker file={sigFile} onChange={onSig} current={sigCurrent} />, { full: true, plain: true, opt: true, hint: "Used on the DTR and reports. Use a clear photo of the signature on white paper." })}
+              </div>
             </div>
           )}
         </div>
-        <h4>Account</h4>
-        <div className="ipa-kvg">
-          {fld(isIntern ? "Student ID" : "Employee ID", empId, { hint: "Used to sign up for account recovery." })}
-          {add && fld("Role", (
-            <select className="uf-input" value={f.role} onChange={set("role")}>
-              {(!roles || roles.includes("intern")) && <option value="intern">Intern</option>}
-              {(!roles || roles.includes("ojt_coordinator")) && <option value="ojt_coordinator">OJT Coordinator</option>}
-              {(!roles || roles.includes("supervisor")) && <option value="supervisor">Supervisor</option>}
-              {(!roles || roles.includes("admin")) && <option value="admin">Admin</option>}
-            </select>
-          ))}
-          {(add || !noPassword) && fld(add ? "Password" : "Set new password",
-            text("password", {
-              type: "text", autoComplete: "off", required: add, minLength: add ? 8 : undefined,
-              placeholder: add ? "At least 8 characters" : "Leave blank to keep",
-            }))}
-        </div>
-        {isIntern && (
-          <>
-            <hr />
-            <h4>Emergency contact</h4>
-            <div className="ipa-kvg">
-              {fld("Full name", text("emergency_contact_name"))}
-              {fld("Relationship", text("emergency_contact_relation", { placeholder: "e.g. Mother" }))}
-              {fld("Contact number", text("emergency_contact_number", { type: "tel" }))}
-              {fld("Address", text("emergency_contact_address"), { full: true })}
-            </div>
-          </>
-        )}
-      </aside>
-
-      <div className="ipa-rt">
-        <div className="ipa-sect">
-          <div className="ipa-sh"><b>Personal information</b></div>
-          <div className="ipa-kvg">
-            {fld("First name", text("first_name", { required: true }))}
-            {fld("Middle name", text("middle_name"))}
-            {fld("Last name", text("last_name", { required: true }))}
-            {fld("Birthday", text("date_of_birth", { type: "date", max: today, required: add }))}
-            {fld("Contact number", text("contact_number", { type: "tel", placeholder: "e.g. 09123456789" }))}
-            {fld("Email", text("email", { type: "email", required: true, placeholder: "e.g. juan@csu.edu.ph" }), { className: "w2" })}
-            {fld("Address", text("address", { placeholder: "Street, Barangay, City" }), { full: true })}
-          </div>
-        </div>
-
-        {formRole === "supervisor" && (
-          <div className="ipa-sect">
-            <div className="ipa-sh"><b>HTE details</b></div>
-            <div className="ipa-kvg">
-              {fld("HTE (company / office)", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }),
-                { full: true, hint: "Use the same name as the interns' Placement, so the coordinator can match them." })}
-              {fld("HTE address", text("hte_address", { placeholder: "Street, Barangay, City" }), { full: true })}
-              {fld("MOA valid until", text("moa_valid_until", { type: "date" }), { hint: "Leave empty if there is no MOA yet." })}
-            </div>
-          </div>
-        )}
-
-        {!isIntern && (
-          <div className="ipa-sect">
-            <div className="ipa-sh"><b>Position & signature</b></div>
-            <div className="ipa-kvg">
-              {fld("Position / job title", text("position", { placeholder: "e.g. OJT Coordinator, CCIS" }), { full: true })}
-              {onSig && fld("Signature", <SigPicker file={sigFile} onChange={onSig} current={sigCurrent} />, { full: true, plain: true, hint: "Used on the DTR and reports. Use a clear photo of the signature on white paper." })}
-            </div>
-          </div>
-        )}
-
-        {isIntern && (
-          <div className="ipa-sect">
-            <div className="ipa-sh"><b>Internship details</b></div>
-            <div className="ipa-kvg">
-              {fld("College", <input className="uf-input" value="CCIS" disabled readOnly />)}
-              {fld("Program", (
-                <select className="uf-input" value={f.program} onChange={set("program")}>
-                  {!add && <option value="">Select program</option>}
-                  <option value="BSIT - 4">BSIT - 4</option>
-                  <option value="BSCS - 4">BSCS - 4</option>
-                  <option value="BSIS - 4">BSIS - 4</option>
-                </select>
-              ), { hint: `Required hours: ${requiredHoursFor(f.program)}h` })}
-              {fld("Semester", (
-                <select className="uf-input" value={f.semester} onChange={set("semester")}>
-                  {!add && <option value="">Select semester</option>}
-                  <option value="1st Semester">1st Semester</option>
-                  <option value="2nd Semester">2nd Semester</option>
-                </select>
-              ))}
-              {fld("Placement", text("placement", { required: add, placeholder: "e.g. Provincial IT Office, Butuan City" }), { full: true })}
-              {fld("Modality", (
-                <select className="uf-input" value={f.modality || "onsite"} onChange={set("modality")}>
-                  {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-              ))}
-              {fld("Scope", (
-                <select className="uf-input" value={f.scope || "local"} onChange={set("scope")}>
-                  {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-              ))}
-              {fld("DTR type", (
-                <select className="uf-input" value={f.dtr_mode || "two"} onChange={set("dtr_mode")}>
-                  <option value="two">{DTR_MODES.two}</option>
-                  <option value="four">{DTR_MODES.four}</option>
-                </select>
-              ), { hint: "Depends on the intern's HTI." })}
-              {supervisors && fld("HTE supervisor", (
-                <select className="uf-input" value={f.supervisor_id ?? ""} onChange={set("supervisor_id")}>
-                  <option value="">Not assigned yet</option>
-                  {supervisors.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
-                </select>
-              ), { hint: "Reviews overtime and time corrections, certifies the DTR." })}
-              {uidField && fld("NFC card", uidField, { plain: true, full: true })}
-            </div>
-          </div>
-        )}
-
-        <div className="ix-form-actions">{actions}</div>
       </div>
     </section>
   );
@@ -2769,7 +2982,7 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
     const tIn = todaySessions[0]?.in;
     const tOut = [...todaySessions].reverse().find((x) => x.out)?.out;
     const hrs = calcHours(recs);
-    return { u, isIn, tIn, tOut, flags, hours: hrs, required: requiredHoursFor(u.program) };
+    return { u, isIn, tIn, tOut, flags, hours: hrs, required: requiredHoursFor(u.program, u.prior_hours) };
   });
   const inCount = rows.filter((x) => x.isIn).length;
   const htes = [...new Set(interns.map((u) => (u.placement || "").trim()).filter(Boolean))].sort();
@@ -3538,7 +3751,7 @@ function PrivacyGate({ user, onDecline }) {
   );
 }
 const PRIVACY_CSS = `
-  .pv-wrap { z-index: 300 !important; }
+  .pv-wrap { z-index: 20000 !important; }   /* above the top bar, side menu and drawers */
   .pv-modal { max-width: 560px !important; display: flex; flex-direction: column; max-height: calc(100dvh - 24px) !important; overflow: hidden !important; }
   .pv-modal > header { flex: none; }
   .pv-body { font-size: 13px; line-height: 1.55; color: #374151; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 12px !important; }
@@ -3551,7 +3764,7 @@ const PRIVACY_CSS = `
   .pv-err { color: #dc2626; font-size: 12px; margin-top: 8px; }
   .pv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   @media (max-width: 480px) { .pv-foot { padding: 10px 16px 14px; } .pv-actions .ix-b { flex: 1 1 100%; } }
-  .fp-wrap { z-index: 310 !important; }
+  .fp-wrap { z-index: 20010 !important; }
   .fp-modal { max-width: 420px !important; }
   .fp-body { display: flex; flex-direction: column; gap: 10px; }
   .fp-field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 600; color: #374151; }
@@ -3974,9 +4187,38 @@ export default function Shell({ navItems, user, children }) {
       <style>{uiUnify}</style>
       {/* the light "panel" look (white sidebar, pages inside one white rounded panel) */}
       <style>{lay3}</style>
+      {/* every page reaches the bottom of the panel, like the dashboard */}
+      <style>{FILL_CSS}</style>
     </div>
   );
 }
+
+/* Computers: the last card (or tab content) of every page grows down to the bottom of the white panel,
+   so no page ends with a short card and empty space under it. Taller pages still scroll as before. */
+const FILL_CSS = `
+@media (min-width: 1001px) and (min-height: 600px) {
+  .ix-page.lay2 .ix-main { display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main > .ix-content { flex: 1 0 auto; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main > .ix-content > :nth-last-child(1 of :not(style, script, .ix-modal-wrap)) { flex-grow: 1; }
+  .ix-page.lay2 .ix-main > .ix-content > .grp-body:nth-last-child(1 of :not(style, script, .ix-modal-wrap)) { display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-main > .ix-content > .grp-body > :nth-last-child(1 of :not(style, script, .ix-modal-wrap)) { flex-grow: 1; }
+  /* pages whose last part is a wrapper: its last card grows too */
+  .ix-page.lay2 .ix-content :is(.mon, .al-wrap, .gr-page) { display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-content :is(.mon, .al-wrap) > .ix-card:nth-last-child(1 of :not(style, script, .ix-modal-wrap)) { flex: 1 0 auto; }
+  .ix-page.lay2 .ix-content .gr-page > .ix-card:not(.gr-empty), .ix-page.lay2 .ix-content .gr-page > .gr-empty:only-of-type { flex: 1 0 auto; }
+  /* My Profile (every role): the bottom cards reach the bottom of the panel */
+  .ix-page.lay2 .ix-main > .ix-content > .pf-page { flex: 1 0 auto !important; }
+  .ix-page.lay2 .ix-content .pf-page > :last-child { flex: 1 0 auto !important; }
+  .ix-page.lay2 .ix-content .pf-page > .pf-grid:last-child { grid-template-rows: auto 1fr !important; }
+  .ix-page.lay2 .ix-content .pf-page .pf-sec { display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-content .pf-page .pf-sec > .ix-card { flex: 1 0 auto; }
+  /* a card with nothing in its list: the message sits in the middle of the card */
+  .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card):has(> :is(.ix-empty, .dtr-wait, .rq-empty, .gr-wait)) { display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card) > :is(.ix-empty, .dtr-wait, .rq-empty) { flex: 1 0 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+  .ix-page.lay2 .ix-content .ix-card > .gr-wait { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; }
+  .ix-page.lay2 .ix-content .cm-items:has(> .cm-empty:only-child) { display: flex; flex-direction: column; justify-content: center; }
+}
+`;
 
 /* ───────────────────────── one look for every role ─────────────────────────
    Same font, colours, buttons, dropdowns, inputs and tabs on the Intern, Coordinator,
@@ -5701,7 +5943,8 @@ const css = `
 
   /* Add / Edit form: label above a clean input box */
   .ipv-grid .uf-cell { flex-direction: column; align-items: stretch; gap: 5px; padding: 8px 12px 8px 0; cursor: default; }
-  .ipv-grid .uf-cell:focus-within { background: none; box-shadow: none; }
+  :is(.ipv-grid, .uz) .uf-cell:focus-within, .uz-f.uf-cell:focus-within { background: none; box-shadow: none; }   /* only the input itself shows focus */
+  .uz :is(.uf-input, select, textarea):focus { border-color: #e8582a !important; box-shadow: 0 0 0 3px rgba(232,88,42,.15) !important; }
   .ipv-grid .uf-cell .ipv-label { font-size: 12.5px; font-weight: 600; color: #374151; }
   .ipv-grid .uf-cell .ipv-label::after { content: ""; }
   .uf-input {

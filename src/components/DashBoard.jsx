@@ -221,8 +221,8 @@ export function NeedsAttention({ interns, records, monitorPath, limit = 6 }) {
       items.push({ key: `rep${rp.id}-${u.id}`, u, rank: 0.5, icon: "file", tone: "red", title: name, sub: `"${rp.title}" not sent · due ${d}`, tag: "Report", tagTone: "red" });
     });
     // required hours done
-    if (!output && calcHours(recs) >= requiredHoursFor(u.program)) {
-      items.push({ key: `done${u.id}`, u, rank: 3, icon: "check", tone: "green", title: name, sub: `Completed ${requiredHoursFor(u.program)}h · ready for post-internship`, tag: "Done", tagTone: "green" });
+    if (!output && calcHours(recs) >= requiredHoursFor(u.program, u.prior_hours)) {
+      items.push({ key: `done${u.id}`, u, rank: 3, icon: "check", tone: "green", title: name, sub: `Completed ${requiredHoursFor(u.program, u.prior_hours)}h · ready for post-internship`, tag: "Done", tagTone: "green" });
     }
   });
   items.sort((a, b) => a.rank - b.rank || String(a.title).localeCompare(String(b.title)));
@@ -296,6 +296,7 @@ export const dbCss = `
 .ix-page .ix-content .dbx-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
 
 .ix-page .ix-content .dbx-col > :last-child { flex: 1; }
+.ix-page .ix-content .dbx-ch > b { white-space: normal; }
 .ix-page .ix-content .dbx-col > * { margin: 0 !important; }
 
 /* white cards */
@@ -305,6 +306,10 @@ export const dbCss = `
 .ix-page .ix-content .dbx-card > .dbx-ch + * { border-top: 0; }
 .ix-page .ix-content .dbx-card > * + .dbx-ch { border-top: 1px solid #f1ece9; }
 .ix-page .ix-content .dbx-ch b { font-size: 13px; font-weight: 700; color: var(--dbx-ink); }
+/* orange underline under each panel title (same as the profile pages) */
+.ix-page .ix-content .dbx-ch > b { align-self: stretch; display: inline-flex; align-items: center; position: relative; margin: -10px 0; padding: 10px 0; min-width: 0; flex: 0 1 auto; line-height: 1.25; }
+.ix-page .ix-content .dbx-ch > .dbx-link { flex: none; }
+.ix-page .ix-content .dbx-ch > b::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2.5px; border-radius: 2px 2px 0 0; background: #e8582a; }
 .ix-page .ix-content .dbx-n { font-size: 10.5px; font-weight: 700; background: #f3ede9; color: #6b5b52; padding: 1px 7px; border-radius: 99px; }
 .ix-page .ix-content .dbx-link { margin-left: auto; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600; color: #c2410c; }
 .ix-page .ix-content .dbx-link:hover { text-decoration: underline; }

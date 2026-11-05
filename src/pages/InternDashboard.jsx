@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   Spinner, PageHeader, StatCard, Badge, Table, Section, Msg, Icon, Ring, Avatar, Bar, Modal, Drawer, Empty, Inbox,
   calcHours, fmtTime, greeting, esc, requiredHoursFor, programKey,
-  PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, dueStatus, AnnouncementBoard, AccountSecurity, UserDetails,
+  PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, reqsFor, dueStatus, AnnouncementBoard, AccountSecurity, UserDetails,
   sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, MODALITIES, SCOPES, modalityOf, scopeOf, SCHEDULE, liveRefresh, todayManila,
 } from "../components/DashKit.jsx";
 
@@ -90,6 +90,7 @@ export default function InternDashboard() {
   const [loading, setLoading] = useState(true);
   const [program, setProgram] = useState(user.program || "");
   const [dtrMode, setDtrMode] = useState(dtrModeOf(user));
+  const [prior, setPrior] = useState(Number(user.prior_hours) || 0);   // hours from an earlier term
 
   // the login response has no program / DTR type, so read them from the account
   useEffect(() => {
@@ -99,6 +100,7 @@ export default function InternDashboard() {
         const acct = d?.user || d || {};
         setProgram(acct.program || "");
         setDtrMode(dtrModeOf(acct));
+        setPrior(Number(acct.prior_hours) || 0);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,7 +130,7 @@ export default function InternDashboard() {
   const online = records.filter((r) => r.uid === "ONLINE").length;
   const lastTap = records.find((r) => r.uid !== "ONLINE"); // latest kiosk tap
   const firstName = user.name?.split(" ")[0] || "Intern";
-  const required = requiredHoursFor(program);
+  const required = requiredHoursFor(program, prior);
 
   return (
     <Shell navItems={NAV} user={user}>
@@ -753,7 +755,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   // Requirements due: during- and post-internship requirements, the ones that need action first
   const hoursDone = totalHours >= required;   // post-internship opens after the hours
   const RANK = { overdue: 0, returned: 1, due: 2, todo: 3, locked: 4, waiting: 5, approved: 6 };
-  const dueList = [["during", DURING_REQUIREMENTS], ["post", POST_REQUIREMENTS]].flatMap(([phase, list]) => list.map((r) => {
+  const dueList = [["during", DURING_REQUIREMENTS], ["post", reqsFor("post", user)]].flatMap(([phase, list]) => list.map((r) => {
     const m = myMovs.find((x) => x.requirement === r.key && (x.phase || "pre") === phase);
     const due = deadlines[`${phase}:${r.key}`];
     const ds = dueStatus(due, m);
@@ -1592,6 +1594,7 @@ const SO_CSS = `
   .ix-page .ix-content .so-cols > .ix-card { display: flex; flex-direction: column; min-height: 0; }
   .ix-page .ix-content .so-list .so-items { flex: 1 1 0; min-height: 0; max-height: none; overflow-y: auto; }
   .ix-page .ix-content .so-list > .ix-spin, .ix-page .ix-content .so-list > .so-empty { flex: 1; }
+  .ix-page .ix-content .so-list > .so-empty { justify-content: center; margin: 12px; border: 1.5px dashed #e5e7eb; border-radius: 12px; }
   /* the form gives or takes space through the tasks box, so its button always shows */
   .ix-page .ix-content .so-form .so-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }
   .ix-page .ix-content .so-form .so-body > * { flex-shrink: 0; }
@@ -1709,7 +1712,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   };
 
   const phase = tab; // "pre" | "during" | "post"
-  const list = REQUIREMENTS_BY_PHASE[phase] || PRE_REQUIREMENTS;
+  const list = REQUIREMENTS_BY_PHASE[phase] ? reqsFor(phase, user) : PRE_REQUIREMENTS;   // no System Output Presentation when the HTE doesn't require it
   const inPhase = (m) => (m.phase || "pre") === phase;
   // newest submission for each requirement (movs come newest first)
   const latest = (key) => movs.find((m) => m.requirement === key && inPhase(m));
@@ -2929,6 +2932,20 @@ function NfcApply({ user, records = [] }) {
   const tapTime = (t) => new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
   const cardUser = { ...user, ...(me || {}) };
   const settings = loadCardSettings();
+  // the card itself is shown only once it's released (claimed); before that, its journey
+  const released = hasCard && !active;
+  const reached = { none: 0, rejected: 1, pending: 1, approved: 2, printed: 3, linked: 4, issued: 5 }[stage] ?? 0;
+  const journey = [
+    { t: "Pre-internship requirements approved", d: pre ? `${pre.approved} of ${pre.total} approved` : "Checking…", done: !!pre?.started },
+    { t: "Apply for your card", d: req ? "Request sent" : "Use the form on this page", done: reached >= 1 },
+    status === "rejected"
+      ? { t: "Approved by your OJT coordinator", d: "Not approved. You can apply again.", bad: true }
+      : { t: "Approved by your OJT coordinator", d: `Then sign your ID at the ${ID_OFFICE}`, done: reached >= 2 },
+    { t: "Printed by the admin", d: "Your ID card is printed", done: reached >= 3 },
+    { t: "Linked to your account", d: "The card is connected to you", done: reached >= 4 },
+    { t: "Claimed and released", d: "Your card becomes active", done: reached >= 5 },
+  ];
+  const nowAt = journey.findIndex((j) => !j.done && !j.bad);
 
   return (
     <>
@@ -2939,7 +2956,22 @@ function NfcApply({ user, records = [] }) {
       ) : (
         <div className="nc-page" ref={pageRef}>
           {/* 1 · the card (same design as the printed ID) and where it is */}
-          <div className="ix-card nc-cardbox" ref={boxRef}>
+          <div className={released ? "ix-card nc-cardbox" : "ix-card nc-cardbox nc-locked"} ref={boxRef}>
+            {!released ? (
+              <div className="nc-track">
+                <div className="nc-track-ico"><Icon name="card" size={26} /></div>
+                <b className="nc-track-t">Your card will show here once it's released</b>
+                <p className="nc-track-p">Finish each step below. Your ID card appears here after you claim it.</p>
+                <ol className="nc-track-list" aria-label="Steps to get your card">
+                  {journey.map((j, i) => (
+                    <li key={j.t} className={j.bad ? "bad" : j.done ? "done" : i === nowAt ? "now" : ""}>
+                      <i>{j.bad ? "!" : j.done ? <Icon name="check" size={12} /> : i + 1}</i>
+                      <span><b>{j.t}</b><small>{j.d}</small></span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : (
             <div className="nc-card">
               <div className={`nc-flip ${back ? "back" : ""} ${hasCard ? "" : "ghost"}`} style={zoom ? { zoom } : undefined}>
                 <div className="nc-side front">{me ? <CardFace u={cardUser} settings={settings} /> : <div className="nc-skel" />}</div>
@@ -2948,8 +2980,8 @@ function NfcApply({ user, records = [] }) {
               <button type="button" className="nc-turn" onClick={() => setBack((v) => !v)}>
                 <Icon name="card" size={13} /> {back ? "Show the front" : "Show the back"}
               </button>
-              {!hasCard && <span className="nc-preview-tag">{["printed", "linked"].includes(stage) ? `Preview · your card is at the ${ID_OFFICE}` : "Preview · how your card will look"}</span>}
             </div>
+            )}
           </div>
 
           <div className="nc-col">
@@ -2976,7 +3008,7 @@ function NfcApply({ user, records = [] }) {
                     : "Apply below and your OJT coordinator will get your card ready."}
               </p>
 
-              {status !== "rejected" && (req || hasCard) && (
+              {released && status !== "rejected" && (req || hasCard) && (
                 <ol className="nc-steps" aria-label="Card progress">
                   {STEPS.map((label, i) => (
                     <li key={label} className={i < doneSteps ? "done" : i === doneSteps && active ? "now" : ""}>
@@ -3055,6 +3087,29 @@ function NfcApply({ user, records = [] }) {
 }
 
 const NC_CSS = `
+.ix-page .nc-page:has(.nc-locked) { grid-template-columns: minmax(300px, 340px) minmax(0, 1fr); }
+.ix-page .ix-card.nc-cardbox.nc-locked { align-items: stretch; justify-content: flex-start; padding: 22px 22px !important; width: auto; min-width: 0; box-sizing: border-box; }
+.ix-page .nc-track { display: flex; flex-direction: column; gap: 6px; }
+.ix-page .nc-track-ico { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: #fdeee5; color: #e8582a; margin-bottom: 6px; }
+.ix-page .nc-track-t { font-size: 15px; font-weight: 700; color: #1f2430; line-height: 1.3; }
+.ix-page .nc-track-p { margin: 0 0 10px; font-size: 12.5px; color: #6b7280; line-height: 1.45; }
+.ix-page .nc-track-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ix-page .nc-track-list li { position: relative; display: flex; gap: 12px; padding: 0 0 16px; }
+.ix-page .nc-track-list li:last-child { padding-bottom: 0; }
+.ix-page .nc-track-list li::before { content: ""; position: absolute; left: 12px; top: 26px; bottom: 2px; width: 2px; background: #e7e9ee; }
+.ix-page .nc-track-list li:last-child::before { display: none; }
+.ix-page .nc-track-list li.done::before { background: #16a34a; }
+.ix-page .nc-track-list i { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700; background: #f3f4f6; color: #9aa1ad; border: 2px solid #e7e9ee; box-sizing: border-box; position: relative; z-index: 1; }
+.ix-page .nc-track-list li.done i { background: #16a34a; border-color: #16a34a; color: #fff; }
+.ix-page .nc-track-list li.now i { background: #fff; border-color: #e8582a; color: #e8582a; }
+.ix-page .nc-track-list li.bad i { background: #fdecec; border-color: #dc2626; color: #dc2626; }
+.ix-page .nc-track-list span { display: flex; flex-direction: column; gap: 1px; padding-top: 3px; min-width: 0; }
+.ix-page .nc-track-list b { font-size: 13px; font-weight: 600; color: #1f2430; line-height: 1.35; }
+.ix-page .nc-track-list li:not(.done):not(.now):not(.bad) b { color: #6b7280; }
+.ix-page .nc-track-list small { font-size: 11.5px; color: #9aa1ad; line-height: 1.4; }
+.ix-page .nc-track-list li.now small { color: #c2410c; }
+.ix-page .nc-track-list li.bad small { color: #b91c1c; }
+@media (max-width: 1000px) { .ix-page .nc-page:has(.nc-locked) { grid-template-columns: 1fr; } }
 .ix-page .nc-page { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: stretch; }
 .ix-page .nc-col { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .ix-page .ix-card.nc-cardbox { display: flex; align-items: center; justify-content: center; padding: 22px 30px !important; margin: 0 !important; }
@@ -3106,7 +3161,7 @@ const NC_CSS = `
 .ix-page .nc-seg { display: flex; gap: 8px; flex-wrap: wrap; }
 .ix-page .nc-seg button { height: 34px !important; min-height: 0 !important; padding: 0 14px !important; border-radius: 10px; border: 1px solid #e3e5ea; background: #fff; font: inherit; font-size: 12.5px; font-weight: 600; color: #374151; cursor: pointer; }
 .ix-page .nc-seg button.on { border-color: #e8582a; background: #fff3ec; color: #c2410c; }
-.ix-page .nc-notes { width: 100%; min-height: 64px !important; resize: vertical; box-sizing: border-box; padding: 10px 12px !important; border: 1px solid #e3e5ea !important; border-radius: 10px !important;
+.ix-page .nc-notes { width: 100%; height: 84px !important; min-height: 84px !important; resize: vertical; box-sizing: border-box; padding: 10px 12px !important; border: 1px solid #e3e5ea !important; border-radius: 10px !important;
   font: inherit; font-size: 13px; color: #111827; background: #fff; outline: none; }
 .ix-page .nc-notes:focus { border-color: #e8582a !important; box-shadow: 0 0 0 3px rgba(232,88,42,.12); }
 .ix-page .nc-info .nfc-go, .ix-page .nc-info .ix-b { align-self: flex-start; width: auto !important; }
@@ -3119,13 +3174,14 @@ const NC_CSS = `
   .ix-page .nc-col { min-height: 0; }
   .ix-page .ix-card.nc-cardbox { background: #f7f1ec !important; border-color: transparent !important; overflow: hidden; min-height: 0; }
   .ix-page .ix-card.nc-hero { flex: none; padding: clamp(14px, 2.2vh, 24px) 28px !important; }
+  /* the bottom row reaches the bottom of the page, like the other pages */
   .ix-page .nc-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); flex: 1 1 0; min-height: 0; }
   .ix-page .nc-row > .ix-card { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .ix-page .nc-tlist { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-  .ix-page .nc-tlist li { flex: 1 1 0; min-height: 0; padding-top: 0; padding-bottom: 0; }
-  .ix-page .nc-act .nc-form { flex: 1 1 auto; min-height: 0; }
-  .ix-page .nc-act .nc-notes { flex: 1 1 auto; min-height: 44px !important; }
-  .ix-page .nc-empty { flex: 1; display: grid; place-items: center; }
+  .ix-page .nc-tlist { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
+  /* the notes box stays about 3 lines; the card itself reaches the bottom */
+  .ix-page .nc-act .nc-notes { flex: none; height: 84px !important; }
+  .ix-page .nc-empty { flex: 1; display: grid; place-items: center; margin: 12px; border: 1.5px dashed #e5e7eb; border-radius: 12px; }
+  .ix-page .ix-card.nc-cardbox.nc-locked { overflow-y: auto; }
 }
 /* tall screens (full HD, full screen): a bigger card and steps, so the rows below don't stretch too far */
 @media (min-width: 1001px) and (min-height: 920px) {
@@ -3133,7 +3189,7 @@ const NC_CSS = `
   .ix-page .nc-steps { max-width: 720px; margin-top: 18px; }
 }
 @media (min-width: 1001px) and (max-height: 860px) { .ix-page .nc-info h3 { font-size: 19px; } }
-@media (min-width: 1001px) and (max-height: 760px) { .ix-page .nc-notes { min-height: 44px !important; } }
+
 @media (max-width: 1000px) {
   .ix-page .nc-page { grid-template-columns: 1fr; }
   .ix-page .ix-card.nc-hero { text-align: center; }
@@ -3245,10 +3301,10 @@ function Profile({ user, totalHours = 0, required = 0, days = 0 }) {
                 {kv("Semester", u.semester)}
                 {kv("Placement", u.placement)}
                 {kv("HTE supervisor", u.supervisor_name || "Not assigned yet")}
-                {kv("Required hours", `${requiredHoursFor(u.program)}h`)}
+                {kv("Required hours", `${requiredHoursFor(u.program, u.prior_hours)}h`)}
                 {kv("Modality", MODALITIES[modalityOf(u)])}
                 {kv("Scope", SCOPES[scopeOf(u)])}
-                {kv("DTR type", DTR_MODES[dtrModeOf(u)])}
+                {kv("DTR type", u.modality === "virtual" ? "Not needed (you log through Submit Online)" : DTR_MODES[dtrModeOf(u)])}
               </div>
             </section>
             <section className="ix-card flush pf-card">
@@ -3274,6 +3330,7 @@ const PF_CSS = `
 .ix-page .ix-card.pf-head { position: relative; overflow: hidden; display: flex; align-items: center; gap: 18px; margin: 0 !important; padding: 18px 22px !important;
   background: linear-gradient(100deg, #fff7f2 0%, #fff 60%) !important; }
 .ix-page .ix-card.pf-head { background: linear-gradient(100deg, #fff4ec 0%, #fffaf7 45%, #fff 100%) !important; }
+.ix-page .ix-card.pf-head::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #e8582a; z-index: 2; }
 .ix-page .pf-head > * { position: relative; z-index: 1; }
 .ix-page .pf-who { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .ix-page .pf-who h2 { margin: 0; font-size: 20px; line-height: 1.25 !important; font-weight: 700; color: #111827; }

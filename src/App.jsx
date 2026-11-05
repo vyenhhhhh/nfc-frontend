@@ -201,7 +201,9 @@ export default function App() {
   const writeNextCode = async (writer, cw, uid) => {
     const w = writers.current[writer];
     if (!w || !cw?.payload) return { ok: false };
-    const res = await w.write(cw.payload, 3500, uid);
+    // the ACR122U helper waits up to 10 s for a card that was lifted too early to be put back
+    const res = await w.write(cw.payload, writer === "acr122u" ? 12000 : 3500, uid);
+    setReader((r) => ({ ...r, waiting: false }));
     if (!res.ok) return res;
     for (let i = 0; i < 3; i++) {   // the card already has the new code: make sure the server hears it
       try {
@@ -424,7 +426,9 @@ export default function App() {
                 </div>
                 <div className="kq-cta">
                   {mode === "reading" ? (
-                    <><h1>Reading<br />your card...</h1><h2>Please keep it on the reader.</h2></>
+                    reader.waiting
+                      ? <><h1>Put your card<br />back on the reader.</h1><h2>Hold it there until it beeps to finish.</h2></>
+                      : <><h1>Reading<br />your card...</h1><h2>Please keep it on the reader.</h2></>
                   ) : (
                     <>
                       <h1>Tap your<br />NFC card.</h1>
