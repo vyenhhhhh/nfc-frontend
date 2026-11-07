@@ -7,7 +7,7 @@
 // Only the look: every role passes its own numbers and lists.
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Icon, Avatar, PageHeader, fmtTime, todayManila, calcHours, requiredHoursFor, liveRefresh } from "./DashKit.jsx";
+import { Icon, Avatar, PageHeader, fmtTime, todayManila, calcHours, requiredHoursFor, liveRefresh, ojtComplete, modalityOf } from "./DashKit.jsx";
 import { API } from "../config.js";
 
 /* ═════════════════════════ layout ═════════════════════════ */
@@ -221,8 +221,9 @@ export function NeedsAttention({ interns, records, monitorPath, limit = 6 }) {
       items.push({ key: `rep${rp.id}-${u.id}`, u, rank: 0.5, icon: "file", tone: "red", title: name, sub: `"${rp.title}" not sent · due ${d}`, tag: "Report", tagTone: "red" });
     });
     // required hours done
-    if (!output && calcHours(recs) >= requiredHoursFor(u.program, u.prior_hours)) {
-      items.push({ key: `done${u.id}`, u, rank: 3, icon: "check", tone: "green", title: name, sub: `Completed ${requiredHoursFor(u.program, u.prior_hours)}h · ready for post-internship`, tag: "Done", tagTone: "green" });
+    if (!output && ojtComplete(u, calcHours(recs))) {
+      const what = modalityOf(u) === "project" ? "Project complete" : `Completed ${requiredHoursFor(u.program, u.prior_hours)}h`;
+      items.push({ key: `done${u.id}`, u, rank: 3, icon: "check", tone: "green", title: name, sub: `${what} · ready for post-internship`, tag: "Done", tagTone: "green" });
     }
   });
   items.sort((a, b) => a.rank - b.rank || String(a.title).localeCompare(String(b.title)));
@@ -309,6 +310,9 @@ export const dbCss = `
 /* orange underline under each panel title (same as the profile pages) */
 .ix-page .ix-content .dbx-ch > b { align-self: stretch; display: inline-flex; align-items: center; position: relative; margin: -10px 0; padding: 10px 0; min-width: 0; flex: 0 1 auto; line-height: 1.25; }
 .ix-page .ix-content .dbx-ch > .dbx-link { flex: none; }
+/* a narrow card: the count and the button keep their size; a long title ends with "…" instead of running under them */
+.ix-page .ix-content .dbx-ch > .dbx-n { flex: none; }
+.ix-page.lay2 .ix-content .dbx-ch > b { overflow: hidden; text-overflow: ellipsis; display: block; line-height: 22px; }
 .ix-page .ix-content .dbx-ch > b::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2.5px; border-radius: 2px 2px 0 0; background: #e8582a; }
 .ix-page .ix-content .dbx-n { font-size: 10.5px; font-weight: 700; background: #f3ede9; color: #6b5b52; padding: 1px 7px; border-radius: 99px; }
 .ix-page .ix-content .dbx-link { margin-left: auto; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600; color: #c2410c; }
@@ -434,6 +438,9 @@ export const dbCss = `
 .ix-page .ix-content .dbx-gs-list li.wait .dbx-gs-dot { background: #fef3c7; color: #b45309; border-color: #fcd34d; }
 .ix-page .ix-content .dbx-gs-list li.done .dbx-tx b { color: #6b7280; }
 .ix-page .ix-content .dbx-gs-list .ix-b.sm { height: 28px; padding: 0 12px; font-size: 11.5px; }
+/* the card stretches to line up with the calendar column: share that height between the steps instead of leaving a gap at the bottom */
+.ix-page .ix-content .dbx-card.dbx-gs > .dbx-gs-list { flex: 1 1 auto; display: flex; flex-direction: column; }
+.ix-page .ix-content .dbx-card.dbx-gs > .dbx-gs-list > li { flex: 1 1 auto; }
 .ix-page .ix-content .dbx-kv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .ix-page .ix-content .dbx-kv > div { background: var(--ix-surface-2, #fafbfc); border: 1px solid #f1ece9; border-radius: 10px; padding: 7px 10px; min-width: 0; }
 .ix-page .ix-content .dbx-kv small { display: block; font-size: 10.5px; color: var(--dbx-mut); }
@@ -489,7 +496,9 @@ export const dbCss = `
 .ix-page .ix-content .dbx-side .adm-cal-day { height: 32px !important; font-size: 12px !important; }
 .ix-page .ix-content .dbx-side .adm-cal-dot { bottom: 3px !important; }
 .ix-page .ix-content .dbx-side .adm-cal-next { margin-top: 10px !important; padding: 7px 10px !important; font-size: 11.5px !important; }
-.ix-page .ix-content .dbx-fin-body { grid-template-columns: 108px minmax(0, 1fr); gap: 18px; padding: 10px 18px; }
+.ix-page .ix-content .dbx-fin-body { grid-template-columns: 108px minmax(0, 1fr); gap: 18px; padding: 10px 18px 18px; }
+/* the milestone labels (0% … 100% and the dates) are taller than 62px; give them room so the dates don't touch the card's edge */
+.ix-page .ix-content .dbx-fin .dbx-ms { height: 76px; }
 .ix-page .ix-content .dbx-ring { width: 108px; height: 108px; }
 .ix-page .ix-content .dbx-ring > div { width: 84px; height: 84px; }
 .ix-page .ix-content .dbx-ring b { font-size: 20px; }
@@ -525,6 +534,16 @@ export const dbCss = `
   .ix-page .ix-content .dbx-grid.has-left.has-right > .dbx-col > :only-child { grid-row: 1 / 3; }
   .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-fin { display: flex; flex-direction: column; }
   .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-fin-body { flex: 1; }
+  /* the milestone dates line up with the M-T-W-T-F strip of the card beside it:
+     both rows sit at the bottom of their card, 12px from the edge */
+  .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-today { display: flex; flex-direction: column; }
+  .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-today > .dbx-wkcap { margin-top: auto; padding-top: 10px; }
+  .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-fin-body { align-items: stretch; padding-bottom: 12px; }
+  .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-fin-body > .dbx-ring { align-self: center; }
+  .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-eta { display: flex; flex-direction: column; justify-content: center; }
+  /* no fixed height: the first milestone stays in the flow, so the row is exactly as tall as its dot + percent + date */
+  .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-fin .dbx-ms { height: auto; margin-top: auto; flex: 0 0 auto; }
+  .ix-page .ix-content .dbx-grid.has-left.has-right .dbx-fin .dbx-ms > div:first-of-type { position: relative; width: max-content; }
 }
 @media (max-width: 1250px) {
   .ix-page .ix-content .dbx-grid.has-left.has-right { height: auto; min-height: 0; }

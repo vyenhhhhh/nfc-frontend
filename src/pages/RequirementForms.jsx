@@ -1,65 +1,85 @@
 import { useState, useEffect, useRef } from "react";
 import { API, STORAGE } from "../config.js";
-import { Modal, Icon, Msg, Spinner, PRE_REQUIREMENTS, DURING_REQUIREMENTS, POST_REQUIREMENTS } from "../components/DashKit.jsx";
+import { Modal, Icon, Msg, Spinner, PRE_REQUIREMENTS, DURING_REQUIREMENTS, POST_REQUIREMENTS, liveRefresh, outputRequired } from "../components/DashKit.jsx";
 
-/* Blank forms for the internship requirements.
-   manage = false: the intern's list (download / print what the coordinator provided).
-   manage = true : the OJT coordinator's list (upload a form for a requirement, remove one). */
-// the same list and wording as the department's "Internship Requirements" table
-const RAW = [[
-  ["Pre-Internship Requirements", [
-    ["1", "capstone_summary", "Proof that the student has completed all the course requirements, including the Thesis/Capstone requirements. In line with CHED CMO 25 s. 2015, students are eligible to enroll in the internship program after completing 70% of the total units in the curriculum. This is still subject to evaluation by the Department Chairperson."],
-    ["2", "letter_of_intent", "Application Letter / Letter of Intent submitted by the student to the HTE as part of the application. CV should be attached."],
-    ["3", "endorsement_letter", "If the student is accepted for internship, the Endorsement Letter is submitted to the HTE, signed by the SIP Coordinator, noted by the Chairperson and the College Dean."],
-    ["4", "moa", "A Memorandum of Agreement signed by both parties before the deployment of OJTs (long bond paper, 7 copies, notarized)."],
-    ["5", "internship_contract", "Signed and notarized Student Internship Contract: the student's obligations, the HTE's rules and policies, and legal responsibilities between the HTE and the student intern (3 copies, notarized, long bond paper)."],
-  ]],
-  ["Other Requirements during the internship", [
-    ["1", "supervisor_feedback_form", "Training Supervisor Feedback Form. The student provides it from the start of the internship; the supervisor uses it to monitor and grade the student intern throughout the internship."],
-    ["2", "performance_appraisal", "Student Trainee Performance Appraisal. Provided during the last week of the internship, where the HTE supervisor gives the final rating of the student intern's overall performance."],
-    ["3", "narrative_report", "Narrative Report. Note: the narrative report should be written in 3rd person perspective."],
-  ]],
-], [
-  ["Pre-Internship Requirements (cont.)", [
-    ["6", null, "Requirements the student can accomplish while the MOA and the Student Internship Contract are in progress:"],
-    ["a", "pledge", "Student's Pledge. Signed in the presence of the SIP Coordinator."],
-    ["b", "acceptance_form", "Acceptance Form. Signed by the Parent/Guardian and the HTE Representative."],
-    ["c", "parents_consent", "Parent's Consent. Long bond paper and notarized."],
-    ["d", "internship_plan", "Student Internship Plan: the objectives and activities the student intern aims to attain. Reviewed and signed by the Department Chairperson, SIP Coordinator and HTE Supervisor."],
-    ["e", "medical_certificate", "Medical Certificate. CBC, signed by the university physician."],
-    ["f", "personal_history", "Personal History Statement."],
-    ["g", "insurance", "Scanned copy of any insurance."],
-    ["7", "orientation", "Internship Deployment Orientation."],
-  ]],
-]];
-// left: the whole Pre-Internship list in order (1 to 6, a to g, 7); right: the other requirements
-const COLUMNS = (() => {
-  const [[pre1, other], [pre2]] = RAW;
-  // left: the whole Pre-Internship list in order (1 to 6, a to g, 7); right: only the other requirements
-  return [[[pre1[0], [...pre1[1], ...pre2[1]]]], [other]];
-})();
-const ALL = [...PRE_REQUIREMENTS, ...DURING_REQUIREMENTS, ...POST_REQUIREMENTS];
-const REQ = (k) => ALL.find((r) => r.key === k);
+/* Blank forms and templates.
+   manage = false: the intern's list (open / print what the coordinator provided).
+   manage = true : the OJT coordinator's list (upload a form for a requirement, add any other template or
+                   document, write notes, remove files).
+   One phase at a time (Pre · During · Post · Other files), one clear row per requirement:
+   the requirement on the left, its files on the right. */
 
-// requirements that have no blank form to print: what the intern does instead
-const NO_FORM = {
-  insurance: "No form. Scanned copy of your own insurance.",
-  orientation: "No form. Attend the orientation; your attendance is the proof.",
+// the department's wording for each requirement (shown under its name)
+const DESC = {
+  capstone_summary: "Proof that you completed all course requirements, including the Thesis/Capstone (at least 70% of the curriculum, CHED CMO 25 s. 2015). Subject to the Department Chairperson's evaluation.",
+  letter_of_intent: "Application letter submitted to the HTE. Attach your CV.",
+  endorsement_letter: "Given to the HTE once you are accepted. Signed by the SIP Coordinator, noted by the Chairperson and the College Dean.",
+  moa: "Signed by both parties before deployment. Long bond paper, 7 copies, notarized.",
+  internship_contract: "Your obligations, the HTE's rules and the legal responsibilities. 3 copies, notarized, long bond paper.",
+  pledge: "Signed in the presence of the SIP Coordinator.",
+  acceptance_form: "Signed by your parent/guardian and the HTE representative.",
+  parents_consent: "Long bond paper, notarized.",
+  internship_plan: "Your objectives and activities. Signed by the Department Chairperson, SIP Coordinator and HTE Supervisor.",
+  medical_certificate: "With CBC, signed by the university physician.",
+  personal_history: "Personal History Statement.",
+  insurance: "Scanned copy of any insurance.",
+  orientation: "Internship Deployment Orientation.",
+  supervisor_feedback_form: "Given to your supervisor at the start; used to monitor and grade you throughout the internship.",
+  performance_appraisal: "Given in the last week; your HTE supervisor's final rating of your performance.",
+  narrative_report: "Written in the 3rd person.",
 };
 
-const size = (n) => (!n ? "" : n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+// Pre-internship keeps the department's numbering: 1 to 5, then 6 is a group (a to g, done while the
+// MOA and the contract are in progress, in any order), then 7.
+// rows: [number, key] · [number, null, group heading] · [letter, key] for the items under a group
+// the department's group "6": these can be done while the MOA and contract are in progress (shown as a to g)
+const GROUP6 = ["pledge", "acceptance_form", "parents_consent", "internship_plan", "medical_certificate", "personal_history", "insurance"];
+const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+// built each time from the current list (the coordinator can add, remove or reorder requirements):
+// pre-internship numbers its items 1, 2, 3…; the group-6 items sit together under one number with letters
+const preRows = () => {
+  const rows = [];
+  let n = 0;
+  let groupShown = false;
+  const group = GROUP6.filter((k) => PRE_REQUIREMENTS.some((r) => r.key === k));   // department order (a to g)
+  PRE_REQUIREMENTS.forEach((r) => {
+    if (!GROUP6.includes(r.key)) { rows.push([String(++n), r.key]); return; }
+    if (groupShown) return;          // the whole group goes where its first item is
+    groupShown = true;
+    rows.push([String(++n), null, `While the MOA and the Student Internship Contract are in progress, do ${group.length > 1 ? `a to ${LETTERS[group.length - 1]}` : "a"} (any order):`]);
+    group.forEach((k, i) => rows.push([LETTERS[i], k]));
+  });
+  return rows;
+};
+const numbered = (list) => list.map((r, i) => [String(i + 1), r.key]);
+// skipOutput: the intern's HTE doesn't require a System Output Presentation (it is not listed for them)
+const phases = (skipOutput = false) => [
+  { key: "pre", label: "Pre-internship", rows: preRows() },
+  { key: "during", label: "During internship", rows: numbered(DURING_REQUIREMENTS) },
+  { key: "post", label: "Post-internship", rows: numbered(POST_REQUIREMENTS.filter((r) => !(skipOutput && r.key === "system_output"))) },
+];
+const REQ = (k) => [...PRE_REQUIREMENTS, ...DURING_REQUIREMENTS, ...POST_REQUIREMENTS].find((r) => r.key === k);
+
+// requirements that have no blank form: what the intern does instead
+const NO_FORM = {
+  insurance: "No form needed. Upload a scanned copy of your own insurance.",
+  orientation: "No form needed. Your attendance at the orientation is the proof.",
+};
+
 const ext = (n) => String(n || "").split(".").pop().toUpperCase().slice(0, 4);
 const kind = (n) => { const e = ext(n); return e.startsWith("DOC") ? "doc" : e.startsWith("XLS") ? "xls" : e.startsWith("PPT") ? "ppt" : "pdf"; };
-const DEFAULT_NOTE = "Not every requirement has an attachment. Only the forms your OJT coordinator has provided can be opened and printed. For the others, follow the instructions in the requirement.";
+const DEFAULT_NOTE = "Not every requirement has a form. Only the forms your OJT coordinator has provided can be opened and printed. For the others, follow the instructions under the requirement.";
 
-export default function RequirementForms({ manage = false, onClose }) {
+export default function RequirementForms({ manage = false, onClose, user = null }) {
   const [rows, setRows] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(null);
   const [askDel, setAskDel] = useState(null);
   const [notes, setNotes] = useState({});             // coordinator notes: { requirement key | "__general": text }
-  const [edit, setEdit] = useState(null);             // the note being written: { key, text }
-  const pick = useRef(null);          // which requirement the file picker is for
+  const [edit, setEdit] = useState(null);             // the note being written: { key, label, text }
+  const [phase, setPhase] = useState("pre");
+  const [add, setAdd] = useState(null);               // "Add a template" window: { title, requirement, file }
+  const pick = useRef(null);          // which requirement the quick file picker is for
   const fileRef = useRef(null);
 
   const load = () => {
@@ -73,26 +93,30 @@ export default function RequirementForms({ manage = false, onClose }) {
       })
       .catch(() => setRows([]));
   };
-  useEffect(load, []);
+  // live: a note, a "no form needed" text or a new file from the coordinator shows without refreshing
+  useEffect(() => { load(); return liveRefresh(load); }, []);
 
-  const upload = async (file) => {
-    const target = pick.current;
-    if (!file || !target) return;
-    setBusy(target.key); setMsg(null);
+  // one upload for both ways in: the "Upload" button on a requirement, and the "Add a template" window
+  const send = async ({ file, title, requirement }, busyKey) => {
+    if (!file) return false;
+    setBusy(busyKey); setMsg(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("title", target.label);
-      if (target.key !== "__other") fd.append("requirement", target.key);
+      fd.append("title", title);
+      if (requirement) fd.append("requirement", requirement);
       const res = await fetch(`${API}/coordinator/requirement-templates`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.message || (d.errors && Object.values(d.errors)[0]?.[0]) || "Could not upload the form.");
-      setMsg({ type: "success", text: "Form uploaded. Interns can download it now." });
+      if (!res.ok) throw new Error(d.message || (d.errors && Object.values(d.errors)[0]?.[0]) || "Could not upload the file.");
+      setMsg({ type: "success", text: `"${title}" uploaded. Interns can open it now.` });
       load();
+      return true;
     } catch (e) {
       setMsg({ type: "error", text: e instanceof TypeError ? "Couldn't reach the server." : e.message });
+      return false;
     } finally { setBusy(null); if (fileRef.current) fileRef.current.value = ""; }
   };
+  const quickUpload = (file) => { const r = pick.current; if (r) send({ file, title: r.label, requirement: r.key }, r.key); };
 
   const remove = async (t) => {
     setBusy(`d${t.id}`); setMsg(null);
@@ -106,13 +130,12 @@ export default function RequirementForms({ manage = false, onClose }) {
     } finally { setBusy(null); }
   };
 
-  const saveNote = async () => {
-    if (!edit) return;
-    setBusy(`n${edit.key}`); setMsg(null);
+  const putNote = async (key, text) => {
+    setBusy(`n${key}`); setMsg(null);
     try {
       const res = await fetch(`${API}/coordinator/requirement-form-notes`, {
         method: "PUT", headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ requirement: edit.key, note: edit.text }),
+        body: JSON.stringify({ requirement: key, note: text }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.message || (d.errors && Object.values(d.errors)[0]?.[0]) || "Could not save the note.");
@@ -121,147 +144,216 @@ export default function RequirementForms({ manage = false, onClose }) {
       setMsg({ type: "error", text: e instanceof TypeError ? "Couldn't reach the server." : e.message });
     } finally { setBusy(null); }
   };
-  const removeNote = async (key) => {
-    setBusy(`n${key}`); setMsg(null);
-    try {
-      const res = await fetch(`${API}/coordinator/requirement-form-notes`, {
-        method: "PUT", headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ requirement: key, note: "" }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.message || "Could not remove the note.");
-      load();
-    } catch (e) {
-      setMsg({ type: "error", text: e instanceof TypeError ? "Couldn't reach the server." : e.message });
-    } finally { setBusy(null); }
-  };
-  const filesOf = (key) => (rows || []).filter((t) => t.requirement === key);
 
-  const FileLine = ({ t }) => (
-    <li className="rf-file">
-      <a className="rf-link" href={`${STORAGE}${t.file_path}`} target="_blank" rel="noopener noreferrer" title={`Open or print: ${t.original_name || t.title}`}>
-        <span className={`rf-ft ${kind(t.original_name || t.file_path)}`}>{kind(t.original_name || t.file_path).toUpperCase()}</span>
-        <span className="rf-fn">{t.original_name || t.title}</span>
+  const filesOf = (key) => (rows || []).filter((t) => t.requirement === key);
+  // "No form needed" and its instruction are kept with the notes, under "noform:<requirement>"
+  // ("__off__" turns off the built-in "no form" text of Insurance / Orientation, so it shows "Not available yet")
+  const NF = (key) => `noform:${key}`;
+  const noFormText = (key) => {
+    const v = notes[NF(key)];
+    if (v === "__off__") return null;
+    return v || NO_FORM[key] || null;
+  };
+  // what the coordinator picked for a requirement
+  const formChoice = (key) => (filesOf(key).length ? "form" : noFormText(key) ? "none" : "wait");
+  const choose = (r, v) => {
+    if (v === "form") { pick.current = r; fileRef.current?.click(); return; }
+    if (v === "none") { setEdit({ key: NF(r.key), label: r.label, noform: true, text: noFormText(r.key) || "No form needed. " }); return; }
+    // not available yet: drop the instruction (and turn off a built-in one)
+    putNote(NF(r.key), NO_FORM[r.key] ? "__off__" : "");
+  };
+  // files not tied to a listed requirement: the "Other files" tab
+  const others = (rows || []).filter((t) => !t.requirement || !REQ(t.requirement));
+  const countIn = (p) => p.rows.reduce((n, [, key]) => n + (key ? filesOf(key).length : 0), 0);
+
+  const FileChip = ({ t }) => (
+    <li className="rf2-file">
+      <a href={`${STORAGE}${t.file_path}`} target="_blank" rel="noopener noreferrer" title={`Open or print: ${t.original_name || t.title}`}>
+        <span className={`rf2-ft ${kind(t.original_name || t.file_path)}`}>{kind(t.original_name || t.file_path).toUpperCase()}</span>
+        <span className="rf2-fn">{t.original_name || t.title}</span>
+        <Icon name="download" size={13} />
       </a>
-      {manage && (
-        <button type="button" className="rf-del" aria-label="Remove this form" title="Remove this form" onClick={() => setAskDel(t.id)}><Icon name="trash" size={13} /></button>
-      )}
+      {manage && <button type="button" className="rf2-x" aria-label={`Remove ${t.original_name || t.title}`} title="Remove" onClick={() => setAskDel(t.id)}><Icon name="trash" size={13} /></button>}
     </li>
   );
 
-  const Attach = ({ r }) => {
+  const Row = ({ no, r, sub }) => {
     const files = filesOf(r.key);
+    const note = notes[r.key];
     return (
-      <div className="rf-att">
-        {files.length > 0
-          ? <ul className="rf-files">{files.map((t) => <FileLine key={t.id} t={t} />)}</ul>
-          : manage
-            ? <span className="rf-none">{NO_FORM[r.key] ? "No form needed" : "No form uploaded yet"}</span>
-            : NO_FORM[r.key]
-              ? <span className="rf-none info" title={NO_FORM[r.key]}>No form needed</span>
-              : <span className="rf-none wait" title="Ask your OJT coordinator">Not available</span>}
-        {manage && (
-          <button type="button" className="rf-up" disabled={busy === r.key}
-            onClick={() => { pick.current = r; fileRef.current?.click(); }}>
-            <Icon name="upload" size={13} /> {busy === r.key ? "Uploading..." : files.length ? "Add file" : "Upload"}
-          </button>
-        )}
+      <div className={sub ? "rf2-row sub" : "rf2-row"}>
+        <span className="rf2-no">{no}</span>
+        <div className="rf2-what">
+          <b>{r.label}</b>
+          {(DESC[r.key] || r.hint) && <small>{DESC[r.key] || r.hint}</small>}
+          {note && <p className="rf2-note"><Icon name="info" size={12} /> {note}</p>}
+        </div>
+        <div className="rf2-files">
+          {/* coordinator: pick what interns see for this requirement */}
+          {manage && files.length === 0 && (
+            <label className="rf2-choice">
+              <span>Form</span>
+              <select value={formChoice(r.key)} disabled={busy === r.key || busy === `n${NF(r.key)}`} onChange={(e) => choose(r, e.target.value)}>
+                <option value="form">Upload a form…</option>
+                <option value="none">No form needed</option>
+                <option value="wait">Not available yet</option>
+              </select>
+            </label>
+          )}
+          {files.length > 0 ? <ul>{files.map((t) => <FileChip key={t.id} t={t} />)}</ul>
+            : noFormText(r.key) ? (
+              <span className="rf2-st info">{noFormText(r.key)}
+                {manage && <button type="button" className="rf2-link sm" onClick={() => choose(r, "none")}>Edit</button>}</span>
+            ) : <span className="rf2-st wait">Not available yet. Ask your OJT coordinator.</span>}
+          {manage && (
+            <span className="rf2-acts">
+              {files.length > 0 && (
+                <button type="button" className="rf2-btn" disabled={busy === r.key} onClick={() => { pick.current = r; fileRef.current?.click(); }}>
+                  <Icon name="upload" size={13} /> {busy === r.key ? "Uploading…" : "Add another"}</button>
+              )}
+              <button type="button" className="rf2-btn ghost" onClick={() => setEdit({ key: r.key, label: r.label, text: note || "" })}>
+                <Icon name="pencil" size={12} /> {note ? "Edit note" : "Add note"}</button>
+            </span>
+          )}
+        </div>
       </div>
     );
   };
 
+  const PHASES = phases(!manage && !!user && !outputRequired(user));
+  const cur = PHASES.find((p) => p.key === phase);
+
   return (
-    <Modal wide title={"Forms and templates"} onClose={onClose}
-      sub={manage ? "Upload the blank form for each requirement. Interns can open and print them from Submit MOV."
-        : "Blank forms from your OJT coordinator. Open or print them, fill them in, then submit the signed copy."}>
+    <Modal wide title="Forms and templates" onClose={onClose}
+      sub={manage ? "Upload the blank form for each requirement, or add any other template or document. Interns open and print them from Submit MOV."
+        : "Blank forms from your OJT coordinator. Open or print them, fill them in, then submit the signed copy in Submit MOV."}>
       <style>{CSS}</style>
-      <input ref={fileRef} type="file" hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(e) => upload(e.target.files?.[0])} />
+      <input ref={fileRef} type="file" hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(e) => quickUpload(e.target.files?.[0])} />
       <Msg msg={msg} />
-      <div className="rf-info">
-        <Icon name="file" size={18} />
-        <div className="rf-info-t">
-          <b>Note</b>
-          <span>{notes.__general || DEFAULT_NOTE}</span>
-        </div>
+
+      <div className="rf2-info">
+        <Icon name="info" size={16} />
+        <span>{notes.__general || DEFAULT_NOTE}</span>
+        {manage && <button type="button" className="rf2-link" onClick={() => setEdit({ key: "__general", label: "the top note", text: notes.__general || "" })}>Edit</button>}
       </div>
+
       {rows === null ? <Spinner /> : (
-        <div className={`rf-board${manage ? " rf-manage" : ""}`}>
-          {COLUMNS.map((tables) => tables.map(([title, list]) => {
-            const other = title.startsWith("Other");
-            // 6 and its a to g items become one wide card; every other requirement is its own card
-            const blocks = [];
-            list.forEach(([no, key, text]) => {
-              const r = key && REQ(key);
-              if (!r) blocks.push({ lead: { no, text }, subs: [] });
-              else if (/^[a-z]$/.test(no) && blocks.length && blocks[blocks.length - 1].lead) blocks[blocks.length - 1].subs.push({ no, r, text });
-              else blocks.push({ item: { no, r, text } });
-            });
-            const card = ({ no, r, text }, sub) => (
-              <div key={r.key} className={`rf-card${sub ? " sub" : ""}`}>
-                <div className="rf-top">
-                  <span className="rf-n">{no}</span>
-                  <div className="rf-t" title={text}>
-                    <b>{r.label}</b>
-                    {(other ? text : r.hint) && <small>{other ? text : r.hint}</small>}
-                  </div>
-                </div>
-                <Attach r={r} />
-                <div className="rf-nrow" title={notes[r.key] || undefined}>
-                  {notes[r.key] && <span className="rf-nt"><b>Note:</b> {notes[r.key]}</span>}
-                  {manage && (
-                    <span className="rf-nact">
-                      <button type="button" className="rf-up note" onClick={() => setEdit({ key: r.key, label: r.label, text: notes[r.key] || "", ph: "e.g. Bring 3 copies on long bond paper" })}>{notes[r.key] ? "Edit note" : "+ Add note"}</button>
-                      {notes[r.key] && <button type="button" className="rf-up note del" disabled={busy === `n${r.key}`} onClick={() => removeNote(r.key)}>{busy === `n${r.key}` ? "Removing..." : "Remove note"}</button>}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-            return (
-              <section key={title} className="rf-sect">
-                <h3 className="rf-h">{title}</h3>
-                <div className="rf-grid">
-                  {blocks.map((bl, i) => bl.item ? card(bl.item) : (
-                    <div key={"g" + i} className="rf-card wide">
-                      <div className="rf-top"><span className="rf-n">{bl.lead.no}</span><div className="rf-t"><b>{bl.lead.text}</b></div></div>
-                      <div className="rf-subs">{bl.subs.map((x) => card(x, true))}</div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            );
-          }))}
-          <div className="rf-legend">
-            <span>Click a file name to open or print it</span>
-            <span><i className="wait" /> Not available</span>
-            <span><i className="info" /> No form needed</span>
+        <>
+          <div className="rf2-top">
+            <div className="rf2-tabs" role="tablist" aria-label="Phase">
+              {PHASES.map((p) => (
+                <button key={p.key} type="button" role="tab" aria-selected={phase === p.key} className={phase === p.key ? "on" : ""} onClick={() => setPhase(p.key)}>
+                  {p.label} <span className="rf2-n">{countIn(p)}</span></button>
+              ))}
+              <button type="button" role="tab" aria-selected={phase === "other"} className={phase === "other" ? "on" : ""} onClick={() => setPhase("other")}>
+                Other files <span className="rf2-n">{others.length}</span></button>
+            </div>
+            {manage && (
+              <button type="button" className="rf2-btn solid" onClick={() => setAdd({ title: "", requirement: "", file: null })}>
+                <Icon name="plus" size={14} /> Add a template or document</button>
+            )}
           </div>
-        </div>
+
+          <div className="rf2-list">
+            {phase !== "other" ? cur.rows.map(([no, key, head]) => {
+              // a group (6): its number and what it means; the lettered items under it are indented
+              if (!key) return <div key={"g" + no} className="rf2-group"><span className="rf2-no">{no}</span><span>{head}</span></div>;
+              const r = REQ(key);
+              return r ? <Row key={key} no={no} r={r} sub={/^[a-z]$/.test(no)} /> : null;
+            }) : others.length === 0 ? (
+              <div className="rf2-empty">
+                <span className="rf2-empty-ic"><Icon name="folder" size={20} /></span>
+                <b>No other files yet</b>
+                <small>{manage ? "Templates and documents that aren't for one requirement (a guide, a sample, a schedule) show here."
+                  : "Extra templates or guides from your OJT coordinator will show here."}</small>
+                {manage && <button type="button" className="rf2-btn solid" onClick={() => setAdd({ title: "", requirement: "", file: null })}><Icon name="plus" size={14} /> Add a template or document</button>}
+              </div>
+            ) : (
+              <ul className="rf2-others">
+                {others.map((t) => (
+                  <li key={t.id} className="rf2-row">
+                    <span className={`rf2-ft big ${kind(t.original_name || t.file_path)}`}>{kind(t.original_name || t.file_path).toUpperCase()}</span>
+                    <div className="rf2-what"><b>{t.title}</b><small>{t.original_name}</small></div>
+                    <div className="rf2-files">
+                      <span className="rf2-acts">
+                        <a className="rf2-btn" href={`${STORAGE}${t.file_path}`} target="_blank" rel="noopener noreferrer"><Icon name="download" size={13} /> Open</a>
+                        {manage && <button type="button" className="rf2-btn ghost danger" onClick={() => setAskDel(t.id)}><Icon name="trash" size={13} /> Remove</button>}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
       )}
+
+      {/* add any template or document: a name, optionally for one requirement, and the file */}
+      {add && (
+        <Modal title="Add a template or document" sub="Interns can open and print it from Submit MOV." onClose={() => setAdd(null)}>
+          <form className="rf2-form" onSubmit={async (e) => {
+            e.preventDefault();
+            const r = REQ(add.requirement);
+            if (await send({ file: add.file, title: add.title.trim() || r?.label || add.file?.name, requirement: add.requirement || null }, "add")) {
+              setAdd(null);
+              setPhase(add.requirement ? (PRE_REQUIREMENTS.some((x) => x.key === add.requirement) ? "pre" : DURING_REQUIREMENTS.some((x) => x.key === add.requirement) ? "during" : "post") : "other");
+            }
+          }}>
+            <label>Name <small>(what interns see)</small>
+              <input type="text" required maxLength={150} value={add.title} placeholder="e.g. Narrative Report Template, Sample Weekly Report"
+                onChange={(e) => setAdd({ ...add, title: e.target.value })} /></label>
+            <label>For which requirement? <small>(optional)</small>
+              <select value={add.requirement} onChange={(e) => setAdd({ ...add, requirement: e.target.value })}>
+                <option value="">Not for one requirement (shows under Other files)</option>
+                {PHASES.map((p) => (
+                  <optgroup key={p.key} label={p.label}>
+                    {p.rows.filter(([, k]) => k).map(([, k]) => <option key={k} value={k}>{REQ(k)?.label}</option>)}
+                  </optgroup>
+                ))}
+              </select></label>
+            <label>File <small>(PDF, Word, Excel or PowerPoint, up to 15 MB)</small>
+              <span className={`rf2-pick${add.file ? " has" : ""}`}>
+                <Icon name="upload" size={15} /><span>{add.file ? add.file.name : "Choose a file"}</span>
+                <input type="file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(e) => setAdd({ ...add, file: e.target.files?.[0] || null })} />
+              </span></label>
+            <div className="rf2-btns">
+              <button type="button" className="rf2-btn ghost" onClick={() => setAdd(null)}>Cancel</button>
+              <button type="submit" className="rf2-btn solid" disabled={busy === "add" || !add.file}>{busy === "add" ? "Uploading…" : "Upload"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {askDel && (() => {
         const t = (rows || []).find((x) => x.id === askDel);
         if (!t) return null;
         return (
-          <Modal title="Remove this form?" sub="Interns will no longer be able to open it." onClose={() => setAskDel(null)}>
-            <div className="rf-nm">
-              <div className="rf-rmfile"><span className={`rf-ft ${kind(t.original_name || t.file_path)}`}>{kind(t.original_name || t.file_path).toUpperCase()}</span><span>{t.original_name || t.title}</span></div>
-              <div className="rf-nm-btns">
-                <button type="button" className="rf-btn ghost" onClick={() => setAskDel(null)}>Cancel</button>
-                <button type="button" className="rf-btn danger" disabled={busy === `d${t.id}`} onClick={() => remove(t)}>{busy === `d${t.id}` ? "Removing..." : "Remove"}</button>
+          <Modal title="Remove this file?" sub="Interns will no longer be able to open it." onClose={() => setAskDel(null)}>
+            <div className="rf2-form">
+              <div className="rf2-rm"><span className={`rf2-ft ${kind(t.original_name || t.file_path)}`}>{kind(t.original_name || t.file_path).toUpperCase()}</span><span>{t.original_name || t.title}</span></div>
+              <div className="rf2-btns">
+                <button type="button" className="rf2-btn ghost" onClick={() => setAskDel(null)}>Cancel</button>
+                <button type="button" className="rf2-btn solid danger" disabled={busy === `d${t.id}`} onClick={() => remove(t)}>{busy === `d${t.id}` ? "Removing…" : "Remove"}</button>
               </div>
             </div>
           </Modal>
         );
       })()}
+
       {edit && (
-        <Modal title="Note" sub={edit.key === "__general" ? "Shown at the top of the list for every intern." : `For ${edit.label}. Interns see it in the Note column.`} onClose={() => setEdit(null)}>
-          <div className="rf-nm">
-            <textarea rows={4} maxLength={600} autoFocus value={edit.text} placeholder={edit.ph}
+        <Modal title={edit.noform ? "No form needed" : "Note"}
+          sub={edit.noform ? `For ${edit.label}. Tell interns what to do instead; they see it in place of a form.`
+            : edit.key === "__general" ? "Shown at the top of the list for every intern." : `For ${edit.label}. Interns see it under the requirement.`}
+          onClose={() => setEdit(null)}>
+          <div className="rf2-form">
+            <textarea rows={4} maxLength={600} autoFocus value={edit.text}
+              placeholder={edit.noform ? "e.g. No form needed. Upload a scanned copy of your own insurance." : "e.g. Bring 3 copies on long bond paper"}
               onChange={(e) => setEdit({ ...edit, text: e.target.value })} />
-            <small>{edit.text.length}/600 · leave it empty to remove the note</small>
-            <div className="rf-nm-btns">
-              <button type="button" className="rf-btn ghost" onClick={() => setEdit(null)}>Cancel</button>
-              <button type="button" className="rf-btn" disabled={busy === `n${edit.key}`} onClick={saveNote}>{busy === `n${edit.key}` ? "Saving..." : "Save note"}</button>
+            <small>{edit.text.length}/600 · {edit.noform ? "write what interns should submit instead" : "leave it empty to remove the note"}</small>
+            <div className="rf2-btns">
+              <button type="button" className="rf2-btn ghost" onClick={() => setEdit(null)}>Cancel</button>
+              <button type="button" className="rf2-btn solid" disabled={busy === `n${edit.key}` || (edit.noform && !edit.text.trim())}
+                onClick={() => putNote(edit.key, edit.text)}>{busy === `n${edit.key}` ? "Saving…" : edit.noform ? "Save" : "Save note"}</button>
             </div>
           </div>
         </Modal>
@@ -271,128 +363,98 @@ export default function RequirementForms({ manage = false, onClose }) {
 }
 
 const CSS = `
-.rf-info { display: flex; gap: 10px; align-items: flex-start; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; font-size: 12.5px; line-height: 1.4; }
-.rf-info svg { flex: none; margin-top: 2px; color: #e8582a; }
-.rf-info b { display: inline; font-size: 12.5px; color: #431407; margin-right: 6px; }
-.rf-info u { text-decoration: none; font-weight: 700; }
-/* two lists side by side; text and row height scale with the window height so it fits on laptops, and it stacks on small screens */
-.ix-modal:has(.rf-board) { width: min(1180px, 96vw) !important; max-width: none !important; }
-.rf-two { --fs: clamp(11.5px, 1.6vh, 13.5px); --pad: clamp(3px, .85vh, 8px); display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); gap: 20px; align-items: start; }
-.rf-wrap { min-width: 0; }
-.rf-tbl { width: 100%; border-collapse: collapse; font-size: var(--fs); color: #111827; table-layout: fixed; }
-.rf-tbl th, .rf-tbl td { border-bottom: 1px solid #e2e5ea; padding: var(--pad) 10px; vertical-align: middle; text-align: left; }
-.rf-tbl tr:not(.rf-sec):hover td { background: #f6f7f9; }
+.ix-modal:has(.rf2-list) { width: min(1040px, 96vw) !important; max-width: none !important; }
+.rf2-info { display: flex; gap: 10px; align-items: flex-start; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
+.rf2-info svg { flex: none; margin-top: 3px; color: #e8582a; }
+.rf2-info span { flex: 1; }
+.rf2-link { flex: none; border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: #c2410c; cursor: pointer; }
+.rf2-link:hover { text-decoration: underline; }
 
-.rf-sec th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; color: #e8582a; font-size: calc(var(--fs) - 1.5px); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-bottom: 2px solid #e8582a; padding: calc(var(--pad) + 1px) 10px; }
-.rf-tbl tbody + tbody .rf-sec th { padding-top: 22px; }
-.rf-tbl tr:not(.rf-sec):not(.rf-lead) td { height: clamp(32px, 4.6vh, 44px); }
-/* the other requirements show their whole description */
-.rf-full .rf-req b { white-space: normal; }
-.rf-full .rf-req small { white-space: normal; overflow: visible; text-overflow: clip; }
-.rf-full tr:not(.rf-sec) td { height: auto !important; }
-/* the numbers and letters (1 to 7, a to g) all look the same */
-.rf-no { width: 34px; text-align: center !important; font-weight: 700; font-size: var(--fs); line-height: 1.3; color: #6b7280; padding-left: 2px !important; padding-right: 2px !important; }
-.rf-req b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; font-weight: 700; font-size: var(--fs); color: #111827; line-height: 1.3; }
-.rf-req small { display: block; color: #4b5563; font-size: calc(var(--fs) - 1.5px); line-height: 1.3; margin-top: 1px; }
-/* a to g sit a little to the right of 1 to 7 */
-.rf-sub .rf-no { padding-left: 18px !important; }
-.rf-sub .rf-req { padding-left: 24px; }
-.rf-sub .rf-req b { font-weight: 600; }
-.rf-lead td { background: transparent; font-style: italic; }
-.rf-lead .rf-req b { color: #6b7280; font-weight: 600; white-space: normal; }
-.rf-att { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-.rf-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; width: 100%; }
-.rf-file { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
-.rf-file .rf-link { flex: 1; min-width: 0; }
-/* the attachment is just the file name with its type icon, like a file in a folder */
-.rf-link { display: flex; align-items: center; gap: 7px; min-width: 0; color: #111827; text-decoration: none; padding: 2px 6px 2px 2px; border-radius: 6px; }
-.rf-link:hover { background: #fff3ee; }
-.rf-link:hover .rf-fn { text-decoration: underline; color: #b4421c; }
-.rf-ft { flex: none; width: 24px; height: 20px; border-radius: 4px; display: grid; place-items: center; font-size: 8px; font-weight: 800; color: #fff; background: #e53935; }
-.rf-ft.doc { background: #2b6cb0; } .rf-ft.xls { background: #2e7d32; } .rf-ft.ppt { background: #d9531e; }
-.rf-fn { min-width: 0; font-size: calc(var(--fs) - .5px); overflow-wrap: anywhere; line-height: 1.3; }
-.rf-up { white-space: nowrap; border: 0; background: none; color: #e8582a; font: inherit; font-size: calc(var(--fs) - 1px); font-weight: 700; cursor: pointer; padding: 2px 0; display: inline-flex; align-items: center; gap: 4px; }
-.rf-up:hover { text-decoration: underline; }
-.rf-up.note { color: #6b7280; font-weight: 600; }
-.rf-nt { display: block; font-style: normal; font-size: calc(var(--fs) - 1px); color: #92400e; line-height: 1.35; }
-.rf-dash { color: #c4c8d0; }
-.rf-nc { vertical-align: middle; }
-.rf-info-t { flex: 1; min-width: 0; }
-.rf-rmfile { display: flex; align-items: center; gap: 10px; background: #f6f7f9; border-radius: 10px; padding: 10px 12px; font-size: 13.5px; overflow-wrap: anywhere; }
-.rf-btn.danger { background: #dc2626; border-color: #dc2626; }
-.rf-nm { display: flex; flex-direction: column; gap: 8px; min-width: min(420px, 80vw); }
-.rf-nm textarea { width: 100%; font: inherit; font-size: 14px; padding: 10px 12px; border: 1px solid #d6d3d1; border-radius: 10px; resize: vertical; box-sizing: border-box; }
-.rf-nm textarea:focus { outline: 2px solid #fbd5c3; border-color: #e8582a; }
-.rf-nm small { color: #6b7280; font-size: 12px; }
-.rf-nm-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-.rf-nm-btns .rf-btn { padding: 8px 18px; font-size: 13px; }
-.rf-ne { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-.rf-ne textarea { width: 100%; font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid #d6d3d1; border-radius: 8px; resize: vertical; box-sizing: border-box; }
-.rf-ne span { display: flex; gap: 6px; }
-.rf-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #e8582a; background: #e8582a; color: #fff !important; font: inherit; font-size: 12px; font-weight: 700; line-height: 1; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
-.rf-btn.ghost { background: #fff; color: #e8582a !important; }
-.rf-btn[disabled] { opacity: .5; cursor: default; }
-.rf-legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 2px; padding-top: 8px; border-top: 1px solid #e2e5ea; color: #6b7280; font-size: 11.5px; }
-.rf-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; background: #fffbeb; border: 1px solid #f5d28a; }
-.rf-legend i.info { background: #eff6ff; border-color: #b9cdf5; }
-.rf-none { font-size: calc(var(--fs) - 1px); color: #6b7280; line-height: 1.3; }
-.rf-none.info { color: #1e40af; background: #eff6ff; border-radius: 6px; padding: 3px 8px; }
-.rf-none.wait { color: #92400e; background: #fffbeb; border-radius: 6px; padding: 3px 8px; }
-.rf-del { border: 1px solid #f3c9c9; background: #fff; color: #b91c1c; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; padding: 5px 7px; border-radius: 999px; line-height: 1; display: inline-flex; }
-.rf-del:hover { background: #fef2f2; }
-.rf-ask { display: inline-flex; gap: 4px; }
+.rf2-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.rf2-tabs { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 3px; background: #f3f4f6; border: 1px solid #e8ebf0; border-radius: 10px; }
+.rf2-tabs button { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: #4b5563; cursor: pointer; white-space: nowrap; }
+.rf2-tabs button:hover { color: #c2410c; }
+.rf2-tabs button.on { background: #fff; color: #c2410c; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
+.rf2-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #e5e7eb; color: #475569; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.rf2-tabs button.on .rf2-n { background: #fde3d6; color: #c2410c; }
 
-/* requirement cards: every card has the same parts in the same places, so they all line up */
-.rf-board { --fs: 13px; display: flex; flex-direction: column; gap: 18px; }
-.rf-sect { min-width: 0; }
-.rf-h { margin: 0 0 8px; font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #e8582a; }
-.rf-grid, .rf-subs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 10px; }
-.rf-card { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #e7e9ee; border-radius: 12px; background: #fff; box-sizing: border-box; height: 188px; }
-.rf-card.wide { grid-column: 1 / -1; background: #fafbfc; gap: 10px; height: auto; }
-.rf-grid > .rf-card.wide { grid-row: auto; }
-.rf-top { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
-.rf-n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: #eef0f4; color: #6b7280; display: grid; place-items: center; font-size: 11.5px; font-weight: 700; }
-.rf-card.sub .rf-n { background: #fff; border: 1px solid #dfe2e8; }
-.rf-t { min-width: 0; flex: 1; }
-.rf-t b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 17px; min-height: 34px; color: #111827; }
-.rf-t small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; font-size: 11.5px; line-height: 16px; min-height: 32px; color: #6b7280; }
-.rf-card.wide > .rf-top .rf-t b { display: block; min-height: 0; -webkit-line-clamp: unset; color: #6b7280; font-weight: 600; line-height: 24px; }
-/* the file: one button, same height everywhere (name up to two lines, full name on hover) */
-.rf-card .rf-att { margin-top: auto; width: 100%; }
-.rf-card .rf-files, .rf-card .rf-file { width: 100%; }
-.rf-card .rf-link { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #e7e9ee; border-radius: 9px; padding: 5px 9px 5px 6px; background: #fff; }
-.rf-card .rf-link:hover { border-color: #f6c9b3; background: #fff8f4; }
-.rf-card .rf-fn { font-size: 12px; font-weight: 500; line-height: 16px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.rf-card .rf-none { display: flex; align-items: center; box-sizing: border-box; width: 100%; min-height: 44px; padding: 5px 12px; border-radius: 9px; font-size: 12px; font-weight: 500; line-height: 16px; }
-.rf-card .rf-none.info { background: #eff6ff; color: #1e40af; }
-.rf-card .rf-none.wait { background: #fffbeb; color: #92400e; }
-.rf-card .rf-none:not(.info):not(.wait) { background: #f6f7f9; color: #6b7280; }
-/* the coordinator's note: always one block under the file, two lines at most */
-.rf-nrow { flex: none; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; min-height: 32px; }
-.rf-nrow .rf-nt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 11.5px; line-height: 16px; color: #92400e; }
-.rf-nrow .rf-nt b { font-weight: 700; }
-.rf-card .rf-up { font-size: 11.5px; }
-.rf-nact { display: inline-flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.rf-up.note.del { color: #b91c1c; }
-.rf-manage .rf-nrow { min-height: 54px; }
-.rf-manage .rf-card { height: 244px; }
-.rf-manage .rf-card.wide { height: auto; }
-@media (max-width: 1100px) { .rf-grid, .rf-subs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 820px) { .rf-grid, .rf-subs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .rf-grid, .rf-subs { grid-template-columns: 1fr; } }
-@media (max-width: 980px) { .rf-two { grid-template-columns: 1fr; --fs: 13px; --pad: 7px; } }
-/* phones: each requirement becomes a small card, the attachment under its name */
-@media (max-width: 640px) {
-  .rf-tbl, .rf-tbl tbody { display: block; }
-  .rf-tbl colgroup { display: none; }
-  .rf-tbl tr { display: grid; grid-template-columns: 30px minmax(0, 1fr); border-bottom: 1px solid #e2e5ea; }
-  .rf-tbl tr:last-child { border-bottom: 0; }
-  .rf-tbl th, .rf-tbl td { display: block; border: 0 !important; }
-  .rf-sec { display: block; }
-  .rf-sec th + th { display: none; }
-  .rf-lead .rf-req { grid-column: 2; }
-  .rf-at, .rf-nc { grid-column: 2; padding-top: 0 !important; }
-  .rf-sec th:nth-child(3), .rf-sec th:nth-child(2):not([colspan]) { display: none; }
-  .rf-req small { white-space: normal; }
+/* a simple numbered list: number · name and what it is · its form on the right */
+.rf2-list { border: 1px solid #e8ebf0; border-radius: 14px; overflow: hidden; background: #fff; }
+.rf2-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(220px, 300px); gap: 14px; align-items: center; padding: 12px 18px; border-bottom: 1px solid #f1f3f6; }
+.rf2-row:last-child { border-bottom: 0; }
+.rf2-row:hover { background: #fcfcfd; }
+.rf2-no { width: 28px; height: 28px; border-radius: 50%; background: #fff1ea; color: #c2410c; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; }
+.rf2-what { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rf2-what b { font-size: 14px; font-weight: 600; color: #111827; line-height: 1.35; }
+.rf2-what small { font-size: 12.5px; color: #6b7280; line-height: 1.45; }
+.rf2-note { margin: 4px 0 0; display: flex; gap: 6px; align-items: flex-start; padding: 5px 9px; border-radius: 8px; background: #fffbeb; color: #92400e; font-size: 12.5px; line-height: 1.45; width: fit-content; max-width: 100%; box-sizing: border-box; }
+.rf2-note svg { flex: none; margin-top: 2px; }
+/* 6: a group row; its items a to g are indented under it with a line on the left, so they read as part of 6 */
+.rf2-group { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 14px; align-items: center; padding: 11px 18px; border-bottom: 1px solid #f1f3f6; background: #fafbfc; font-size: 13px; font-weight: 600; color: #374151; }
+.rf2-row.sub { grid-template-columns: 26px minmax(0, 1fr) minmax(220px, 300px); margin-left: 32px; padding-left: 16px; border-left: 2px solid #f6c7b0; background: #fffdfb; }
+.rf2-row.sub .rf2-no { width: 24px; height: 24px; font-size: 12px; background: #fff; color: #c2410c; border: 1px solid #f6c7b0; }
+
+.rf2-files { min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.rf2-files ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rf2-file { display: flex; align-items: center; gap: 6px; }
+.rf2-file a { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #111827; text-decoration: none !important; }
+.rf2-file a:hover { border-color: #f6c7b0; background: #fff8f4; }
+.rf2-file a > svg { flex: none; color: #9ca3af; }
+.rf2-file a:hover > svg { color: #c2410c; }
+.rf2-fn { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf2-ft { flex: none; width: 30px; height: 22px; border-radius: 5px; display: grid; place-items: center; font-size: 9px; font-weight: 800; color: #fff; background: #e53935; }
+.rf2-ft.doc { background: #2b6cb0; } .rf2-ft.xls { background: #2e7d32; } .rf2-ft.ppt { background: #d9531e; }
+.rf2-ft.big { width: 34px; height: 34px; border-radius: 8px; font-size: 10px; }
+.rf2-x { flex: none; width: 34px; height: 34px; padding: 0 !important; border: 1px solid #f3d0d0; border-radius: 10px; background: #fff; color: #b91c1c; display: grid; place-items: center; cursor: pointer; }
+.rf2-x:hover { background: #fef2f2; }
+.rf2-st { display: block; padding: 7px 12px; border-radius: 10px; background: #f6f7f9; color: #6b7280; font-size: 12.5px; line-height: 1.45; }
+.rf2-acts .rf2-btn { flex: 1; justify-content: center; }
+.rf2-st.info { background: #eff6ff; color: #1e40af; }
+.rf2-st.wait { background: #fffbeb; color: #92400e; }
+.rf2-st .rf2-link.sm { margin-left: 8px; font-size: 12px; color: #1e40af; }
+/* coordinator: Form [Upload a form… / No form needed / Not available yet] */
+.rf2-choice { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #64748b; }
+.rf2-choice select { flex: 1; min-width: 0; height: 32px; padding: 0 28px 0 10px; border: 1px solid #e5e7eb; border-radius: 9px; background-color: #fff; font: inherit; font-size: 12.5px; font-weight: 600; color: #111827; cursor: pointer; }
+.rf2-choice select:focus { outline: 2px solid #fbd5c3; border-color: #e8582a; }
+.rf2-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.rf2-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid #f6c7b0; border-radius: 9px; background: #fff7f2; color: #c2410c !important; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; text-decoration: none !important; white-space: nowrap; }
+.rf2-btn:hover:not(:disabled) { background: #ffede3; }
+.rf2-btn.ghost { background: #fff; border-color: #e5e7eb; color: #374151 !important; }
+.rf2-btn.ghost:hover:not(:disabled) { background: #f9fafb; }
+.rf2-btn.ghost.danger { color: #b91c1c !important; border-color: #f3d0d0; }
+.rf2-btn.solid { background: #e8582a; border-color: #e8582a; color: #fff !important; height: 36px; padding: 0 14px; }
+.rf2-btn.solid:hover:not(:disabled) { background: #d94d20; }
+.rf2-btn.solid.danger { background: #dc2626; border-color: #dc2626; }
+.rf2-btn:disabled { opacity: .55; cursor: default; }
+
+.rf2-others { list-style: none; margin: 0; padding: 0; }
+.rf2-others .rf2-row { grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; }
+.rf2-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 40px 16px; text-align: center; }
+.rf2-empty-ic { width: 44px; height: 44px; border-radius: 50%; background: #fff1ea; color: #ea580c; display: grid; place-items: center; margin-bottom: 4px; }
+.rf2-empty b { font-size: 14.5px; color: #111827; } .rf2-empty small { font-size: 12.5px; color: #6b7280; max-width: 380px; margin-bottom: 6px; }
+
+/* small windows: add a template, remove, note */
+.rf2-form { display: flex; flex-direction: column; gap: 12px; min-width: min(440px, 80vw); }
+.rf2-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: #374151; }
+.rf2-form label small { font-weight: 400; color: #6b7280; }
+.rf2-form input[type="text"], .rf2-form select, .rf2-form textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 9px 12px; border: 1px solid #d6d9de; border-radius: 10px; background: #fff; color: #111827; }
+.rf2-form textarea { resize: vertical; }
+.rf2-form :is(input, select, textarea):focus { outline: 2px solid #fbd5c3; border-color: #e8582a; }
+.rf2-form > small { color: #6b7280; font-size: 12px; }
+.rf2-pick { position: relative; display: flex; align-items: center; gap: 8px; padding: 12px 14px; border: 1.5px dashed #e5c4b4; border-radius: 10px; background: #fffaf7; color: #9a3412; font-weight: 500; cursor: pointer; }
+.rf2-pick.has { border-style: solid; border-color: #f6c7b0; }
+.rf2-pick span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf2-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.rf2-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.rf2-rm { display: flex; align-items: center; gap: 10px; background: #f6f7f9; border-radius: 10px; padding: 10px 12px; font-size: 13.5px; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .rf2-top { flex-direction: column; align-items: stretch; }
+  .rf2-row, .rf2-row.sub { grid-template-columns: 28px minmax(0, 1fr); padding: 12px 14px; }
+  .rf2-row.sub { margin-left: 18px; padding-left: 12px; }
+  .rf2-group { padding: 11px 14px; }
+  .rf2-row > .rf2-files { grid-column: 2; }
+  .rf2-others .rf2-row { grid-template-columns: 34px minmax(0, 1fr); }
 }
 `;

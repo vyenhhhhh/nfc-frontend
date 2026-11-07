@@ -126,7 +126,7 @@ function RecoverFlow({ onDone }) {
   };
 
   const go = (s) => { setStep(s); setMsg(null); };
-  const Msg = () => (msg ? <div className={msg.type === "success" ? "lf-rec-msg ok" : "lf-rec-msg err"} role="alert">{msg.text}</div> : null);
+  const note = msg ? <div className={msg.type === "success" ? "lf-rec-msg ok" : "lf-rec-msg err"} role="alert">{msg.text}</div> : null;   // a value, not a component made during render (that would reset on every keystroke)
 
   return (
     <div className="lf-rec" key={step}>
@@ -141,7 +141,7 @@ function RecoverFlow({ onDone }) {
             <label>Recovery code</label>
             <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="XXXX-XXXX" autoComplete="off" style={{ textTransform: "uppercase" }} />
 
-            <Msg />
+            {note}
             <button type="submit" className="lf-rec-btn" disabled={busy}>{busy ? "Checking..." : "Continue"}</button>
           </form>
           <button type="button" className="lf-link lf-rec-alt" onClick={() => go("email")}>Forgot recovery code?</button>
@@ -158,7 +158,7 @@ function RecoverFlow({ onDone }) {
             <label>Confirm new password</label>
             <input type={showPw ? "text" : "password"} value={pw2} onChange={(e) => setPw2(e.target.value)} required minLength={8} autoComplete="new-password" />
             <label className="lf-rec-check"><input type="checkbox" checked={showPw} onChange={(e) => setShowPw(e.target.checked)} /> Show passwords</label>
-            <Msg />
+            {note}
             <button type="submit" className="lf-rec-btn" disabled={busy || msg?.type === "success"}>{busy ? "Saving..." : "Change password"}</button>
           </form>
         </>
@@ -171,7 +171,7 @@ function RecoverFlow({ onDone }) {
           <form onSubmit={sendEmail}>
             <label>ID number (student or employee ID)</label>
             <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} required autoComplete="username" placeholder="Your ID number" />
-            <Msg />
+            {note}
             <button type="submit" className="lf-rec-btn" disabled={busy}>{busy ? "Sending..." : "Send to my email"}</button>
           </form>
           <p className="lf-modal-note">Can't access your email? Ask the system administrator to help.</p>

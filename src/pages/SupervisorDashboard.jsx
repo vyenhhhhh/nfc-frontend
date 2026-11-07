@@ -14,8 +14,11 @@ import {
 } from "./AdminDashboard.jsx";
 import { internCss, cardUnify } from "./InternDashboard.jsx";
 import Evaluations from "../components/Evaluations.jsx";
+import ReviewQueue from "../components/ReviewQueue.jsx";
+import { OnlineQueue, OvertimeQueue, ExcusedQueue, ProjectQueue } from "../components/ApprovalQueues.jsx";   // the same Approvals layout as the coordinator
+import { ProjectsBoard } from "../components/CoordinatorTools.jsx";
 import SchoolEventReview, { schoolEventIsMine } from "./SchoolEventReview.jsx";
-import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
+import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API } from "../config.js";
@@ -36,8 +39,8 @@ const GROUPS = {
     title: "Interns",
     live: true,
     tabs: [
-      { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of your interns." },
-      { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete attendance log of your interns." },
+      { key: "monitor", label: "All Interns", icon: "users", sub: "Your interns and their real-time status. Click a name to open their full information." },
+      { key: "records", label: "Attendance",  icon: "list",  sub: "Complete attendance log of your interns." },
       { key: "evaluation", label: "Appraisal", icon: "pencil", sub: "Rate your interns' attendance, performance and attitude. This is 60% of their internship grade." },
     ],
   },
@@ -114,11 +117,12 @@ export default function SupervisorDashboard() {
     online: online.filter((o) => o.status === "pending").length,
     overtime: overtime.filter((o) => o.ot_status === "pending").length,
     fix: corrections.filter(fixIsMine).length,
+    projects: interns.filter((u) => u.modality === "project" && !u.project_marked_at && !u.project_confirmed_at).length,
     event: events.filter((e) => schoolEventIsMine(e, "supervisor")).length,
   };
 
   return (
-    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime" }, { key: "fix", label: "Time Corrections" }, { key: "event", label: "Excused" } ] }, { "/supervisor/approvals": counts })} user={user}>
+    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime" }, { key: "fix", label: "Time Corrections" }, { key: "event", label: "Excused" }, { key: "projects", label: "Projects" } ] }, { "/supervisor/approvals": counts })} user={user}>
       {/* same order as the admin dashboard so every page looks identical */}
       <style>{adminCss}</style>
       <style>{internCss}</style>
@@ -134,7 +138,7 @@ export default function SupervisorDashboard() {
         />
       )}
       {path === "/supervisor/approvals" && (
-        <Approvals overtime={overtime} corrections={corrections} online={online} events={events} onRefresh={fetchAll} />
+        <Approvals overtime={overtime} corrections={corrections} online={online} events={events} onRefresh={fetchAll} interns={interns} records={records} />
       )}
       {group && (
         <GroupPage group={group} tab={tab} onPick={pickTab}>
@@ -195,27 +199,29 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
       ]}
       left={(
         <>
-        <Panel title="Intern progress" count={interns.length} link="Monitor" onLink={() => go("/supervisor/interns")}>
+        {/* every intern (same rows as before: name, hours, %); many interns scroll inside the card */}
+        <Panel title="My interns" count={interns.length} link="Monitor" onLink={() => go("/supervisor/interns")} grow className="sv-all">
+          <style>{`.ix-page .ix-content .dbx-card.sv-all { display: flex; flex-direction: column; min-height: 0; }
+            .ix-page .ix-content .dbx-card.sv-all > .sv-all-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: block; }
+            .ix-page .ix-content .dbx-card.sv-all > .sv-all-list > * { flex: none; }`}</style>
           {interns.length === 0 ? <DashEmpty title="No interns assigned yet" /> : (
-            <div className="dbx-fill">
+            <div className="sv-all-list">
               {[...interns].map((u) => {
                 const h = Math.round(calcHours(records.filter((r) => r.user_id === u.id)) * 10) / 10;
                 const req = requiredHoursFor(u.program, u.prior_hours);
                 return { u, h, req, pct: Math.min(Math.round((h / req) * 100), 100) };
-              }).sort((a, b) => a.pct - b.pct).slice(0, 3).map(({ u, h, req, pct }) => (
+              }).sort((a, b) => String(a.u.name).localeCompare(String(b.u.name))).map(({ u, h, req, pct }) => (
                 <DashRow key={u.id} avatar={{ name: u.name, photo: u.photo }} title={u.name} sub={`${h}h of ${req}h`}
                   tag={`${pct}%`} tagTone={pct >= 100 ? "green" : pct >= 50 ? "blue" : ""} onClick={() => go("/supervisor/interns", { state: { search: u.name } })} />
               ))}
             </div>
           )}
         </Panel>
-        {/* interns who need a follow-up */}
-        <NeedsAttention interns={interns} records={records} monitorPath="/supervisor/interns" limit={3} />
         </>
       )}
       right={<>
         <HomeCalendar />
-        <Panel title="Needs your review" count={toReview} link="Open approvals" onLink={() => go("/supervisor/approvals")}>
+        <Panel title="Needs your review" count={toReview} link="Open" onLink={() => go("/supervisor/approvals")}>
           <div className="dbx-fill">
             {review.map((r) => (
               <DashRow key={r.key} icon={r.icon} tone={r.tone} title={r.title} sub={r.sub}
@@ -248,11 +254,11 @@ const STATUS = {
 const fixIsMine = (c) => c.status === "pending" || c.status === "endorsed";
 const statusBadge = (st) => <Badge label={(STATUS[st] || [st])[0]} type={(STATUS[st] || [null, "none"])[1]} />;
 
-function Approvals({ overtime, corrections, online = [], events = [], onRefresh }) {
+function Approvals({ overtime, corrections, online = [], events = [], onRefresh, interns = [], records = [] }) {
   // a notification can open a specific tab: /supervisor/approvals?tab=fix
   const { search: qs } = useLocation();
   const asked = new URLSearchParams(qs).get("tab");
-  const TABS = ["online", "overtime", "fix", "event"];
+  const TABS = ["online", "overtime", "fix", "event", "projects"];
   const [tab, setTab] = useState(TABS.includes(asked) ? asked : "online");
   useEffect(() => { if (TABS.includes(asked)) setTab(asked); }, [asked]);
   const [remarks, setRemarks] = useState({});
@@ -322,6 +328,8 @@ function Approvals({ overtime, corrections, online = [], events = [], onRefresh 
           { key: "overtime", label: "Overtime", icon: "clock", n: otPending.length },
           { key: "fix", label: "Time Corrections", icon: "pencil", n: fixPending.length },
           { key: "event", label: "Excused", icon: "calendar", n: events.filter((e) => schoolEventIsMine(e, "supervisor")).length },
+          ...(interns.some((u) => u.modality === "project")
+            ? [{ key: "projects", label: "Projects", icon: "briefcase", n: interns.filter((u) => u.modality === "project" && !u.project_marked_at).length }] : []),
         ].map((t) => (
           <button
             key={t.key} type="button" role="tab" aria-selected={tab === t.key}
@@ -337,16 +345,21 @@ function Approvals({ overtime, corrections, online = [], events = [], onRefresh 
       )} />
       <Msg msg={msg} />
 
+      {/* the same layout as the coordinator's Approvals: tabs · a table · the review drawer */}
       {tab === "online" ? (
-        <OnlineReview role="supervisor" waiting={online.filter((o) => o.status === "pending")} reviewed={online.filter((o) => o.status !== "pending")}
+        <OnlineQueue role="supervisor" mine={onPending} withSup={online.filter((o) => o.status === "endorsed")}
+          done={online.filter((o) => o.status === "approved" || o.status === "rejected")}
           onReview={(o, status, rm) => send(`/supervisor/online/${o.id}/review`, { status, remarks: rm || "" }, "n" + o.id + status)} />
       ) : tab === "overtime" ? (
-        <OvertimeBoard role="supervisor" waiting={otPending} reviewed={overtime.filter((o) => o.ot_status !== "pending")} all={overtime}
+        <OvertimeQueue role="supervisor" mine={otPending} withSup={overtime.filter((o) => o.ot_status === "endorsed")}
+          done={overtime.filter((o) => o.ot_status === "approved" || o.ot_status === "rejected")} all={overtime}
           capOf={(o) => o.ot_minutes} onReview={reviewOt} />
       ) : tab === "event" ? (
-        <SchoolEventReview user={{ role: "supervisor" }} embedded />
+        <ExcusedQueue role="supervisor" />
+      ) : tab === "projects" ? (
+        <ProjectQueue role="supervisor" interns={interns} records={records} onRefresh={onRefresh} />
       ) : (
-        <FixBoard waiting={fixPending} reviewed={corrections.filter((c) => !fixIsMine(c))}
+        <FixQueue waiting={fixPending} reviewed={corrections.filter((c) => !fixIsMine(c))}
           onReview={(c, status, rm) => send(`/supervisor/time-corrections/${c.id}/review`, { status, remarks: rm || "" }, "c" + c.id + status)} />
       )}
     </>
@@ -386,26 +399,18 @@ const fxClock = (v) => {
 };
 const FX_KIND = { out: "Forgot to time out", in: "Forgot to time in", day: "Missed the whole day" };
 
-function FixBoard({ waiting = [], reviewed = [], onReview }) {
-  const [view, setView] = useState("waiting");
-  const [sel, setSel] = useState(null);
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
+/* Time corrections in the same layout as the other Approvals tabs (ReviewQueue): a table, then a drawer with
+   what was recorded next to what the intern asks for. The supervisor's decision is final. */
+function FixQueue({ waiting = [], reviewed = [], onReview }) {
   const [remarks, setRemarks] = useState({});
   const [busy, setBusy] = useState(null);
-  const sq = q.trim().toLowerCase();
-  const list = (view === "waiting" ? waiting : reviewed).filter((c) => !sq || String(c.intern_name || "").toLowerCase().includes(sq));
-  const cur = list.find((c) => c.id === sel) || list[0] || null;
-  const pick = (v) => { setView(v); setSel(null); setOpen(false); setQ(""); };
   const kind = (c) => (c.kind === "in" || c.kind === "day" ? c.kind : "out");
-  const decide = async (c, status) => {
+  const decide = async (c, status, note) => {
     setBusy(c.id + status);
-    const ok = await onReview(c, status, remarks[c.id] || "");
+    const ok = await onReview(c, status, note ?? remarks[c.id] ?? "");
     setBusy(null);
-    if (ok) { setSel(null); setOpen(false); }
+    return ok;
   };
-
-  // recorded vs asked, as two "In → Out" pairs
   const pairs = (c) => {
     const k = kind(c);
     if (k === "day") return { rec: ["No tap", "No tap"], ask: [fxClock(c.requested_in), fxClock(c.requested_out)], hl: [true, true] };
@@ -420,122 +425,71 @@ function FixBoard({ waiting = [], reviewed = [], onReview }) {
     const m = b - a;
     return `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
   };
-  const badge = (c, long) => c.status === "approved" ? <Badge label="Approved" type="approved" />
-    : c.status === "rejected" ? <Badge label="Rejected" type="rejected" />
-    : <Badge label={long ? "Waiting for you" : "Waiting"} type="pending" />;
+  const badge = (c) => c.status === "approved" ? <Badge label="Approved" type="approved" />
+    : c.status === "rejected" ? <Badge label="Rejected" type="rejected" /> : <Badge label="Waiting for you" type="pending" />;
+  const mine = (c) => waiting.some((x) => x.id === c.id);
 
   return (
-    <div className={open && cur ? "oa fx2 oa-open" : "oa fx2"}>
-      <style>{OA_CSS}</style>
-      <style>{FX_CSS}</style>
-      <div className="oa-list">
-        <div className="oa-switch" role="tablist" aria-label="Show">
-          <button type="button" role="tab" aria-selected={view === "waiting"} className={view === "waiting" ? "on" : ""} onClick={() => pick("waiting")}>
-            Waiting <span className={waiting.length ? "oa-n hot" : "oa-n"}>{waiting.length}</span>
-          </button>
-          <button type="button" role="tab" aria-selected={view === "reviewed"} className={view === "reviewed" ? "on" : ""} onClick={() => pick("reviewed")}>
-            Reviewed <span className="oa-n">{reviewed.length}</span>
-          </button>
-        </div>
-        {(view === "waiting" ? waiting : reviewed).length > 6 && (
-          <div className="oa-search"><Icon name="search" size={14} />
-            <input type="search" placeholder="Search intern" value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} aria-label="Search intern" /></div>
-        )}
-        <div className="oa-items" role="list">
-          {list.length === 0 ? (
-            <div className="oa-none">
-              <span className="oa-none-ic"><Icon name="check" size={18} /></span>
-              <b>{sq ? "No match" : view === "waiting" ? "All caught up" : "Nothing reviewed yet"}</b>
-              <small>{sq ? "Try another name." : view === "waiting" ? "No time corrections waiting for you." : "Corrections you approve or reject show here."}</small>
-            </div>
-          ) : list.map((c) => (
-            <button key={c.id} type="button" role="listitem" className={cur && cur.id === c.id ? "oa-item on" : "oa-item"}
-              onClick={() => { setSel(c.id); setOpen(true); }}>
-              <Avatar name={c.intern_name} photo={c.intern_photo} size={34} />
-              <span className="oa-who"><b>{c.intern_name}</b><small>{fxDay(c.date)} · {FX_KIND[kind(c)].replace("Forgot to ", "no ").replace("Missed the whole day", "whole day")}</small></span>
-              {view === "reviewed" && badge(c)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="oa-detail">
-        {!cur ? (
-          <div className="oa-blank">
-            <span className="oa-none-ic"><Icon name="pencil" size={20} /></span>
-            <b>{view === "waiting" ? "No corrections waiting" : "Nothing to show yet"}</b>
-            <small>{view === "waiting" && reviewed.length ? "Open Reviewed to see the corrections already checked." : "When an intern forgets to time in or out, their request shows here."}</small>
-          </div>
-        ) : (
-          <>
-            <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
-            <div className="oa-head">
-              <Avatar name={cur.intern_name} photo={cur.intern_photo} size={46} />
-              <div className="oa-hn"><b>{cur.intern_name}</b><small>{FX_KIND[kind(cur)]} · {fxDay(cur.date, true)}</small></div>
-              {badge(cur, true)}
-            </div>
-            {(() => {
-              const p = pairs(cur);
-              return (
-                <div className="fx-cmp">
-                  <div className="fx-side">
-                    <span className="fx-lbl">Recorded</span>
-                    <div className="fx-pair"><div><small>Time in</small><b className={p.rec[0] === "No tap" ? "none" : ""}>{p.rec[0]}</b></div>
-                      <Icon name="menu" size={0} /><div><small>Time out</small><b className={p.rec[1] === "No tap" ? "none" : ""}>{p.rec[1]}</b></div></div>
-                  </div>
-                  <div className="fx-side ask">
-                    <span className="fx-lbl">Asks for</span>
-                    <div className="fx-pair"><div><small>Time in</small><b className={p.hl[0] ? "new" : ""}>{p.ask[0]}</b></div>
-                      <div><small>Time out</small><b className={p.hl[1] ? "new" : ""}>{p.ask[1]}</b></div></div>
-                  </div>
+    <ReviewQueue
+      tabs={[
+        { key: "mine", label: "Needs my review", items: waiting, hot: true, empty: ["All caught up", "No time corrections waiting for you."] },
+        { key: "done", label: "Done", items: reviewed, empty: ["Nothing reviewed yet", "Corrections you approve or reject show here."] },
+      ]}
+      rowKey={(c) => c.id}
+      searchText={(c) => `${c.intern_name} ${c.reason || ""}`}
+      columns={[
+        { label: "Intern", render: (c) => <span className="rq2-who"><Avatar name={c.intern_name} photo={c.intern_photo} size={32} /><span><b>{c.intern_name}</b></span></span> },
+        { label: "Day", render: (c) => <span className="rq2-muted">{fxDay(c.date)}</span> },
+        { label: "What happened", render: (c) => <span className="rq2-main">{FX_KIND[kind(c)]}</span> },
+        { label: "Asks for", render: (c) => { const p = pairs(c); return <span className="rq2-muted">{p.ask[0]} – {p.ask[1]}</span>; } },
+        { label: "Status", render: badge },
+      ]}
+      drawer={(c) => {
+        const p = pairs(c);
+        return {
+          icon: "pencil", kicker: `${c.intern_name} · ${FX_KIND[kind(c)]}`, title: fxDay(c.date, true), actions: badge(c),
+          body: (
+            <>
+              <style>{FX_CSS}</style>
+              <div className="fx-cmp">
+                <div className="fx-side">
+                  <span className="fx-lbl">Recorded</span>
+                  <div className="fx-pair"><div><small>Time in</small><b className={p.rec[0] === "No tap" ? "none" : ""}>{p.rec[0]}</b></div>
+                    <div><small>Time out</small><b className={p.rec[1] === "No tap" ? "none" : ""}>{p.rec[1]}</b></div></div>
                 </div>
-              );
-            })()}
-            <div className="oa-kv fx-kv">
-              <div><small>Time between</small><b>{span(cur)}</b></div>
-              <div><small>{view === "waiting" ? "Sent" : "Reviewed"}</small><b>{fxWhen(view === "waiting" ? cur.created_at : (cur.reviewed_at || cur.updated_at))}</b></div>
-            </div>
-            <div className="oa-tasks">
-              <span>Reason</span>
-              <p>{cur.reason || "—"}</p>
-            </div>
-            <ol className="oa-steps fx-steps">
-              <li className="done"><i><Icon name="check" size={11} /></i><span>Intern asked</span></li>
-              <li className={cur.status === "approved" ? "done" : cur.status === "rejected" ? "bad" : "now"}>
-                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : cur.status === "rejected" ? <Icon name="x" size={11} /> : 2}</i>
-                <span>{cur.status === "rejected" ? "Rejected" : "You decide"}</span></li>
-              <li className={cur.status === "approved" ? "done" : ""}>
-                <i>{cur.status === "approved" ? <Icon name="check" size={11} /> : 3}</i><span>Fixed in records</span></li>
-            </ol>
-            <OaHistory name={cur.intern_name}
-              rows={[...waiting, ...reviewed].filter((c) => c.id !== cur.id && (c.user_id ? c.user_id === cur.user_id : c.intern_name === cur.intern_name))
-                .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 12)
-                .map((c) => ({ id: c.id, when: fxDay(c.date), text: `${FX_KIND[kind(c)]} · ${c.reason || ""}`, badge: badge(c) }))}
-              onPick={(r) => { const w = waiting.some((x) => x.id === r.id); setView(w ? "waiting" : "reviewed"); setQ(""); setSel(r.id); }} />
-            {view === "waiting" ? (
-              <div className="oa-act">
-                <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[cur.id] || ""}
-                  onChange={(e) => setRemarks((r) => ({ ...r, [cur.id]: e.target.value }))} />
-                <button className="ix-b danger" onClick={() => decide(cur, "rejected")} disabled={!!busy}>{busy === cur.id + "rejected" ? "..." : "Reject"}</button>
-                <button className="ix-b ok" onClick={() => decide(cur, "approved")} disabled={!!busy}>{busy === cur.id + "approved" ? "..." : "Approve"}</button>
+                <div className="fx-side ask">
+                  <span className="fx-lbl">Asks for</span>
+                  <div className="fx-pair"><div><small>Time in</small><b className={p.hl[0] ? "new" : ""}>{p.ask[0]}</b></div>
+                    <div><small>Time out</small><b className={p.hl[1] ? "new" : ""}>{p.ask[1]}</b></div></div>
+                </div>
               </div>
-            ) : (
-              <div className={cur.status === "rejected" ? "oa-done bad" : "oa-done ok"}>
-                <Icon name={cur.status === "rejected" ? "x" : "check"} size={14} />
-                <span>{cur.status === "rejected" ? "Rejected. The record stays as it was." : "Approved. The record was fixed."}
-                  {cur.remarks ? <> Remarks: <em>{cur.remarks}</em></> : null}
-                  {cur.reviewer_name ? <small> · {cur.reviewer_name}</small> : null}</span>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
+              <div className="aq-facts-lite"><span><small>Time between</small> <b>{span(c)}</b></span><span><small>{mine(c) ? "Sent" : "Reviewed"}</small> <b>{fxWhen(mine(c) ? c.created_at : (c.reviewed_at || c.updated_at))}</b></span></div>
+              <div className="oa-tasks"><span>Reason</span><p>{c.reason || "—"}</p></div>
+              <p className="fx-final">Your decision is final: an approved correction is applied to the intern's attendance right away.</p>
+            </>
+          ),
+          footer: mine(c)
+            ? <>
+                <input type="text" className="ix-input" maxLength={300} placeholder="Remarks (optional)" aria-label="Remarks" value={remarks[c.id] || ""}
+                  onChange={(e) => setRemarks((r) => ({ ...r, [c.id]: e.target.value }))} />
+                <button type="button" className="ix-b danger" disabled={!!busy} onClick={() => decide(c, "rejected")}>{busy === c.id + "rejected" ? "..." : "Reject"}</button>
+                <button type="button" className="ix-b ok" disabled={!!busy} onClick={() => decide(c, "approved")}>{busy === c.id + "approved" ? "..." : "Approve"}</button>
+              </>
+            : <span className={`rq2-result ${c.status === "approved" ? "ok" : "bad"}`}><Icon name={c.status === "approved" ? "check" : "x"} size={14} />
+                <span>{c.status === "approved" ? "Approved. The attendance was corrected." : "Rejected."}{c.remarks ? <> · <em>{c.remarks}</em></> : null}</span></span>,
+        };
+      }}
+    />
   );
 }
 
 const FX_CSS = `
 .fx-cmp { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; flex: none; }
+/* the time-correction drawer (Approvals → Time Corrections) */
+.aq-facts-lite { flex: none; display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 14px; border: 1px solid #eef0f4; border-radius: 12px; background: #fafbfc; font-size: 13.5px; }
+.aq-facts-lite small { font-size: 12px; color: #64748b; } .aq-facts-lite b { color: #0f172a; font-weight: 600; }
+.fx-final { margin: 0; font-size: 12.5px; color: #6b7280; }
+.ix-drawer .oa-tasks { max-height: none; }
 .fx-side { border: 1px solid #eef0f4; background: #fafbfc; border-radius: 12px; padding: 9px 12px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .fx-side.ask { border-color: #bbe5c8; background: #f3fbf6; }
 .fx-lbl { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; }

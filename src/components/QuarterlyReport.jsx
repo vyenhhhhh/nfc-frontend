@@ -3,8 +3,8 @@
 // (form F-PLN-006, Rev.003 — the 2026 layout).
 // Table 1 (enrolled / deployed per program) and Table 4 (interns per HTE) are counted by the system;
 // everything else is typed here, saved per quarter, and printed (or saved as PDF) in the college's layout.
-import { useState, useEffect, useMemo } from "react";
-import { Icon, Msg, Spinner, programKey, esc } from "./DashKit.jsx";
+import { Fragment, useState, useEffect, useMemo } from "react";
+import { Icon, Msg, Spinner, programKey, esc, HTE_CATEGORIES } from "./DashKit.jsx";
 import { API } from "../config.js";
 import csuLogo from "../assets/csu-logo.png";
 
@@ -21,20 +21,21 @@ const PROGRAM_NAME = {
   BSIT: "Bachelor of Science in Information Technology",
 };
 const PROGRAM_ORDER = ["BSCS", "BSIS", "BSIT"];
+// the parts of the report, named and grouped as in the college's table of contents
 const SECTIONS = [
-  { key: "s1", label: "1. Objectives & Profile" },
-  { key: "s2a", label: "2.A Internship statistics" },
-  { key: "s2b", label: "2.B Partnerships" },
-  { key: "s2c", label: "2.C Deployment" },
-  { key: "s2d", label: "2.D Monitoring" },
-  { key: "s2e", label: "2.E Activities" },
-  { key: "s3", label: "3. Best practices" },
-  { key: "s4", label: "4. Challenges" },
-  { key: "s5", label: "5. Future plans" },
-  { key: "sign", label: "Prepared / Noted by" },
+  { key: "s1", n: "1", label: "Objectives, Unit Profile and Quality Objectives" },
+  { key: "s2a", n: "A", group: "2", label: "Consolidated Internship Statistics" },
+  { key: "s2b", n: "B", group: "2", label: "Industry and Institutional Partnerships" },
+  { key: "s2c", n: "C", group: "2", label: "Student Internship Deployment" },
+  { key: "s2d", n: "D", group: "2", label: "Monitoring, Supervision and Support" },
+  { key: "s2e", n: "E", group: "2", label: "Highlights of Activities" },
+  { key: "s3", n: "3", label: "Best Practices" },
+  { key: "s4", n: "4", label: "Challenges and Solutions" },
+  { key: "s5", n: "5", label: "Future Plans and Initiatives" },
+  { key: "sign", n: "", label: "Prepared by / Noted by" },
 ];
 // the categories used in the CCIS quarterly reports (Table 4)
-const CATEGORIES = ["Government Agency", "Academic / University Office", "Educational Institution", "IT Company", "Private Company / Industry", "Research Center", "Hospital", "NGO", "NGO / Religious", "Utility Service", "Transportation", "Engineering", "Other"];
+const CATEGORIES = HTE_CATEGORIES;   // shared with Partner HTEs (the category is set once on the HTE)
 const MODALITIES = ["On-site", "Hybrid", "Virtual", "Project-based"];
 
 // the semester(s) a quarter usually falls in (the coordinator can change it)
@@ -134,11 +135,21 @@ const duration = (a, b) => {
   return m > 0 ? `${m} month${m === 1 ? "" : "s"}` : "";
 };
 
-export default function QuarterlyReport({ user }) {
-  const [year, setYear] = useState(nowYear);
-  const [quarter, setQuarter] = useState(nowQuarter);
+export default function QuarterlyReport({ user, supervisors = [], interns: allInterns = [] }) {
+  // which quarter opens first: ?q=2026-3 (from the reminder), else the quarter that just ended during the
+  // first month of a new quarter (that is when its report is written), else the current quarter
+  const start = (() => {
+    const m = /^(\d{4})-([1-4])$/.exec(new URLSearchParams(window.location.search).get("q") || "");
+    if (m) return [Number(m[1]), Number(m[2])];
+    const firstMonth = (Number(today.slice(5, 7)) - 1) % 3 === 0;
+    if (firstMonth) return nowQuarter === 1 ? [nowYear - 1, 4] : [nowYear, nowQuarter - 1];
+    return [nowYear, nowQuarter];
+  })();
+  const [year, setYear] = useState(start[0]);
+  const [quarter, setQuarter] = useState(start[1]);
   const [srv, setSrv] = useState(null);           // { period, interns, enrolled, program_hours, data, updated_at }
-  const [d, setD] = useState(blank(user, nowYear, nowQuarter));
+  const [d, setD] = useState(blank(user, start[0], start[1]));
+  const [feed, setFeed] = useState({ cal: [], ann: [] });   // the quarter's school events and announcements (for 2.E)
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -162,6 +173,13 @@ export default function QuarterlyReport({ user }) {
     }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [year, quarter]);
+  useEffect(() => {
+    const get = (u) => fetch(`${API}${u}`, { headers: { Accept: "application/json" } }).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+    Promise.all([get("/calendar"), get("/announcements")]).then(([c, a]) => setFeed({
+      cal: (Array.isArray(c) ? c : c?.events || []).filter((e) => !e.hte_key),
+      ann: Array.isArray(a) ? a : [],
+    }));
+  }, []);
 
   const set = (k, v) => { setD((x) => ({ ...x, [k]: v })); setDirty(true); };
   const setRow = (k, i, f, v) => set(k, d[k].map((r, j) => (j === i ? { ...r, [f]: v } : r)));
@@ -200,14 +218,19 @@ export default function QuarterlyReport({ user }) {
         const autoMod = MODALITIES.filter((m) => mods.includes(m)).join(", ");
         // a CSU / CCIS office is an academic / university office unless the coordinator picked something else
         const uni = /^(CSU|CCIS|Caraga State University)\b/i.test(h);
-        return { hte: h, n: arr.length, cat: d.hte_cat?.[h] || (uni ? "Academic / University Office" : ""), mod: d.hte_mod?.[h] || autoMod };
+        // what Partner HTEs knows about this HTE (category and modality set on its supervisor account)
+        const hk = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+        const sup = supervisors.filter((s) => hk(s.placement) === hk(h));
+        const setCat = sup.map((s) => s.hte_category).find(Boolean);
+        const setMod = LBL[sup.map((s) => s.hte_modality).find((m) => LBL[m])];
+        return { hte: h, n: arr.length, cat: d.hte_cat?.[h] || setCat || (uni ? "Educational Institution" : ""), mod: d.hte_mod?.[h] || setMod || autoMod };
       });
       return { p, rows };
     }).filter((g) => g.rows.length);
     const htes = [...new Set(placed.map((i) => i.placement.trim()))];
     return { total: list.length, unplaced: list.length - placed.length, t1, t4, htes };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srv, d.enrolled, d.hte_cat, d.hte_mod]);
+  }, [srv, d.enrolled, d.hte_cat, d.hte_mod, supervisors]);
 
   const save = async () => {
     setBusy("save"); setMsg(null);
@@ -226,7 +249,7 @@ export default function QuarterlyReport({ user }) {
   };
 
   // the parts that usually stay the same: profile, structure, categories, best practices, challenges, plans, signatories
-  const copyPrevious = async () => {
+  const copyPrevious = async (only = null) => {
     const py = quarter === 1 ? year - 1 : year, pq = quarter === 1 ? 4 : quarter - 1;
     setBusy("copy"); setMsg(null);
     try {
@@ -234,17 +257,43 @@ export default function QuarterlyReport({ user }) {
       const j = await res.json();
       if (!j?.data) throw new Error(`There is no saved report for the ${Q_WORD[pq - 1]} quarter of ${py}.`);
       const src = j.data.v === 2 ? j.data : fromOld(j.data);
-      const keep = ["objectives", "objectives_list", "profile", "structure", "quality", "hte_cat", "hte_mod", "best_intro", "best",
+      const keep = only || ["objectives", "objectives_list", "profile", "structure", "quality", "hte_cat", "hte_mod", "best_intro", "best",
         "challenges_intro", "challenges", "plans_intro", "plans", "closing", "prepared", "noted"];
+      if (only && !only.some((k) => src[k] !== undefined)) throw new Error(`Q${pq} ${py} has nothing saved for this section.`);
       setD((x) => ({ ...x, ...Object.fromEntries(keep.filter((k) => src[k] !== undefined).map((k) => [k, src[k]])) }));
       setDirty(true);
-      setMsg({ type: "success", text: `Copied the profile, HTE categories, best practices, challenges, plans and signatories from Q${pq} ${py}. Check them, then save.` });
+      setMsg({ type: "success", text: only ? `Copied this section from Q${pq} ${py}. Edit what changed, then save.` : `Copied the profile, HTE categories, best practices, challenges, plans and signatories from Q${pq} ${py}. Check them, then save.` });
     } catch (err) {
       setMsg({ type: "error", text: err.message });
     } finally { setBusy(null); }
   };
 
+  // printing or downloading needs the signatories (the office returns an unsigned report)
+  const ready = () => {
+    if (!(String(d.prepared?.name || "").trim() && String(d.noted?.name || "").trim())) {
+      setSec("sign");
+      setMsg({ type: "error", text: "Fill in \"Prepared by\" and \"Noted by\" first: the report can't be printed or downloaded without them." });
+      return false;
+    }
+    return true;
+  };
+  const word = async () => {
+    if (!ready()) return;
+    setBusy("word"); setMsg(null);
+    try {
+      const blob = await wordFile(reportHtml({ year, quarter, d, t, word: true }));
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `CCIS_UPR_Report_Q${quarter}_${year}.doc`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      setMsg({ type: "success", text: "Downloaded. Open it in Word to make last-minute changes, then save it as .docx or PDF." });
+    } catch (err) {
+      setMsg({ type: "error", text: err.message || "Couldn't make the Word file." });
+    } finally { setBusy(null); }
+  };
   const print = () => {
+    if (!ready()) return;
     const w = window.open("", "_blank");
     if (!w) { setMsg({ type: "error", text: "Allow pop-ups for this site to print the report." }); return; }
     w.document.write(reportHtml({ year, quarter, d, t }));
@@ -254,6 +303,7 @@ export default function QuarterlyReport({ user }) {
 
   // which section is open, and how complete each one is
   const [sec, setSec] = useState("s1");
+  const [edit1, setEdit1] = useState(false);   // section 1 is shown as text until the coordinator clicks Edit
   const idx = Math.max(0, SECTIONS.findIndex((x) => x.key === sec));
   const go = (i) => {
     setSec(SECTIONS[i].key);
@@ -261,11 +311,13 @@ export default function QuarterlyReport({ user }) {
   };
   const filled = (v) => String(v || "").trim() !== "";
   const any = (arr, f) => (arr || []).some(f);
+  const checked = (k) => !!d.checked?.[k];
+  const check = (k, v = true) => set("checked", { ...(d.checked || {}), [k]: v });
   const status = {
     s1: filled(d.objectives) && filled(d.profile) && filled(d.quality) ? (d.structure ? "ok" : "part") : "part",
-    s2a: t.t1.length ? "ok" : "none",
+    s2a: !t.t1.length ? "none" : checked("s2a") ? "ok" : "part",
     s2b: any(d.new_hte, (r) => filled(r.name)) || any(d.renewed, (r) => filled(r.name)) || any(d.engagements, (a) => filled(a.title)) ? "ok" : "none",
-    s2c: !t.t4.length ? "none" : t.t4.every((g) => g.rows.every((r) => r.cat)) ? (filled(d.orientation) ? "ok" : "part") : "part",
+    s2c: !t.t4.length ? "none" : t.t4.every((g) => g.rows.every((r) => r.cat)) && checked("s2c") && filled(d.orientation) ? "ok" : "part",
     s2d: filled(d.monitoring) ? "ok" : "none",
     s2e: any(d.activities, (a) => filled(a.title)) ? "ok" : "none",
     s3: any(d.best, (b) => filled(b.title)) ? "ok" : "none",
@@ -274,6 +326,77 @@ export default function QuarterlyReport({ user }) {
     sign: filled(d.prepared?.name) && filled(d.noted?.name) ? "ok" : filled(d.prepared?.name) || filled(d.noted?.name) ? "part" : "none",
   };
   const doneN = SECTIONS.filter((x) => status[x.key] === "ok").length;
+  // what is left, in words (shown above the section list)
+  const todo = {
+    s1: !d.structure && "add the office's structure picture",
+    s2a: t.t1.length && !checked("s2a") && "check the counted numbers",
+    s2b: status.s2b === "none" && "add new / renewed MOAs (or leave empty)",
+    s2c: t.t4.length && (t.t4.some((g) => g.rows.some((r) => !r.cat)) ? "pick each HTE's category" : !checked("s2c") ? "check the counted table" : !filled(d.orientation) && "describe the orientation"),
+    s2d: status.s2d === "none" && "describe the monitoring",
+    s2e: status.s2e === "none" && "add at least one activity",
+    s3: status.s3 === "none" && "answer the questions",
+    s4: status.s4 !== "ok" && (status.s4 === "part" ? "add the solution" : "answer the questions"),
+    s5: status.s5 === "none" && "answer the questions",
+    sign: status.sign !== "ok" && "fill in the signatories (needed to print)",
+  };
+  const left = SECTIONS.filter((x) => todo[x.key]);
+
+  // ── suggestions from the system's own data ──
+  const inQ = (v) => { const x = String(v || "").slice(0, 10); return srv?.period && x >= srv.period.from && x <= srv.period.to; };
+  const htes = useMemo(() => {
+    const map = new Map();
+    supervisors.forEach((s) => {
+      const name = String(s.placement || "").trim(); if (!name) return;
+      const k = name.toLowerCase();
+      const r = map.get(k) || { name, valid: "" };
+      const v = s.moa_valid_until ? String(s.moa_valid_until).slice(0, 10) : "";
+      if (v && (!r.valid || v > r.valid)) r.valid = v;
+      map.set(k, r);
+    });
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [supervisors]);
+  const listed = new Set([...d.new_hte, ...d.renewed].map((r) => String(r.name || "").trim().toLowerCase()).filter(Boolean));
+  const htePick = htes.filter((h) => !listed.has(h.name.toLowerCase()));
+  const nSup = new Set(allInterns.filter((i) => i.supervisor_id).map((i) => String(i.supervisor_id))).size;
+  const qLong = `${Q_WORD[quarter - 1]} quarter of ${year}`;
+  const monitorText = `During the ${qLong}, ${t.total} intern${t.total === 1 ? " was" : "s were"} deployed to ${t.htes.length} Host Training Establishment${t.htes.length === 1 ? "" : "s"} and monitored through the MYTRACK OJT management system. Daily attendance was recorded by tapping the NFC card at the ACR122U kiosk, and the coordinator followed each intern's hours in real time. Online workdays and overtime were first confirmed by the HTE supervisor before the coordinator's final approval${nSup ? `, with ${nSup} HTE supervisor${nSup === 1 ? "" : "s"} assigned to the interns` : ""}. Internship requirements were submitted and reviewed through the system for the pre-, during- and post-internship phases.`;
+  const todayIso = today;
+  const expired = htes.filter((h) => h.valid && h.valid < todayIso);
+  const soon = htes.filter((h) => h.valid && h.valid >= todayIso && (new Date(h.valid) - new Date(todayIso)) / 86400000 <= 60);
+  const noSup = allInterns.filter((i) => !i.supervisor_id).length;
+  const IDEAS = {
+    best: [
+      { title: "Real-time attendance monitoring through NFC", text: "Interns recorded their daily time-in and time-out by tapping their NFC card at the kiosk, so the coordinator and HTE supervisors could follow attendance and rendered hours in real time." },
+      { title: "Online submission and review of internship requirements", text: "Pre-, during- and post-internship documents were submitted and checked online, which made it easier to see who was complete and who still needed to comply." },
+      { title: "Regular coordination with HTE supervisors", text: "The coordinator kept in close contact with the HTE supervisors, who confirmed online workdays and overtime before the final approval." },
+      { title: "Conducted the Pre-Deployment Orientation", text: "Students were oriented on the internship policies, requirements and expected conduct before they were deployed." },
+    ],
+    challenges: [
+      ...(expired.length || soon.length ? [{ sys: true, challenge: "Expiring or expired MOAs", description: `${expired.length ? `${expired.length} partner HTE MOA${expired.length === 1 ? " has" : "s have"} expired` : ""}${expired.length && soon.length ? " and " : ""}${soon.length ? `${soon.length} will expire within 60 days` : ""}.`, solution: "Coordinated early with the HTEs and the university to renew the MOAs before deploying new interns." }] : []),
+      ...(noSup ? [{ sys: true, challenge: "Interns without an assigned HTE supervisor", description: `${noSup} intern${noSup === 1 ? " had" : "s had"} no HTE supervisor in the system, so their requests could not be confirmed.`, solution: "Assigned a supervisor to each intern and asked the HTEs to activate their supervisor accounts." }] : []),
+      { challenge: "Late submission of internship requirements", description: "Some interns submitted their documents after the deadline.", solution: "Sent reminders through the system and set clear due dates for each requirement." },
+      { challenge: "Interns forgetting to tap out", description: "Some interns left without recording their time-out.", solution: "Missing time-outs were corrected through supervisor-confirmed time correction requests." },
+    ],
+    plans: [
+      { title: "Expand local and international internship opportunities", text: "Partner with more Host Training Establishments that match the programs' learning outcomes." },
+      { title: "Renew expiring MOAs ahead of deployment", text: "Track MOA validity every quarter and start the renewal at least two months before it expires." },
+      { title: "Strengthen HTE supervisor engagement", text: "Guide HTE supervisors in using the system to confirm attendance and appraise the interns." },
+    ],
+  };
+  const has = (k, title) => (d[k] || []).some((x) => String(x.title || x.challenge || "").trim().toLowerCase() === title.toLowerCase());
+  // add an idea: fills the first empty item, else adds a new one
+  const addIdea = (k, idea) => {
+    const list = d[k] || [];
+    const empty = list.findIndex((x) => !Object.values(x).some((v) => String(v || "").trim()));
+    const { sys, ...row } = idea;   // eslint-disable-line no-unused-vars
+    set(k, empty >= 0 ? list.map((x, i) => (i === empty ? { ...x, ...row } : x)) : [...list, row]);
+  };
+  // the quarter's school events and announcements, for 2.E
+  const fromFeed = [
+    ...feed.cal.filter((e) => e.scope === "school_event" && inQ(e.date)).map((e) => ({ src: `cal:${e.id}`, title: e.title, date: String(e.date).slice(0, 10), text: e.description || "", kind: "School event" })),
+    ...feed.ann.filter((a) => inQ(a.created_at)).map((a) => ({ src: `ann:${a.id}`, title: a.title, date: String(a.created_at).slice(0, 10), text: a.body || "", kind: "Announcement" })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
+  const usedSrc = new Set((d.activities || []).map((a) => a.src).filter(Boolean));
 
   if (!srv) return <Spinner />;
 
@@ -291,8 +414,9 @@ export default function QuarterlyReport({ user }) {
           </select></div>
         <div className="qr-acts">
           <span className="qr-saved">{dirty ? "Not saved yet" : srv.updated_at ? `Saved ${new Date(String(srv.updated_at).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Nothing saved for this quarter"}</span>
-          <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={copyPrevious}>{busy === "copy" ? "Copying..." : "Copy from last quarter"}</button>
+          <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => copyPrevious()}>{busy === "copy" ? "Copying..." : "Copy from last quarter"}</button>
           <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={save}>{busy === "save" ? "Saving..." : "Save"}</button>
+          <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={word}><Icon name="download" size={14} /> {busy === "word" ? "Making..." : "Word"}</button>
           <button type="button" className="ix-b primary sm" onClick={print}><Icon name="print" size={14} /> Print / PDF</button>
         </div>
       </div>
@@ -303,16 +427,26 @@ export default function QuarterlyReport({ user }) {
       <nav className="ix-card qr-nav" aria-label="Report sections">
         <div className="qr-prog"><b>Report progress</b><span>{doneN} of {SECTIONS.length} done</span></div>
         <div className="qr-prog-bar"><i style={{ width: `${(doneN / SECTIONS.length) * 100}%` }} /></div>
+        {left.length > 0 ? (
+          <div className="qr-left"><b>Left to do</b>
+            <ul>{left.slice(0, 4).map((x) => <li key={x.key}><button type="button" onClick={() => go(SECTIONS.indexOf(x))}>{x.n ? `${x.group ? "2." : ""}${x.n}` : "✎"} · {todo[x.key]}</button></li>)}</ul>
+            {left.length > 4 && <small>and {left.length - 4} more</small>}
+          </div>
+        ) : <div className="qr-left ok"><b>✓ Ready to print or download</b></div>}
         {SECTIONS.map((x, i) => {
           const st = status[x.key];
           return (
-            <button key={x.key} type="button" className={sec === x.key ? "qr-nav-i on" : "qr-nav-i"} onClick={() => go(i)}>
-              <i className={st}>{st === "ok" ? "✓" : st === "part" ? "!" : "–"}</i>
-              <span>{x.label}</span>
-            </button>
+            <Fragment key={x.key}>
+              {x.group && SECTIONS[i - 1]?.group !== x.group && <div className="qr-nav-g"><em>{x.group}</em>Initiatives and Achievements</div>}
+              <button type="button" className={`qr-nav-i${x.group ? " sub" : ""}${sec === x.key ? " on" : ""}`} onClick={() => go(i)} title={st === "ok" ? "Done" : st === "part" ? "Needs checking" : "Empty"}>
+                {x.n ? <em>{x.n}</em> : <em className="blank" />}
+                <span>{x.label}</span>
+                <i className={st}>{st === "ok" ? "✓" : st === "part" ? "!" : ""}</i>
+              </button>
+            </Fragment>
           );
         })}
-        <small className="qr-nav-key"><i className="ok">✓</i> done <i className="part">!</i> started <i className="none">–</i> empty</small>
+        <small className="qr-nav-key"><i className="ok">✓</i> done <i className="part">!</i> needs checking <i className="none" /> empty</small>
       </nav>
       <div className="qr-main">
 
@@ -320,7 +454,14 @@ export default function QuarterlyReport({ user }) {
       {sec === "s1" && (
       <Sec n="1" title="Objectives, Unit Profile and Quality Objectives">
         <div className="qr-fixed">
-          <p className="qr-hint">These stay the same every quarter. Change them only when the office updates them.</p>
+          <div className="qr-fixed-top">
+            <p className="qr-hint">These stay the same every quarter and are already filled in from the college's report. Change them only when the office updates them.</p>
+            <button type="button" className="ix-b ghost sm" onClick={() => setEdit1((v) => !v)}>
+              <Icon name={edit1 ? "check" : "pencil"} size={14} /> {edit1 ? "Done editing" : "Edit text"}
+            </button>
+          </div>
+          {!d.structure && <div className="qr-todo"><Icon name="warn" size={14} /> Add the picture of the office's functional structure to finish this section.</div>}
+          {edit1 ? (
           <div className="qr-fixed-body">
           <Sub>A. Objectives</Sub>
           <textarea className="ix-input" rows={4} value={d.objectives} onChange={(e) => set("objectives", e.target.value)} />
@@ -328,11 +469,25 @@ export default function QuarterlyReport({ user }) {
           <textarea className="ix-input" rows={4} value={d.objectives_list} onChange={(e) => set("objectives_list", e.target.value)} />
           <Sub>B. Unit Profile</Sub>
           <textarea className="ix-input" rows={7} value={d.profile} onChange={(e) => set("profile", e.target.value)} />
-          <label className="qr-lbl">Functional structure of the Office (picture)</label>
-          <Photos onError={(text) => setMsg({ type: "error", text })} list={d.structure ? [d.structure] : []} max={1} onChange={(l) => set("structure", l[0] || null)} />
           <Sub>C. Quality Objectives of the Office (one per line)</Sub>
           <textarea className="ix-input" rows={7} value={d.quality} onChange={(e) => set("quality", e.target.value)} />
           </div>
+          ) : (
+          <div className="qr-read">
+            <details open><summary>A. Objectives</summary>
+              <p>{d.objectives}</p>
+              <ol>{String(d.objectives_list || "").split("\n").filter((x) => x.trim()).map((x, i) => <li key={i}>{x}</li>)}</ol>
+            </details>
+            <details><summary>B. Unit Profile</summary>
+              {String(d.profile || "").split(/\n\s*\n/).filter((x) => x.trim()).map((x, i) => <p key={i}>{x}</p>)}
+            </details>
+            <details><summary>C. Quality Objectives of the Office</summary>
+              <ul>{String(d.quality || "").split("\n").filter((x) => x.trim()).map((x, i) => <li key={i}>{x}</li>)}</ul>
+            </details>
+          </div>
+          )}
+          <label className="qr-lbl">Functional structure of the Office (picture)</label>
+          <Photos onError={(text) => setMsg({ type: "error", text })} list={d.structure ? [d.structure] : []} max={1} onChange={(l) => set("structure", l[0] || null)} />
         </div>
       </Sec>
       )}
@@ -362,12 +517,29 @@ export default function QuarterlyReport({ user }) {
         </table>
         <p className="qr-hint">"Deployed" = interns with attendance from {srv.period?.from} to {srv.period?.to}. "Enrolled" = intern accounts in the system; type a number if the real count is different. Prints as "deployed / enrolled" (like 71/71).</p>
         <textarea className="ix-input" rows={3} placeholder="Explanation under the table, e.g. why some students were not deployed (optional)" value={d.t1_note} onChange={(e) => set("t1_note", e.target.value)} />
+        {t.t1.some((r) => r.deployed < r.enrolled) && !String(d.t1_note || "").trim() && (
+          <button type="button" className="qr-sugg" onClick={() => set("t1_note", `${t.t1.filter((r) => r.deployed < r.enrolled).map((r) => `${r.enrolled - r.deployed} ${r.p} student${r.enrolled - r.deployed === 1 ? " was" : "s were"}`).join(" and ")} not yet deployed during the ${qLong}.`)}>
+            <Icon name="pencil" size={13} /> Write the note for me</button>
+        )}
+        <Checked on={checked("s2a")} onChange={(v) => check("s2a", v)} />
       </Sec>
       )}
 
       {/* 2.B partnerships */}
       {sec === "s2b" && (
       <Sec n="2.B" title="Strengthening Industry and Institutional Partnerships">
+        {htePick.length > 0 && (
+          <div className="qr-from">
+            <div className="qr-from-h"><b>From Partner HTEs</b><small>Add an HTE as new or renewed; its MOA date is filled in. Fill in the notarized date.</small></div>
+            <ul>{htePick.map((h) => (
+              <li key={h.name}>
+                <span><b>{h.name}</b><small>{h.valid ? `MOA valid until ${h.valid}` : "No MOA date yet"}</small></span>
+                <button type="button" className="ix-b ghost sm" onClick={() => addRow("new_hte", { name: h.name, notarized: "", valid: h.valid })}>+ New</button>
+                <button type="button" className="ix-b ghost sm" onClick={() => addRow("renewed", { name: h.name, expired: "", renewed: "", valid: h.valid })}>+ Renewed</button>
+              </li>
+            ))}</ul>
+          </div>
+        )}
         <Sub>1. New Partnerships Established (Table 2)</Sub>
         <table className="qr-t">
           <thead><tr><th>Name of HTE</th><th>Date entered / notarized</th><th>Valid until</th><th>Duration</th><th /></tr></thead>
@@ -447,6 +619,7 @@ export default function QuarterlyReport({ user }) {
         )}
         <p className="qr-hint">The modality comes from each intern's internship modality (on-site, hybrid, virtual or project-based). The category of an HTE is remembered for next time.{t.unplaced ? ` ${t.unplaced} intern${t.unplaced === 1 ? "" : "s"} with no placement set are not listed.` : ""}</p>
         <textarea className="ix-input" rows={2} placeholder="Note under the table (optional)" value={d.deploy_note} onChange={(e) => set("deploy_note", e.target.value)} />
+        {t.t4.length > 0 && <Checked on={checked("s2c")} onChange={(v) => check("s2c", v)} />}
         <Sub>Pre-Deployment Orientation</Sub>
         <Photos onError={(text) => setMsg({ type: "error", text })} list={d.orientation_photos} max={3} onChange={(l) => set("orientation_photos", l)} />
         <textarea className="ix-input" rows={5} placeholder="What the orientation covered (policies, requirements, do's and don'ts, GAD session…)" value={d.orientation} onChange={(e) => set("orientation", e.target.value)} />
@@ -456,7 +629,14 @@ export default function QuarterlyReport({ user }) {
       {/* 2.D monitoring */}
       {sec === "s2d" && (
       <Sec n="2.D" title="Monitoring, Supervision, and Student Support">
-        <textarea className="ix-input" rows={5} placeholder="Monitoring visits done this quarter, purpose and results…" value={d.monitoring} onChange={(e) => set("monitoring", e.target.value)} />
+        <div className="qr-from">
+          <div className="qr-from-h"><b>Written from this quarter's data</b><small>Use it as it is, or add your monitoring visits after it.</small></div>
+          <p className="qr-suggp">{monitorText}</p>
+          <button type="button" className="ix-b ghost sm" onClick={() => set("monitoring", filled(d.monitoring) ? `${d.monitoring.trim()}\n\n${monitorText}` : monitorText)}>
+            {filled(d.monitoring) ? "+ Add it below my text" : "Use this text"}</button>
+        </div>
+        <label className="qr-lbl">Were there monitoring visits? Where, why, and what was found?</label>
+        <textarea className="ix-input" rows={5} placeholder="e.g. Visited DICT Caraga on May 5 to check the interns' tasks and talk with their supervisor…" value={d.monitoring} onChange={(e) => set("monitoring", e.target.value)} />
         <Photos onError={(text) => setMsg({ type: "error", text })} list={d.monitoring_photos} max={6} onChange={(l) => set("monitoring_photos", l)} />
       </Sec>
       )}
@@ -465,6 +645,22 @@ export default function QuarterlyReport({ user }) {
       {sec === "s2e" && (
       <Sec n="2.E" title="Highlights of Activities Conducted">
         <textarea className="ix-input" rows={2} value={d.activities_intro} onChange={(e) => set("activities_intro", e.target.value)} />
+        <div className="qr-from">
+          <div className="qr-from-h"><b>From this quarter's calendar and announcements</b><small>School events on the Calendar and announcements you posted. Tick the ones that belong in the report, then add photos.</small></div>
+          {fromFeed.length === 0 ? <p className="qr-suggp mut">No school events or announcements from {srv.period?.from} to {srv.period?.to}.</p> : (
+            <ul>{fromFeed.map((f) => {
+              const on = usedSrc.has(f.src);
+              return (
+                <li key={f.src}>
+                  <label className="qr-tick"><input type="checkbox" checked={on} onChange={() => set("activities", on
+                    ? d.activities.filter((a) => a.src !== f.src)
+                    : [...d.activities.filter((a) => filled(a.title) || filled(a.text) || (a.photos || []).length), { src: f.src, title: f.title, text: f.text, photos: [] }])} />
+                    <span><b>{f.title}</b><small>{f.kind} · {f.date}</small></span></label>
+                </li>
+              );
+            })}</ul>
+          )}
+        </div>
         {d.activities.map((a, i) => (
           <div key={i} className="qr-item">
             <input className="ix-input" placeholder={`${i + 1}. Activity title, e.g. Student Internship Debriefing Program`} value={a.title} onChange={(e) => setRow("activities", i, "title", e.target.value)} />
@@ -480,11 +676,14 @@ export default function QuarterlyReport({ user }) {
       {/* 3 best practices */}
       {sec === "s3" && (
       <Sec n="3" title="Best Practices">
+        <Guide onCopy={() => copyPrevious(["best_intro", "best"])} ideas={IDEAS.best.filter((x) => !has("best", x.title))} label={(x) => x.title} onIdea={(x) => addIdea("best", x)} />
         <textarea className="ix-input" rows={2} value={d.best_intro} onChange={(e) => set("best_intro", e.target.value)} />
         {d.best.map((b, i) => (
           <div key={i} className="qr-item">
-            <input className="ix-input" placeholder={`${"abcdefghij"[i] || i + 1}. e.g. Conducted the Student Internship Debriefing Program`} value={b.title} onChange={(e) => setRow("best", i, "title", e.target.value)} />
-            <textarea className="ix-input" rows={3} placeholder="What was done" value={b.text} onChange={(e) => setRow("best", i, "text", e.target.value)} />
+            <label className="qr-q"><em>{"abcdefghij"[i] || i + 1}</em> What worked well this quarter?</label>
+            <input className="ix-input" placeholder="e.g. Conducted the Student Internship Debriefing Program" value={b.title} onChange={(e) => setRow("best", i, "title", e.target.value)} />
+            <label className="qr-q">What exactly was done, and how did it help?</label>
+            <textarea className="ix-input" rows={3} placeholder="One or two sentences are enough" value={b.text} onChange={(e) => setRow("best", i, "text", e.target.value)} />
             <button type="button" className="qr-x" aria-label="Remove" onClick={() => delRow("best", i)}>×</button>
           </div>
         ))}
@@ -495,12 +694,16 @@ export default function QuarterlyReport({ user }) {
       {/* 4 challenges */}
       {sec === "s4" && (
       <Sec n="4" title="Challenges Encountered and Solutions Implemented">
+        <Guide onCopy={() => copyPrevious(["challenges_intro", "challenges"])} ideas={IDEAS.challenges.filter((x) => !has("challenges", x.challenge))} label={(x) => x.challenge} onIdea={(x) => addIdea("challenges", x)} note="★ = found in this quarter's data (MOA dates, supervisor assignments)." />
         <textarea className="ix-input" rows={2} value={d.challenges_intro} onChange={(e) => set("challenges_intro", e.target.value)} />
         {d.challenges.map((c, i) => (
           <div key={i} className="qr-item three">
-            <textarea className="ix-input" rows={3} placeholder="Challenge" value={c.challenge} onChange={(e) => setRow("challenges", i, "challenge", e.target.value)} />
-            <textarea className="ix-input" rows={3} placeholder="Description" value={c.description} onChange={(e) => setRow("challenges", i, "description", e.target.value)} />
-            <textarea className="ix-input" rows={3} placeholder="Solution implemented" value={c.solution} onChange={(e) => setRow("challenges", i, "solution", e.target.value)} />
+            <div><label className="qr-q">What problem came up?</label>
+              <textarea className="ix-input" rows={3} placeholder="e.g. Late submission of requirements" value={c.challenge} onChange={(e) => setRow("challenges", i, "challenge", e.target.value)} /></div>
+            <div><label className="qr-q">Who or what did it affect?</label>
+              <textarea className="ix-input" rows={3} placeholder="e.g. 5 interns missed the deadline" value={c.description} onChange={(e) => setRow("challenges", i, "description", e.target.value)} /></div>
+            <div><label className="qr-q">What did you do about it?</label>
+              <textarea className="ix-input" rows={3} placeholder="e.g. Sent reminders and set clear due dates" value={c.solution} onChange={(e) => setRow("challenges", i, "solution", e.target.value)} /></div>
             <button type="button" className="qr-x" aria-label="Remove" onClick={() => delRow("challenges", i)}>×</button>
           </div>
         ))}
@@ -511,11 +714,14 @@ export default function QuarterlyReport({ user }) {
       {/* 5 plans */}
       {sec === "s5" && (
       <Sec n="5" title="Future Plans and Initiatives">
+        <Guide onCopy={() => copyPrevious(["plans_intro", "plans", "closing"])} ideas={IDEAS.plans.filter((x) => !has("plans", x.title))} label={(x) => x.title} onIdea={(x) => addIdea("plans", x)} />
         <textarea className="ix-input" rows={2} value={d.plans_intro} onChange={(e) => set("plans_intro", e.target.value)} />
         {d.plans.map((g, i) => (
           <div key={i} className="qr-item">
-            <input className="ix-input" placeholder={`${"abcdefghij"[i] || i + 1}. e.g. Expand Local and International Internship Opportunities`} value={g.title} onChange={(e) => setRow("plans", i, "title", e.target.value)} />
-            <textarea className="ix-input" rows={3} placeholder="Details" value={g.text} onChange={(e) => setRow("plans", i, "text", e.target.value)} />
+            <label className="qr-q"><em>{"abcdefghij"[i] || i + 1}</em> What will the college do next?</label>
+            <input className="ix-input" placeholder="e.g. Expand local and international internship opportunities" value={g.title} onChange={(e) => setRow("plans", i, "title", e.target.value)} />
+            <label className="qr-q">How, and by when?</label>
+            <textarea className="ix-input" rows={3} placeholder="One or two sentences are enough" value={g.text} onChange={(e) => setRow("plans", i, "text", e.target.value)} />
             <button type="button" className="qr-x" aria-label="Remove" onClick={() => delRow("plans", i)}>×</button>
           </div>
         ))}
@@ -545,7 +751,8 @@ export default function QuarterlyReport({ user }) {
         {idx > 0 ? <button type="button" className="ix-b ghost" onClick={() => go(idx - 1)}>‹ {SECTIONS[idx - 1].label}</button> : <span />}
         {idx < SECTIONS.length - 1
           ? <button type="button" className="ix-b primary" onClick={() => go(idx + 1)}>Next: {SECTIONS[idx + 1].label} ›</button>
-          : <button type="button" className="ix-b primary" onClick={print}><Icon name="print" size={14} /> Print / PDF</button>}
+          : <span className="qr-end"><button type="button" className="ix-b ghost" onClick={word}><Icon name="download" size={14} /> Download Word</button>
+            <button type="button" className="ix-b primary" onClick={print}><Icon name="print" size={14} /> Print / PDF</button></span>}
       </div>
       </div>
       </div>
@@ -590,9 +797,61 @@ function Sec({ n, title, auto, children }) {
   );
 }
 const Sub = ({ children }) => <h4 className="qr-sub">{children}</h4>;
+// "the system counted this: does it look right?"
+function Checked({ on, onChange }) {
+  return on
+    ? <div className="qr-chk on"><Icon name="check" size={14} /> You checked this table. <button type="button" onClick={() => onChange(false)}>Undo</button></div>
+    : <div className="qr-chk"><span>The system counted this table. Does it look right?</span><button type="button" className="ix-b primary sm" onClick={() => onChange(true)}><Icon name="check" size={14} /> Looks right</button></div>;
+}
+// short guide above sections 3–5: copy last quarter's, or start from an idea
+function Guide({ onCopy, ideas, label, onIdea, note }) {
+  return (
+    <div className="qr-guide">
+      <div className="qr-guide-h"><span>Answer the questions below; the report puts your answers in its format.</span>
+        <button type="button" className="ix-b ghost sm" onClick={onCopy}>Use last quarter's</button></div>
+      {ideas.length > 0 && (
+        <div className="qr-ideas"><small>Start from an idea:</small>
+          {ideas.map((x) => <button key={label(x)} type="button" className={x.sys ? "sys" : ""} onClick={() => onIdea(x)}>{x.sys ? "★" : "+"} {label(x)}</button>)}
+          {note && ideas.some((x) => x.sys) && <small className="mut">{note}</small>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* the report as a Word file: one web page with its pictures inside (MHTML), which Word opens and can save as .docx */
+const b64utf8 = (str) => { const bytes = new TextEncoder().encode(str); let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(bin); };
+const wrap76 = (b) => b.replace(/.{1,76}/g, "$&\r\n");
+async function wordFile(html) {
+  const parts = [];
+  const srcs = [...new Set([...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map((m) => m[1]))];
+  for (const src of srcs) {
+    let mime = "image/png", data = "";
+    const m = /^data:([^;]+);base64,(.*)$/.exec(src);
+    if (m) { mime = m[1]; data = m[2]; }
+    else {
+      const blob = await fetch(src).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
+      if (!blob || !/^image\//.test(blob.type)) { html = html.split(`src="${src}"`).join('src="" style="display:none"'); continue; }
+      mime = blob.type;
+      data = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.readAsDataURL(blob); });
+    }
+    const name = `file:///C:/mytrack/image${parts.length + 1}.${(mime.split("/")[1] || "png").replace("jpeg", "jpg")}`;
+    parts.push({ src, name, mime, data });
+  }
+  parts.forEach((p) => { html = html.split(`src="${p.src}"`).join(`src="${p.name}"`); });
+  const B = "----=_MYTRACK_REPORT";
+  const out = [
+    "MIME-Version: 1.0", `Content-Type: multipart/related; boundary="${B}"; type="text/html"`, "",
+    `--${B}`, "Content-Type: text/html; charset=\"utf-8\"", "Content-Transfer-Encoding: base64", "Content-Location: file:///C:/mytrack/report.htm", "",
+    wrap76(b64utf8(html)),
+    ...parts.flatMap((p) => [`--${B}`, `Content-Type: ${p.mime}`, "Content-Transfer-Encoding: base64", `Content-Location: ${p.name}`, "", wrap76(p.data)]),
+    `--${B}--`, "",
+  ].join("\r\n");
+  return new Blob([out], { type: "application/msword" });
+}
 
 /* ───────── the printed report (same layout as the 2026 CCIS template, F-PLN-006 Rev.003) ───────── */
-function reportHtml({ year, quarter, d, t }) {
+function reportHtml({ year, quarter, d, t, word = false }) {
   const abs = (u) => new URL(u, window.location.href).href;
   const P = (s) => String(s || "").trim().split(/\n{2,}/).filter(Boolean).map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
   const lines = (s) => String(s || "").split(/\n/).map((x) => x.replace(/^\s*([-•*]|\d+[.)])\s*/, "").trim()).filter(Boolean);
@@ -609,6 +868,71 @@ function reportHtml({ year, quarter, d, t }) {
   const blankRow = (n) => `<tr>${Array.from({ length: n }, () => "<td>&nbsp;</td>").join("")}</tr>`;
   const t4rows = t.t4.map((g) => `<tr class="grp"><td>${esc(g.p)}</td><td></td><td></td><td></td></tr>`
     + g.rows.map((r) => `<tr><td>${esc(r.hte)}</td><td class="c">${r.n}</td><td>${esc(r.cat)}</td><td>${esc(r.mod)}</td></tr>`).join("")).join("");
+
+  const content = `${bar("1. A. Objectives")}
+${P(d.objectives)}
+<p>Specifically, this UPR Report seeks to:</p>
+<ol class="num">${lines(d.objectives_list).map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
+${bar("1.B. Unit Profile")}
+${P(d.profile)}
+${d.structure ? `<div class="struct"><img src="${d.structure.src}" alt=""></div>` : ""}
+${bar("1. C. Quality Objectives of the Office")}
+<ul class="dot">${lines(d.quality).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+
+${bar("2. Initiatives and Achievements (Highlights of Accomplishments)")}
+${ybar("A. Consolidated Student Internship Statistics")}
+<p class="cap"><b>Table 1.</b> Distribution of students deployed for internship in the College of Computing and Information Sciences during the ${esc(d.term)} (${qWord}).</p>
+<table><thead><tr><th style="width:52%">Program</th><th>Number of Students Enrolled and Deployed for Internship</th><th>Minimum Number of Hours Internship as stipulated in the Curriculum</th></tr></thead>
+<tbody>${t1rows || blankRow(3)}</tbody></table>
+${P(d.t1_note)}
+
+${ybar("B. Strengthening Industry and Institutional Partnerships")}
+<div class="sub">1. New Partnerships Established</div>
+<p class="cap in"><b>Table 2.</b> New internship partnerships with Host Training Establishments (HTEs) established by the College of Computing and Information Sciences, ${qWord}.</p>
+<div class="in"><table class="light"><thead><tr><th>Name of HTE</th><th>Date Entered/Notarized</th><th>Valid Until</th><th>Duration of Validity</th></tr></thead>
+<tbody>${d.new_hte.filter((r) => r.name).map((r) => `<tr><td>${esc(r.name)}</td><td>${fmt(r.notarized)}</td><td>${fmt(r.valid)}</td><td>${duration(r.notarized, r.valid)}</td></tr>`).join("") || blankRow(4)}</tbody></table></div>
+<div class="sub">2. Renewed Partnerships</div>
+<p class="cap in"><b>Table 3.</b> Renewed partnerships with Host Training Establishments (HTEs) that have an existing MOA but expired during the reporting period of the College of Computing and Information Science, ${qWord}.</p>
+<div class="in"><table><thead><tr><th>Name of HTE</th><th>Date Expired</th><th>Date Renewed/Notarized</th><th>Valid Until</th><th>Duration of Validity</th></tr></thead>
+<tbody>${d.renewed.filter((r) => r.name).map((r) => `<tr><td>${esc(r.name)}</td><td>${fmt(r.expired)}</td><td>${fmt(r.renewed)}</td><td>${fmt(r.valid)}</td><td>${duration(r.renewed, r.valid)}</td></tr>`).join("") || blankRow(5)}</tbody></table></div>
+${d.engagements.some((a) => a.title || a.text) ? `<div class="sub">3. Industry Engagement Activities and Linkages</div>
+${d.engagements.filter((a) => a.title || a.text).map((a) => `<div class="act"><b>Activity Title:</b> ${esc(a.title)}<br><b>Date Conducted:</b> ${fmt(a.date)}</div>${figs(a.photos, "one")}<div class="in">${P(a.text)}</div>`).join("")}` : ""}
+
+${ybar("C. Student Internship Deployment")}
+<p class="cap in"><b>Table 4.</b> Number of students from the College of Computing and Information Sciences deployed for internship to various Host Training Establishments (HTEs), by degree program, during the ${esc(d.term)} (${qWord}).</p>
+<div class="in"><table><thead><tr><th style="width:44%">Name of HTE</th><th>Number of Students Deployed</th><th>Category of HTE<br><small>(industry, government agency, NGO, research institution, IT company, hospital, school, etc.)</small></th><th>Internship Modalities<br><small>(On-site, Hybrid, Virtual, Project-based, etc.)</small></th></tr></thead>
+<tbody>${t4rows || blankRow(4)}</tbody></table>
+${P(d.deploy_note)}</div>
+${d.orientation || d.orientation_photos.length ? `<div class="sub">PRE-Deployment Orientation</div>${figs(d.orientation_photos, "one")}<div class="in">${P(d.orientation)}</div>` : ""}
+
+${ybar("D. Monitoring, Supervision, and Student Support")}
+<div class="in">${P(d.monitoring)}</div>
+${figs(d.monitoring_photos)}
+
+${ybar("E. Highlights of Activities Conducted")}
+<div class="in">${P(d.activities_intro)}</div>
+${d.activities.filter((a) => a.title || a.text).map((a, i) => `<div class="sub">${i + 1}. ${esc(a.title)}</div>${figs(a.photos)}<div class="in">${P(a.text)}</div>`).join("")}
+
+${bar("3. Best Practices")}
+${P(d.best_intro)}
+${d.best.filter((b) => b.title || b.text).map((b, i) => `<div class="plan"><b>${"abcdefghij"[i] || i + 1}. ${esc(b.title)}</b>${P(b.text)}</div>`).join("")}
+
+${bar("4. Challenges Encountered and Solutions Implemented")}
+${P(d.challenges_intro)}
+<table><thead><tr><th style="width:30%;text-align:left">Challenge</th><th style="width:33%;text-align:left">Description</th><th style="text-align:left">Solution Implemented</th></tr></thead>
+<tbody>${d.challenges.filter((c) => c.challenge || c.description || c.solution).map((c) => `<tr><td>${esc(c.challenge).replace(/\n/g, "<br>")}</td><td>${esc(c.description).replace(/\n/g, "<br>")}</td><td>${esc(c.solution).replace(/\n/g, "<br>")}</td></tr>`).join("") || blankRow(3)}</tbody></table>
+
+${bar("5. Future Plans and Initiatives")}
+${P(d.plans_intro)}
+${d.plans.filter((g) => g.title || g.text).map((g, i) => `<div class="plan in"><b>${"abcdefghij"[i] || i + 1}. ${esc(g.title)}</b>${P(g.text)}</div>`).join("")}
+${P(d.closing)}
+
+<div class="sign">
+  <div>Prepared by:<b>${esc(d.prepared.name)}</b>${esc(d.prepared.title)}</div>
+  <div>Noted by:<b>${esc(d.noted.name)}</b>${esc(d.noted.title)}</div>
+</div>
+`;
+  if (word) return wordHtml({ year, quarter, qName, content, logo: abs(csuLogo) });
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Unit Performance Review Report - ${qName}</title>
 <style>
@@ -735,70 +1059,61 @@ function reportHtml({ year, quarter, d, t }) {
 
 <table class="page"><thead><tr><td><div class="hsp"></div></td></tr></thead>
 <tfoot><tr><td><div class="fsp"></div></td></tr></tfoot><tbody><tr><td>
-${bar("1. A. Objectives")}
-${P(d.objectives)}
-<p>Specifically, this UPR Report seeks to:</p>
-<ol class="num">${lines(d.objectives_list).map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
-${bar("1.B. Unit Profile")}
-${P(d.profile)}
-${d.structure ? `<div class="struct"><img src="${d.structure.src}" alt=""></div>` : ""}
-${bar("1. C. Quality Objectives of the Office")}
-<ul class="dot">${lines(d.quality).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
-
-${bar("2. Initiatives and Achievements (Highlights of Accomplishments)")}
-${ybar("A. Consolidated Student Internship Statistics")}
-<p class="cap"><b>Table 1.</b> Distribution of students deployed for internship in the College of Computing and Information Sciences during the ${esc(d.term)} (${qWord}).</p>
-<table><thead><tr><th style="width:52%">Program</th><th>Number of Students Enrolled and Deployed for Internship</th><th>Minimum Number of Hours Internship as stipulated in the Curriculum</th></tr></thead>
-<tbody>${t1rows || blankRow(3)}</tbody></table>
-${P(d.t1_note)}
-
-${ybar("B. Strengthening Industry and Institutional Partnerships")}
-<div class="sub">1. New Partnerships Established</div>
-<p class="cap in"><b>Table 2.</b> New internship partnerships with Host Training Establishments (HTEs) established by the College of Computing and Information Sciences, ${qWord}.</p>
-<div class="in"><table class="light"><thead><tr><th>Name of HTE</th><th>Date Entered/Notarized</th><th>Valid Until</th><th>Duration of Validity</th></tr></thead>
-<tbody>${d.new_hte.filter((r) => r.name).map((r) => `<tr><td>${esc(r.name)}</td><td>${fmt(r.notarized)}</td><td>${fmt(r.valid)}</td><td>${duration(r.notarized, r.valid)}</td></tr>`).join("") || blankRow(4)}</tbody></table></div>
-<div class="sub">2. Renewed Partnerships</div>
-<p class="cap in"><b>Table 3.</b> Renewed partnerships with Host Training Establishments (HTEs) that have an existing MOA but expired during the reporting period of the College of Computing and Information Science, ${qWord}.</p>
-<div class="in"><table><thead><tr><th>Name of HTE</th><th>Date Expired</th><th>Date Renewed/Notarized</th><th>Valid Until</th><th>Duration of Validity</th></tr></thead>
-<tbody>${d.renewed.filter((r) => r.name).map((r) => `<tr><td>${esc(r.name)}</td><td>${fmt(r.expired)}</td><td>${fmt(r.renewed)}</td><td>${fmt(r.valid)}</td><td>${duration(r.renewed, r.valid)}</td></tr>`).join("") || blankRow(5)}</tbody></table></div>
-${d.engagements.some((a) => a.title || a.text) ? `<div class="sub">3. Industry Engagement Activities and Linkages</div>
-${d.engagements.filter((a) => a.title || a.text).map((a) => `<div class="act"><b>Activity Title:</b> ${esc(a.title)}<br><b>Date Conducted:</b> ${fmt(a.date)}</div>${figs(a.photos, "one")}<div class="in">${P(a.text)}</div>`).join("")}` : ""}
-
-${ybar("C. Student Internship Deployment")}
-<p class="cap in"><b>Table 4.</b> Number of students from the College of Computing and Information Sciences deployed for internship to various Host Training Establishments (HTEs), by degree program, during the ${esc(d.term)} (${qWord}).</p>
-<div class="in"><table><thead><tr><th style="width:44%">Name of HTE</th><th>Number of Students Deployed</th><th>Category of HTE<br><small>(industry, government agency, NGO, research institution, IT company, hospital, school, etc.)</small></th><th>Internship Modalities<br><small>(On-site, Hybrid, Virtual, Project-based, etc.)</small></th></tr></thead>
-<tbody>${t4rows || blankRow(4)}</tbody></table>
-${P(d.deploy_note)}</div>
-${d.orientation || d.orientation_photos.length ? `<div class="sub">PRE-Deployment Orientation</div>${figs(d.orientation_photos, "one")}<div class="in">${P(d.orientation)}</div>` : ""}
-
-${ybar("D. Monitoring, Supervision, and Student Support")}
-<div class="in">${P(d.monitoring)}</div>
-${figs(d.monitoring_photos)}
-
-${ybar("E. Highlights of Activities Conducted")}
-<div class="in">${P(d.activities_intro)}</div>
-${d.activities.filter((a) => a.title || a.text).map((a, i) => `<div class="sub">${i + 1}. ${esc(a.title)}</div>${figs(a.photos)}<div class="in">${P(a.text)}</div>`).join("")}
-
-${bar("3. Best Practices")}
-${P(d.best_intro)}
-${d.best.filter((b) => b.title || b.text).map((b, i) => `<div class="plan"><b>${"abcdefghij"[i] || i + 1}. ${esc(b.title)}</b>${P(b.text)}</div>`).join("")}
-
-${bar("4. Challenges Encountered and Solutions Implemented")}
-${P(d.challenges_intro)}
-<table><thead><tr><th style="width:30%;text-align:left">Challenge</th><th style="width:33%;text-align:left">Description</th><th style="text-align:left">Solution Implemented</th></tr></thead>
-<tbody>${d.challenges.filter((c) => c.challenge || c.description || c.solution).map((c) => `<tr><td>${esc(c.challenge).replace(/\n/g, "<br>")}</td><td>${esc(c.description).replace(/\n/g, "<br>")}</td><td>${esc(c.solution).replace(/\n/g, "<br>")}</td></tr>`).join("") || blankRow(3)}</tbody></table>
-
-${bar("5. Future Plans and Initiatives")}
-${P(d.plans_intro)}
-${d.plans.filter((g) => g.title || g.text).map((g, i) => `<div class="plan in"><b>${"abcdefghij"[i] || i + 1}. ${esc(g.title)}</b>${P(g.text)}</div>`).join("")}
-${P(d.closing)}
-
-<div class="sign">
-  <div>Prepared by:<b>${esc(d.prepared.name)}</b>${esc(d.prepared.title)}</div>
-  <div>Noted by:<b>${esc(d.noted.name)}</b>${esc(d.noted.title)}</div>
-</div>
+${content}
 </td></tr></tbody></table>
 </body></html>`;
+}
+
+/* the same report for Word: no page decorations (Word can't place them), a simple cover, the same sections */
+function wordHtml({ year, quarter, qName, content: raw, logo }) {
+  // Word ignores display:block on <b>, so the signatories get their own lines
+  const content = raw.replace(/<div>(Prepared by:|Noted by:)<b>([\s\S]*?)<\/b>([\s\S]*?)<\/div>/g, '<p>$1</p><p><br><br><b>$2</b><br>$3</p>');
+  const boxes = Q_NAMES.map((n, i) => `<p class="qb">${i + 1 === quarter ? "&#9632;" : "&#9633;"} ${n} QUARTER</p>`).join("");
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Unit Performance Review Report - ${qName}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
+<style>
+  @page Section1 { size: 8.27in 11.69in; margin: 1in 0.9in 1in 1in; mso-header-margin: .5in; mso-footer-margin: .5in; }
+  div.Section1 { page: Section1; }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #111; }
+  p { margin: 0 0 6pt; text-align: justify; line-height: 1.35; }
+  .cover { text-align: center; }
+  .cover h1 { margin: 90pt 0 6pt; font-family: Georgia, serif; font-size: 26pt; color: #4f8a2a; }
+  .cover .year { font-family: "Times New Roman", serif; font-size: 22pt; font-weight: bold; margin: 18pt 0; text-align: center; }
+  .cover .qb { text-align: center; font-size: 13pt; margin: 2pt 0; }
+  .cover .band { margin-top: 60pt; padding: 10pt; background: #4f8a2a; color: #f4e7a1; font-family: "Times New Roman", serif; font-size: 15pt; text-align: center; }
+  .cover .form { margin-top: 30pt; font-family: "Courier New", monospace; font-size: 9pt; text-align: left; }
+  .bar { margin: 14pt 0 8pt; padding: 4pt 6pt; background: #6abf45; color: #fff; font-family: Verdana, sans-serif; font-weight: bold; font-size: 12pt; text-transform: uppercase; }
+  .ybar { margin: 12pt 0 6pt 14pt; padding: 3pt 6pt; background: #f7e36b; color: #2f6f2c; font-family: Verdana, sans-serif; font-weight: bold; font-size: 11pt; }
+  .sub { margin: 10pt 0 4pt 14pt; font-weight: bold; }
+  .in, .act { margin-left: 14pt; }
+  .cap { font-size: 10pt; margin: 8pt 0 2pt; }
+  table { width: 100%; border-collapse: collapse; font-size: 10pt; margin-bottom: 6pt; }
+  th { border: 1px solid #333; padding: 3pt 5pt; font-weight: bold; text-align: center; }
+  td { border: 1px solid #333; padding: 2pt 5pt; vertical-align: top; text-align: left; }
+  td p { text-align: left; }
+  table.light th { background: #f2f2f2; text-align: left; }
+  tr.grp td { background: #f7d94c; font-weight: bold; }
+  .c { text-align: center; }
+  .figs { text-align: center; margin: 6pt 0; }
+  .figs figure { display: inline-block; margin: 4pt; text-align: center; }
+  .figs img { width: 3in; } .figs.one img { width: 5in; }
+  .figs figcaption { font-size: 9pt; }
+  .struct { text-align: center; } .struct img { width: 6in; }
+  .plan b { display: block; margin: 6pt 0 3pt; }
+  .sign { margin-top: 30pt; } .sign div { margin-bottom: 26pt; } .sign b { display: block; margin-top: 24pt; text-transform: uppercase; }
+</style></head><body><div class="Section1">
+<div class="cover">
+  <p style="text-align:left"><img src="${logo}" width="70" height="70" alt=""></p>
+  <h1>UNIT PERFORMANCE<br>REVIEW REPORT</h1>
+  <p class="year">${year}</p>
+  ${boxes}
+  <p class="band">COLLEGE OF COMPUTING AND<br>INFORMATION SCIENCES</p>
+  <p class="form">F-PLN-006, Rev.003, 08/30/2024</p>
+</div>
+<br clear="all" style="page-break-before:always">
+${content}
+</div></body></html>`;
 }
 
 const QR_CSS = `
@@ -818,6 +1133,16 @@ const QR_CSS = `
   .ix-page .qr-hint { margin: 0; font-size: 12.5px; color: #6b7280; }
   .ix-page .qr-fixed summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #4b5563; }
   .ix-page .qr-fixed-body { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .ix-page .qr-fixed-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+  .ix-page .qr-fixed-top .qr-hint { margin: 0; }
+  .ix-page .qr-fixed-top .ix-b { flex: none; }
+  .ix-page .qr-todo { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; padding: 8px 12px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+  .ix-page .qr-read { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 12px; }
+  .ix-page .qr-read details { border: 1px solid #eceff3; border-radius: 12px; padding: 10px 14px; background: #fafbfc; }
+  .ix-page .qr-read summary { cursor: pointer; font-size: 14px; font-weight: 700; color: #3f7d20; }
+  .ix-page .qr-read p, .ix-page .qr-read li { font-size: 13.5px; line-height: 1.6; color: #374151; margin: 8px 0 0; }
+  .ix-page .qr-read ol, .ix-page .qr-read ul { margin: 6px 0 0; padding-left: 20px; }
   .ix-page .qr-fixed-body > * { width: 100%; }
   .ix-page .qr-sec textarea.ix-input, .ix-page .qr-sec input.ix-input:not(.qr-num) { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }
   .ix-page .qr-sec textarea.ix-input { resize: vertical; min-height: 0; height: auto; padding: 9px 12px; line-height: 1.5; }
@@ -853,20 +1178,60 @@ const QR_CSS = `
   .ix-page .qr-prog span { color: #64748b; }
   .ix-page .qr-prog-bar { height: 7px; border-radius: 4px; background: #f1e7e1; margin: 0 4px 10px; overflow: hidden; }
   .ix-page .qr-prog-bar i { display: block; width: 0; height: 100% !important; min-width: 0; border: 0; margin: 0; background: #ea580c; border-radius: inherit; transition: width .3s; }
-  .ix-page .qr-nav-i { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 9px; background: transparent;
-    font: inherit; font-size: 13px; color: #334155; text-align: left; cursor: pointer; }
+  .ix-page .qr-nav-i { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent;
+    font: inherit; font-size: 13.5px; line-height: 1.3; color: #374151; text-align: left; cursor: pointer; }
+  .ix-page .qr-nav-i span { flex: 1; min-width: 0; }
+  .ix-page .qr-nav-i > em, .ix-page .qr-nav-g em { flex: none; width: 18px; font-style: normal; font-weight: 700; color: #9ca3af; font-size: 12.5px; }
+  .ix-page .qr-nav-i.sub { padding-left: 24px; font-size: 13px; }
   .ix-page .qr-nav-i:hover { background: #f8f9fb; }
-  .ix-page .qr-nav-i.on { background: #fff4ee; color: #c2410c; font-weight: 700; box-shadow: inset 3px 0 0 #ea580c; }
-  .ix-page .qr-nav-i > i, .ix-page .qr-nav-key i { width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-    font-style: normal; font-size: 11px; font-weight: 800; flex: none; }
+  .ix-page .qr-nav-i.on { background: #fff4ee; color: #c2410c; font-weight: 700; }
+  .ix-page .qr-nav-i.on > em { color: #e8582a; }
+  .ix-page .qr-nav-g { display: flex; align-items: center; gap: 10px; padding: 10px 10px 4px; font-size: 13.5px; font-weight: 700; color: #1f2937; }
+  .ix-page .qr-nav-i > i, .ix-page .qr-nav-key i { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    font-style: normal; font-size: 10.5px; font-weight: 800; flex: none; }
   .ix-page .qr-nav-i > i.ok, .ix-page .qr-nav-key i.ok { background: #16a34a; color: #fff; }
   .ix-page .qr-nav-i > i.part, .ix-page .qr-nav-key i.part { background: #fde68a; color: #92400e; }
-  .ix-page .qr-nav-i > i.none, .ix-page .qr-nav-key i.none { background: #eef0f4; color: #94a3b8; }
-  .ix-page .qr-nav-key { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 10px 4px 0; font-size: 11.5px; color: #94a3b8; }
-  .ix-page .qr-nav-key i { width: 16px; height: 16px; font-size: 9.5px; margin-left: 4px; }
+  .ix-page .qr-nav-i > i.none, .ix-page .qr-nav-key i.none { background: transparent; border: 1.5px solid #d6dae1; }
+  .ix-page .qr-nav-key { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 12px 10px 0; padding-top: 10px; border-top: 1px solid #f1f3f6; font-size: 11.5px; color: #94a3b8; }
+  .ix-page .qr-nav-key i { width: 14px; height: 14px; font-size: 8.5px; margin-left: 4px; }
   .ix-page .qr-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
   .ix-page .qr-row { justify-content: space-between !important; }
   @media (max-width: 900px) { .ix-page .qr-layout { grid-template-columns: 1fr; } .ix-page .ix-content .qr-nav { position: static; } }
 
   .ix-page .qr-sec > .ix-b { align-self: flex-start; }
+  /* left to do */
+  .ix-page .qr-left { margin: 0 4px 10px; padding: 10px 12px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; font-size: 12.5px; }
+  .ix-page .qr-left.ok { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+  .ix-page .qr-left b { display: block; margin-bottom: 4px; color: #92400e; } .ix-page .qr-left.ok b { color: #15803d; margin: 0; }
+  .ix-page .qr-left ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .ix-page .qr-left li button { border: 0; background: none; padding: 2px 0; font: inherit; font-size: 12px; color: #78350f; text-align: left; cursor: pointer; }
+  .ix-page .qr-left li button:hover { color: #c2410c; text-decoration: underline; }
+  .ix-page .qr-left small { color: #a16207; }
+  /* "the system counted this" check */
+  .ix-page .qr-chk { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; font-size: 13px; color: #92400e; font-weight: 600; }
+  .ix-page .qr-chk.on { justify-content: flex-start; background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+  .ix-page .qr-chk.on button { border: 0; background: none; font: inherit; font-size: 12.5px; color: #64748b; text-decoration: underline; cursor: pointer; margin-left: auto; }
+  /* suggestions from the system */
+  .ix-page .qr-from { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: #f6faf2; border: 1px solid #dcebcf; }
+  .ix-page .qr-from-h { display: flex; flex-direction: column; gap: 2px; } .ix-page .qr-from-h b { font-size: 13.5px; color: #2f6f2c; } .ix-page .qr-from-h small { font-size: 12px; color: #4b5563; }
+  .ix-page .qr-from ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .ix-page .qr-from li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: #fff; border: 1px solid #e5eedc; }
+  .ix-page .qr-from li > span { flex: 1; min-width: 0; display: flex; flex-direction: column; } .ix-page .qr-from li small, .ix-page .qr-tick small { font-size: 12px; color: #6b7280; }
+  .ix-page .qr-tick { flex: 1; display: flex; align-items: center; gap: 10px; cursor: pointer; } .ix-page .qr-tick > span { display: flex; flex-direction: column; }
+  .ix-page .qr-tick input { width: 17px; height: 17px; accent-color: #e8582a; }
+  .ix-page .qr-suggp { margin: 0; font-size: 13px; line-height: 1.55; color: #374151; } .ix-page .qr-suggp.mut { color: #94a3b8; }
+  .ix-page .qr-from > .ix-b, .ix-page .qr-sugg { align-self: flex-start; }
+  .ix-page .qr-sugg { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 700; color: #ea580c; cursor: pointer; }
+  /* guided questions */
+  .ix-page .qr-guide { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 12px; background: #fafbfc; border: 1px solid #eef0f4; }
+  .ix-page .qr-guide-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; color: #4b5563; }
+  .ix-page .qr-ideas { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; } .ix-page .qr-ideas small { font-size: 12px; color: #6b7280; font-weight: 600; } .ix-page .qr-ideas small.mut { font-weight: 500; color: #94a3b8; width: 100%; }
+  .ix-page .qr-ideas button { border: 1px dashed #f0b896; background: #fff9f5; color: #c2410c; border-radius: 99px; padding: 4px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .ix-page .qr-ideas button:hover { background: #fff1e8; }
+  .ix-page .qr-ideas button.sys { border-style: solid; border-color: #fcd34d; background: #fffbeb; color: #92400e; }
+  .ix-page .qr-from li b, .ix-page .qr-tick b { font-size: 13.5px !important; font-weight: 700; color: #1f2937; line-height: 1.3; }
+  .ix-page .qr-q { font-size: 12.5px; font-weight: 700; color: #374151; display: flex; align-items: center; gap: 6px; }
+  .ix-page .qr-q em { font-style: normal; width: 20px; height: 20px; border-radius: 6px; background: #4d9a2a; color: #fff; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
+  .ix-page .qr-item.three > div { display: flex; flex-direction: column; gap: 6px; }
+  .ix-page .qr-end { display: inline-flex; gap: 8px; }
 `;

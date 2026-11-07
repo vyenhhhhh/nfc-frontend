@@ -26,6 +26,13 @@ export const priorHoursOf = (u) => Number(u?.prior_hours) || 0;
 // is the System Output Presentation required for this intern? (the HTE decides; the coordinator can change it)
 export const outputRequired = (u) => !(u?.output_required === false || u?.output_required === 0 || u?.output_required === "0");
 // the requirements of a phase for one intern (no System Output Presentation when the HTE doesn't require it)
+// is this weekly / monthly report (from GET /reports) for this intern? Same rule as the server (ReportController::appliesTo)
+const hteKey = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+export const reportFor = (rp, u) => !u ? false
+  : rp.audience === "programs" ? (rp.programs || []).includes(programKey(u.program))
+  : rp.audience === "interns" ? (rp.intern_ids || []).map(Number).includes(Number(u.id))
+  : rp.audience === "htes" ? (rp.htes || []).map(hteKey).includes(hteKey(u.placement))
+  : true;
 export const reqsFor = (phase, u) => (REQUIREMENTS_BY_PHASE[phase] || []).filter((r) => r.key !== "system_output" || !u || outputRequired(u));
 
 /* ── DTR type, set per intern (depends on the HTI) ──
@@ -92,9 +99,60 @@ export const MODALITY_HINT = {
   onsite: "Times in and out at the kiosk",
   hybrid: "Kiosk on office days, Submit Online on remote days",
   virtual: "Logs every day through Submit Online",
-  project: "Works on a project: kiosk or Submit Online, as the HTE sets it",
+  project: "Works on a project: done when the project is complete (supervisor marks it, coordinator confirms it)",
 };
 export const modalityOf = (u) => (MODALITIES[u?.modality] ? u.modality : "onsite");
+// Is the OJT done? Project-based: when the project is confirmed complete (supervisor marks it, coordinator confirms it),
+// even before the required hours. Everyone else: when the rendered hours reach the required hours.
+export const ojtComplete = (u, hours) => (modalityOf(u) === "project"
+  ? !!u?.project_confirmed_at
+  : Number(hours) + 0.0001 >= requiredHoursFor(u?.program, u?.prior_hours));
+
+/* Project status of a project-based intern, on the intern's summary.
+   The intern's HTE supervisor marks the project complete; the OJT coordinator (or admin) confirms it. */
+export function ProjectStatusField({ u }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true; setSt(null); setErr("");
+    fetch(`${API}/interns/${u.id}/project`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => { if (alive && d && "project_based" in d) setSt(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, [u?.id]);
+  let me = {};
+  try { me = JSON.parse(sessionStorage.getItem("user") || "{}"); } catch { /* not signed in */ }
+  const call = async (method, path) => {
+    setBusy(true); setErr("");
+    try {
+      const res = await fetch(`${API}/interns/${u.id}/project/${path}`, { method, headers: { Accept: "application/json" } });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || "Couldn't save.");
+      setSt(d); u.project_marked_at = d.marked_at; u.project_confirmed_at = d.confirmed_at;   // keeps the lists in step
+    } catch (e) {
+      setErr(e instanceof TypeError ? "Couldn't reach the server." : e.message);
+    } finally { setBusy(false); }
+  };
+  if (!st) return <b>—</b>;
+  const isSup = me.role === "supervisor" && Number(u?.supervisor_id) === Number(me.id);
+  const isCoord = me.role === "ojt_coordinator" || me.role === "admin";
+  const label = st.confirmed_at ? "Project complete" : st.marked_at ? "Marked complete · waiting for the coordinator" : "In progress";
+  const btn = (txt, method, path) => (
+    <button type="button" className="ix-b ghost sm" disabled={busy} onClick={() => call(method, path)}>{txt}</button>
+  );
+  return (
+    <span className="prj-set">
+      <span className={st.confirmed_at ? "uz-chip g" : "uz-chip"} title={st.marked_by_name ? `Marked by ${st.marked_by_name}${st.confirmed_by_name ? `, confirmed by ${st.confirmed_by_name}` : ""}` : "The OJT is complete once the project is done"}>{label}</span>
+      {isSup && !st.marked_at && btn("Mark project complete", "POST", "mark")}
+      {isSup && st.marked_at && !st.confirmed_at && btn("Undo", "DELETE", "mark")}
+      {isCoord && st.marked_at && !st.confirmed_at && btn("Confirm complete", "POST", "confirm")}
+      {isCoord && st.confirmed_at && btn("Undo confirmation", "DELETE", "confirm")}
+      {err && <em className="err">{err}</em>}
+    </span>
+  );
+}
+// the kinds of HTE (the same list as the CCIS quarterly reports, Table 4)
+export const HTE_CATEGORIES = ["Government Agency", "Academic / University Office", "Educational Institution", "IT Company", "Private Company / Industry", "Research Center", "Hospital", "NGO", "NGO / Religious", "Utility Service", "Transportation", "Engineering", "Other"];
 export const scopeOf = (u) => (u?.scope === "international" ? "outbound" : SCOPES[u?.scope] ? u.scope : "local");
 
 // the coordinator (or admin) changes them right on the intern's summary; everyone else sees the labels
@@ -117,6 +175,8 @@ export function PlacementField({ u }) {
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.message || "Couldn't save.");
       u[k] = e.target.value; if (d.work_mode) u.work_mode = d.work_mode;   // keeps the list filters in step
+      // "Same as the HTE" comes back as the HTE's modality; an exception is marked as the intern's own
+      if (k === "modality" && d.modality) { u.modality = d.modality; u.modality_custom = d.modality_custom; setV((x) => ({ ...x, modality: d.modality })); }
       setState("saved");
     } catch (err) {
       setV(prev); setState(err instanceof TypeError ? "Couldn't reach the server." : err.message);
@@ -126,7 +186,9 @@ export function PlacementField({ u }) {
     <span className="plc-set">
       <select value={v.modality} onChange={change("modality")} disabled={state === "saving"} aria-label="Internship modality" title={MODALITY_HINT[v.modality]}>
         {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        <option value="hte">↺ Same as the HTE</option>
       </select>
+      {u.modality_custom && Number(u.modality_custom) !== 0 && <em className="plc-own" title="Different from the HTE's modality. Pick “Same as the HTE” to follow it again.">Own</em>}
       <select value={v.scope} onChange={change("scope")} disabled={state === "saving"} aria-label="Internship scope" title={SCOPE_HINT[v.scope]}>
         {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={k} title={SCOPE_HINT[k]}>{l}</option>)}
       </select>
@@ -155,7 +217,7 @@ export const PRE_REQUIREMENTS = [
 // During the internship (weekly / monthly reports can be submitted many times)
 export const DURING_REQUIREMENTS = [
   { key: "supervisor_feedback_form", label: "Training Supervisor Feedback Form", hint: "Give it to your HTE supervisor at the start — it is used to monitor and grade you" },
-  { key: "weekly_report", label: "Weekly / Monthly Report", hint: "Submit one every week (or month, as instructed)", repeat: true },
+  { key: "weekly_report", label: "Weekly / Monthly Report", hint: "Upload each report your OJT coordinator asks for (she sets the name and the due date)", repeat: true },
   { key: "performance_appraisal", label: "Student Trainee Performance Appraisal", hint: "Your HTE supervisor's final rating, given in your last week" },
 ];
 export const POST_REQUIREMENTS = [
@@ -167,6 +229,30 @@ export const POST_REQUIREMENTS = [
 ];
 export const REQUIREMENTS_BY_PHASE = { pre: PRE_REQUIREMENTS, during: DURING_REQUIREMENTS, post: POST_REQUIREMENTS };
 export const PHASE_LABEL = { pre: "Pre-internship", during: "During internship", post: "Post-internship" };
+
+/* The OJT coordinator manages the list (Interns → Requirements → Manage requirements; GET /requirements).
+   The lists above are only the starting list: once the server answers, they are filled IN PLACE with the
+   coordinator's list, so every page that imported them sees the current requirements.
+   Shell loads them once after sign-in, before showing the page. */
+export const REQ_EVENT = "mytrack:requirements";
+let reqLoad = null;
+export function loadRequirements(force = false) {
+  if (reqLoad && !force) return reqLoad;
+  reqLoad = fetch(`${API}/requirements`, { headers: { Accept: "application/json" }, cache: force ? "no-store" : undefined })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      const got = d?.requirements;
+      if (!got || !Array.isArray(got.pre) || !got.pre.length) return false;   // not set up yet: keep the starting list
+      Object.entries(REQUIREMENTS_BY_PHASE).forEach(([phase, list]) => {
+        const next = (got[phase] || []).map((r) => ({ key: r.key, label: r.label, ...(r.hint ? { hint: r.hint } : {}), ...(r.repeat ? { repeat: true } : {}), id: r.id }));
+        list.splice(0, list.length, ...next);
+      });
+      window.dispatchEvent(new Event(REQ_EVENT));
+      return true;
+    })
+    .catch(() => false);
+  return reqLoad;
+}
 
 // Due date status of one requirement: { label, tone } or null.  sub = the intern's latest submission.
 export function dueStatus(due, sub, today = todayManila()) {
@@ -377,6 +463,8 @@ const PATHS = {
   key: <><circle cx="8" cy="15" r="4" /><path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2" /></>,
   pencil: <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />,
   x: <path d="M6 6l12 12M18 6L6 18" />,
+  chevronLeft: <path d="M15 6l-6 6 6 6" />,
+  chevronRight: <path d="M9 6l6 6-6 6" />,
   lock: <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
   print: <><path d="M6 9V3h12v6" /><rect x="3" y="9" width="18" height="9" rx="2" /><path d="M7 14h10v7H7z" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
@@ -660,6 +748,8 @@ const DRAWER_CSS = `
   background: #fff; border: 1px solid #e7e9ee; border-radius: 20px; box-shadow: -18px 0 50px rgba(17, 24, 39, 0.14);
   font-family: inherit; color: #111827; overflow: hidden; animation: ixdwIn .3s cubic-bezier(.2,.8,.2,1) both; }
 .ix-drawer-wrap.closing .ix-drawer { animation: ixdwOut .2s ease both; }
+/* wide: room for a document preview (review queues) */
+.ix-drawer.wide { width: min(680px, 46vw, calc(100vw - 24px)); min-width: min(520px, calc(100vw - 24px)); }
 .ix-drawer-head { display: flex; align-items: center; gap: 14px; padding: 16px 20px 14px; border-bottom: 1px solid #eef0f3; }
 .ix-drawer-ico { width: 46px; height: 46px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: #fff3ec; color: #e8582a; border: 1px solid #fbe0d2; }
 .ix-drawer-ttl { flex: 1; min-width: 0; }
@@ -694,7 +784,7 @@ const DRAWER_CSS = `
 @media (max-height: 700px) { .ix-drawer-steps { display: none; } }
 @media (prefers-reduced-motion: reduce) { .ix-drawer, .ix-drawer-wrap { animation-duration: .01s !important; } }
 `;
-export function Drawer({ title, kicker, sub, icon = "calendar", onClose, footer, inPage, actions = null, children }) {
+export function Drawer({ title, kicker, sub, icon = "calendar", onClose, footer, inPage, actions = null, wide = false, children }) {
   const [closing, setClosing] = useState(false);
   const close = () => { if (closing) return; setClosing(true); setTimeout(onClose, 200); };
   useEffect(() => {
@@ -705,7 +795,7 @@ export function Drawer({ title, kicker, sub, icon = "calendar", onClose, footer,
   return createPortal(
     <div className={`ix-modal-wrap ix-drawer-wrap${closing ? " closing" : ""}`} style={inPage ? { zIndex: 5000 } : undefined} onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <style>{DRAWER_CSS}</style>
-      <aside className="ix-drawer" role="dialog" aria-modal="true" aria-label={title}>
+      <aside className={wide ? "ix-drawer wide" : "ix-drawer"} role="dialog" aria-modal="true" aria-label={title}>
         <header className="ix-drawer-head">
           <span className="ix-drawer-ico"><Icon name={icon} size={20} /></span>
           <div className="ix-drawer-ttl">{kicker && <small>{kicker}</small>}<h2>{title}</h2></div>
@@ -988,8 +1078,7 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
       .then((r) => r.json())
       .then((d) => {
         if (!alive || !Array.isArray(d)) return;
-        setReports(d.filter((rp) => rp.audience === "programs" ? (rp.programs || []).includes(programKey(intern?.program))
-          : rp.audience === "interns" ? (rp.intern_ids || []).map(Number).includes(Number(internId)) : true));
+        setReports(d.filter((rp) => reportFor(rp, { ...(intern || {}), id: internId })));   // program, HTE or picked interns
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -1099,7 +1188,9 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
                       <b>{r.label}</b>
                       <small>{report ? report.text : SUB[st](m || {})}</small>
                     </span>
-                    {canViewFiles && m?.file_path && (
+                    {/* the server sends a file only to who may open it: the coordinator (every file),
+                        an HTE supervisor (only the feedback form, the appraisal and the evaluation forms of their interns) */}
+                    {m?.file_path && (
                       <a className="rc-view" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer" title={m.original_name || "Open file"}>
                         <Icon name="eye" size={13} /> View
                       </a>
@@ -1129,6 +1220,23 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
 }
 
 /* Requirements at a glance: Pre / During / Post side by side, one line per requirement with its status. */
+const RQD_CSS = `
+.rqd-sec { margin-bottom: 16px; }
+.rqd-sec h4 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #c2410c; }
+.rqd-sec h4 small { font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; color: #6b7280; }
+.rqd-sec ul { list-style: none; margin: 0; padding: 0; border: 1px solid #eef0f4; border-radius: 12px; overflow: hidden; }
+.rqd-sec li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid #f3f4f6; }
+.rqd-sec li:last-child { border-bottom: 0; }
+.rqd-name { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; color: #111827; }
+.rqd-name small { font-size: 11.5px; color: #6b7280; margin-top: 1px; } .rqd-name small.bad { color: #b91c1c; }
+.rqd-st { flex: none; padding: 3px 9px; border-radius: 8px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.rqd-st.approved { background: #dcfce7; color: #15803d; } .rqd-st.pending { background: #fef3c7; color: #b45309; }
+.rqd-st.rejected { background: #fee2e2; color: #b91c1c; } .rqd-st.none { background: #f3f4f6; color: #6b7280; }
+.ix-page a.rqd-view, .ix-page a.rqd-view:hover { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 12px; font-weight: 600; color: #374151; text-decoration: none !important; background: #fff; }
+.ix-page a.rqd-view:hover { border-color: #f6c7b0; color: #c2410c; }
+.rqd-note { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12px; color: #6b7280; }
+`;
+
 function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFiles = null, compact = false }) {
   const [movs, setMovs] = useState(null);
   const [reports, setReports] = useState([]);
@@ -1143,8 +1251,7 @@ function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFil
       .then((r) => r.json())
       .then((d) => {
         if (!alive || !Array.isArray(d)) return;
-        setReports(d.filter((rp) => rp.audience === "programs" ? (rp.programs || []).includes(programKey(intern?.program))
-          : rp.audience === "interns" ? (rp.intern_ids || []).map(Number).includes(Number(internId)) : true));
+        setReports(d.filter((rp) => reportFor(rp, { ...(intern || {}), id: internId })));   // program, HTE or picked interns
       }).catch(() => {});
     return () => { alive = false; };
   }, [internId, intern?.program, open]);
@@ -1175,10 +1282,42 @@ function RequirementsBoard({ internId, intern, canViewFiles = false, onReviewFil
   const sums = ["pre", "during", "post"].map(sumRow);
   const missAll = totalAll - okAll - cnt.pending;
   const openFiles = () => (onReviewFiles ? onReviewFiles() : setOpen(true));
+  // "View requirements": a slide-in panel, the same list as the coordinator's checklist (Interns → Requirements):
+  // one section per phase, each requirement with its status in words, the date, the remarks, and View when the file may be opened
+  const RQD_WORD = { approved: "Approved", pending: "Waiting for review", rejected: "Returned", none: "Not submitted" };
+  const latestOf = (key, ph) => (movs || []).find((m) => m.requirement === key && (m.phase || "pre") === ph);
+  const rqdDay = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "");
   const detailModal = open && (
-    <Modal title="Requirements" sub={intern?.name} wide onClose={() => setOpen(false)}>
-      <RequirementChecklist internId={internId} intern={intern} canViewFiles={canViewFiles} />
-    </Modal>
+    <Drawer inPage icon="folder" kicker={[intern?.student_id, programKey(intern?.program)].filter(Boolean).join(" · ") || "Requirements"}
+      title={intern?.name || "Requirements"} sub={`${okAll} of ${totalAll} requirements approved`} onClose={() => setOpen(false)}>
+      <style>{RQD_CSS}</style>
+      {!movs ? <Spinner /> : phases.map((p) => (
+        <section key={p.ph} className="rqd-sec">
+          <h4>{PHASE_LABEL[p.ph]} <small>{p.ok} of {p.rows.length} approved</small></h4>
+          <ul>
+            {p.rows.map(({ r, st }) => {
+              const m = r.key === "weekly_report" ? null : latestOf(r.key, p.ph);
+              const repOk = r.key === "weekly_report" ? reports.filter((rp) => (movs || []).find((x) => Number(x.report_id) === Number(rp.id))?.status === "approved").length : 0;
+              return (
+                <li key={r.key}>
+                  <span className="rqd-name">{r.label}
+                    {r.key === "weekly_report" ? <small>{reports.length ? `${repOk} of ${reports.length} reports approved` : "No report asked yet"}</small>
+                      : st === "rejected" && m?.remarks ? <small className="bad">Returned: {m.remarks}</small>
+                      : m?.created_at ? <small>Sent {rqdDay(m.created_at)}</small> : null}
+                  </span>
+                  {m?.file_path && (
+                    <a className="rqd-view" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer" title={m.original_name || "Open file"}>
+                      <Icon name="eye" size={13} /> View</a>
+                  )}
+                  <span className={`rqd-st ${st}`}>{RQD_WORD[st]}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+      {!canViewFiles && <p className="rqd-note"><Icon name="lock" size={12} /> Personal documents (medical, consent, contract…) are only opened by the OJT coordinator.</p>}
+    </Drawer>
   );
 
   // the intern profile's summary card: a plain section
@@ -1323,7 +1462,9 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
             <div className="uz-f"><small>Status</small>
               <span className={isOnline ? "uz-st" : "uz-st off"}><i />{isOnline ? "Online now" : `Offline · ${seenText(u)}`}</span></div>
             <div className="uz-f"><small>NFC card</small><b>{u.nfc_uid ? "Linked" : "No card yet"}</b></div>
-            {pct >= 100 && <div className="uz-f"><small>Hours</small><span className="uz-chip g">Hours complete</span></div>}
+            {modalityOf(u) === "project"
+              ? <div className="uz-f"><small>Project</small><ProjectStatusField u={u} /></div>
+              : pct >= 100 && <div className="uz-f"><small>Hours</small><span className="uz-chip g">Hours complete</span></div>}
             {onViewRecords && <button type="button" className="ix-b ghost sm uz-wide" onClick={onViewRecords}><Icon name="list" size={14} /> View records</button>}
           </div>
         </aside>
@@ -1450,6 +1591,7 @@ const IPA_CSS = `
 .plc-set select, .ipa-dtr .dtr-set select { font: inherit; font-size: 12.5px; font-weight: 600; height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid #e3e5ea; background: #fff; color: #1f2430; cursor: pointer; max-width: 100%; }
 .ipa-dtr .dtr-set { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .plc-set em { font-style: normal; font-size: 11.5px; font-weight: 700; } .plc-set em.ok { color: #15803d; } .plc-set em.err { color: #b91c1c; }
+.plc-set em.plc-own { padding: 2px 8px; border-radius: 99px; background: #eef2ff; color: #4338ca; }
 .plc-ro { font-weight: 600; }
 /* right side */
 .ipa-ii { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 22px; align-items: stretch; background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; padding: 16px; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 22px -16px rgba(16,24,40,.22); }
@@ -1829,6 +1971,11 @@ const UZ_CSS = `
 .uz { display: flex; flex-direction: column; gap: 16px; color: #1f2430; width: 100%; max-width: 1080px; }
 .uz small, .uz em { font-style: normal; }
 .uz-top { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+/* add / edit form: the bar (Back · title · Cancel · Save) stays at the top while the long form scrolls */
+.uz-form > .uz-top { position: sticky; top: 0; z-index: 6; margin: 0 -2px; padding: 10px 2px 12px; background: var(--ix-surface, #fff); border-bottom: 1px solid #eef0f3; }
+/* name on one line: First · Middle · Last · Extension (the extension is short) */
+.uz-grid.uz-names { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, .55fr); margin-bottom: 14px; }
+@media (max-width: 1000px) { .uz-grid.uz-names { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .uz-top h2 { margin: 0 auto 0 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .uz-top .uz-back { flex: none; }
 .uz-act { display: flex; gap: 8px; margin-left: auto; }
@@ -1881,6 +2028,14 @@ const UZ_CSS = `
 .uz-sum .uz-sec h3 { margin-bottom: 0; }
 .uz-sum .ipx-phs { display: flex; flex-direction: column; gap: 8px; }
 .uz-mon .uz-card { padding: 2px 20px; }
+/* the information card and the summary card end on the same bottom line; the summary's last section takes the extra
+   height and its button ("Review submitted files") sits at the bottom */
+@media (min-width: 1251px) {
+  .uz-body.three > .uz-card { align-self: stretch; }
+  .uz-body.three > .uz-sum { display: flex; flex-direction: column; }
+  .uz-body.three > .uz-sum > .uz-sec:last-child { flex: 1 1 auto; }
+  .uz-body.three > .uz-sum > .uz-sec:last-child > .uz-wide { margin-top: auto; }
+}
 @media (max-width: 1250px) { .uz-body.three { grid-template-columns: 190px minmax(0, 1fr); } .uz-body.three .uz-sum { grid-column: 2; } }
 .uz-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
 
@@ -2117,6 +2272,14 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
   // adding: the role is picked first in the "What kind of account?" window (RolePickModal)
   const roleList = ROLE_KEYS.filter((k) => !roles || roles.includes(k));
   const today = todayManila();
+  // the modality of the intern's HTE: from the chosen supervisor, or the HTE with the same name as the placement
+  const hk = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+  const hteModOf = (x) => {
+    const list = supervisors || [];
+    const bySup = x.supervisor_id ? list.find((s) => String(s.id) === String(x.supervisor_id))?.hte_modality : null;
+    return MODALITIES[bySup] ? bySup : (list.find((s) => s.hte_modality && hk(s.placement) && hk(s.placement) === hk(x.placement))?.hte_modality || null);
+  };
+  const effMod = f.modality === "hte" || !f.modality ? (hteModOf(f) || "onsite") : f.modality;   // what the intern will actually have
 
   const cell = (label, control, { full = false, hint, plain = false } = {}) => {
     const Tag = plain ? "div" : "label";
@@ -2204,14 +2367,17 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
         <div className="uz-card">
           <div className="uz-sec">
             <h3>Personal details</h3>
-            <div className="uz-grid">
+            {/* the name on one line, in the order it is written */}
+            <div className="uz-grid uz-names">
               {fld("First name", text("first_name", { required: true }))}
               {fld("Middle name", text("middle_name"), { opt: true })}
               {fld("Last name", text("last_name", { required: true }))}
               {fld("Extension", <>
-                {text("name_extension", { list: "name-ext-list", maxLength: 20, placeholder: "e.g. Jr., III" })}
+                {text("name_extension", { list: "name-ext-list", maxLength: 20, placeholder: "Jr., III" })}
                 <datalist id="name-ext-list">{["Jr.", "Sr.", "II", "III", "IV", "V"].map((x) => <option key={x} value={x} />)}</datalist>
               </>, { plain: true, opt: true })}
+            </div>
+            <div className="uz-grid">
               {fld("Birthday", text("date_of_birth", { type: "date", max: today, required: add }), { opt: !add })}
               {fld("Contact number", text("contact_number", { type: "tel", placeholder: "e.g. 09123456789" }), { opt: true })}
               {fld("Email", text("email", { type: "email", required: true, placeholder: "e.g. juan@csu.edu.ph" }))}
@@ -2227,6 +2393,18 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                   { full: true, opt: !add, hint: "Use the same name as the interns' Placement, so the coordinator can match them." })}
                 {fld("HTE address", text("hte_address", { placeholder: "Street, Barangay, City" }), { opt: true })}
                 {fld("MOA valid until", text("moa_valid_until", { type: "date" }), { opt: true, hint: "Leave empty if there is no MOA yet." })}
+                {fld("Category of the HTE", (
+                  <select className="uf-input" value={f.hte_category || ""} onChange={set("hte_category")}>
+                    <option value="">Not set yet</option>
+                    {HTE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                ), { opt: true, hint: "Industry, government agency, NGO, research institution, IT company, hospital, school…" })}
+                {fld("Modality at this HTE", (
+                  <select className="uf-input" value={f.hte_modality || ""} onChange={set("hte_modality")}>
+                    <option value="">Not set yet</option>
+                    {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                ), { opt: true, hint: "Every intern placed at this HTE gets it automatically (except interns given their own)." })}
                 {fld("System output presentation", (
                   <select className="uf-input" value={outputRequired(f) ? "1" : "0"} onChange={set("output_required")}>
                     <option value="1">Required by this HTE</option>
@@ -2277,16 +2455,17 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                   </select>
                 ))}
                 {fld("Modality", (
-                  <select className="uf-input" value={f.modality || "onsite"} onChange={set("modality")}>
-                    {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  <select className="uf-input" value={f.modality || "hte"} onChange={set("modality")}>
+                    <option value="hte">Same as the HTE{hteModOf(f) ? ` (${MODALITIES[hteModOf(f)]})` : ""}</option>
+                    {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}{hteModOf(f) && k !== hteModOf(f) ? " (different from the HTE)" : ""}</option>)}
                   </select>
-                ))}
+                ), { hint: hteModOf(f) ? "Follows the HTE automatically. Pick another one only for an exception." : "The HTE's modality isn't set yet (Partner HTEs → HTEs & MOAs)." })}
                 {fld("Scope", (
                   <select className="uf-input" value={f.scope || "local"} onChange={set("scope")}>
                     {Object.entries(SCOPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </select>
                 ))}
-                {f.modality === "virtual"
+                {effMod === "virtual"
                   /* a virtual intern never taps the kiosk: each approved online day counts as one official day */
                   ? fld("Time record (DTR)", <span className="uz-none">Not needed. Virtual interns log their days through Submit Online.</span>, { plain: true })
                   : fld("Time record (DTR)", (
@@ -3048,6 +3227,17 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
   );
   };
   const todayText = (x) => x.isIn ? `In ${hm(x.tIn)}` : x.tOut ? `Out ${hm(x.tOut)}` : "Not in";
+  // the interns shown (with the filters), as a CSV for Excel / Google Sheets
+  const exportList = () => {
+    const cell = (v) => { const t = v === null || v === undefined ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const head = ["Intern", "Student ID", "Program", "HTE", "HTE supervisor", "Modality", "Scope", "Hours rendered", "Required hours", "Progress (%)", "Today", "Needs attention"];
+    const body = shown.map((x) => [x.u.name, x.u.student_id || "", programKey(x.u.program) || x.u.program || "", x.u.placement || "", x.u.supervisor_name || "",
+      MODALITIES[modalityOf(x.u)], SCOPES[scopeOf(x.u)], x.hours, x.required, Math.min(100, Math.round((x.hours / (x.required || 1)) * 100)),
+      todayText(x), x.flags.map((f) => f.t).join("; ")]);
+    const blob = new Blob(["\uFEFF" + [head, ...body].map((r) => r.map(cell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Interns_${today}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
 
   return (
     <>
@@ -3058,16 +3248,6 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
             <Icon name="search" size={15} />
             <input type="text" placeholder="Search name, ID or placement..." value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          <select className="ix-select mon-filter" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
-            <option value="all">All interns ({rows.length})</option>
-            <option value="in">On duty ({inCount})</option>
-            <option value="out">Not in ({rows.length - inCount})</option>
-            <option value="attn">Needs attention ({rows.filter((x) => x.flags.length).length})</option>
-          </select>
-          <select className="ix-select mon-filter" value={program} onChange={(e) => setProgram(e.target.value)} aria-label="Filter by program">
-            <option value="all">All programs</option>
-            {["BSIT", "BSCS", "BSIS"].map((k) => <option key={k} value={k}>{k} ({rows.filter((x) => programKey(x.u.program) === k).length})</option>)}
-          </select>
           {!hideHte && (
             <select className="ix-select mon-filter" value={hte} onChange={(e) => setHte(e.target.value)} aria-label="Filter by HTE">
               <option value="all">All HTEs</option>
@@ -3085,19 +3265,41 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
               </optgroup>
             </select>
           )}
-          <select className="ix-select mon-filter" value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Group interns">
-            <option value="none">No grouping</option>
-            <option value="hte">Group by HTE</option>
-          </select>
           <span className="mon-chip on mon-count">{shown.length} shown</span>
+          <button type="button" className="ix-b ghost sm mon-exp ix-exp" disabled={!shown.length} onClick={exportList} title="Save the interns shown for Excel / Google Sheets">
+            <Icon name="download" size={14} /> Export
+          </button>
+        </div>
+        {/* the filters with a few choices: one click each (same switch as the other pages) */}
+        <div className="mon-bar2">
+          <div className="so-tabs" role="tablist" aria-label="Filter by status">
+            {[["all", "All", rows.length], ["in", "On duty", inCount], ["out", "Not in", rows.length - inCount], ["attn", "Needs attention", rows.filter((x) => x.flags.length).length]].map(([k, l, n]) => (
+              <button key={k} type="button" role="tab" aria-selected={status === k} className={status === k ? "on" : ""} onClick={() => setStatus(k)}>{l} · {n}</button>
+            ))}
+          </div>
+          <div className="so-tabs" role="tablist" aria-label="Filter by program">
+            {[["all", "All programs"], ["BSIT", "BSIT"], ["BSCS", "BSCS"], ["BSIS", "BSIS"]].map(([k, l]) => (
+              <button key={k} type="button" role="tab" aria-selected={program === k} className={program === k ? "on" : ""} onClick={() => setProgram(k)}>
+                {l}{k !== "all" ? ` · ${rows.filter((x) => programKey(x.u.program) === k).length}` : ""}</button>
+            ))}
+          </div>
+          <div className="so-tabs mon-group" role="tablist" aria-label="Group interns">
+            {[["none", "List"], ["hte", "By HTE"]].map(([k, l]) => (
+              <button key={k} type="button" role="tab" aria-selected={groupBy === k} className={groupBy === k ? "on" : ""} onClick={() => setGroupBy(k)}>{l}</button>
+            ))}
+          </div>
         </div>
 
         {loading ? <Spinner /> : selected && showDetail ? (
           /* one intern: the summary details, with a way back to all the cards */
           <div className="imc-detail">
-            <button type="button" className="ix-b ghost sm imc-back" onClick={() => { setShowDetail(false); setSelectedId(null); }}>
-              <span aria-hidden="true">←</span> All interns
-            </button>
+            {/* header bar: the way back (orange, the main action here) and whose profile this is */}
+            <div className="imc-head">
+              <button type="button" className="ix-b primary imc-back" onClick={() => { setShowDetail(false); setSelectedId(null); }}>
+                <span aria-hidden="true">←</span> All interns
+              </button>
+              <span className="imc-head-t"><small>Intern profile</small><b>{selected.name}</b></span>
+            </div>
             <InternProfile
               key={selected.id} u={selected} records={records} today={today} canViewFiles={canViewFiles}
               onClose={() => { setSelectedId(null); setShowDetail(false); }}
@@ -3303,6 +3505,7 @@ export function AnnouncementManager({ user }) {
 
   const [compose, setCompose] = useState(false);   // the "New announcement" panel
   const [q, setQ] = useState("");
+  const [tab, setTab] = useState("posted");        // posted | removed
   const [openId, setOpenId] = useState(null);      // the announcement opened (full text)
   const match = (a) => !q.trim() || `${a.title} ${a.body}`.toLowerCase().includes(q.trim().toLowerCase());
   const postedList = items.filter(match).sort((x, y) => String(y.created_at || "").localeCompare(String(x.created_at || "")));   // newest first
@@ -3314,54 +3517,58 @@ export function AnnouncementManager({ user }) {
     <>
       <PageHeader title="Announcements" sub="Post updates for all interns. They get a notification right away." />
       <Msg msg={msg} />
+      {/* Posted / Removed (same switch as the other pages) · search · New announcement */}
       <div className="an-bar">
+        <div className="so-tabs" role="tablist" aria-label="Show">
+          {[["posted", "Posted", items.length], ["removed", "Removed", removed.length]].map(([k, l, n]) => (
+            <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => { setTab(k); setOpenId(null); }}>{l} · {n}</button>
+          ))}
+        </div>
         <label className="an-search"><Icon name="search" size={15} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search announcements" aria-label="Search announcements" /></label>
         <button type="button" className="ix-b primary an-new" onClick={() => { setMsg(null); setCompose(true); }}>
           <Icon name="plus" size={15} /> New announcement</button>
       </div>
 
-      {loading ? <Spinner /> : (
-        <>
-          {[["posted", "Posted", postedList, items.length], ["removed", "Removed", removedList, removed.length]].map(([view, label, list, total]) => (
-            <Fragment key={view}>
-              {view === "removed" && <div className="an-divider">Removed · {total}</div>}
-              <div className="an-grid">
-                {list.length === 0 ? (
-                  <div className="an-tile empty">
-                    <b>{q ? "Nothing matches your search." : view === "posted" ? "No announcements posted." : "No removed announcements."}</b>
-                    <small>{q ? "" : view === "posted" ? "Click “New announcement” to post one. Every intern gets a notification." : "Announcements you remove are kept here."}</small>
-                  </div>
-                ) : list.map((a) => {
-                  const key = `${view}${a.id}`;
-                  const isOpen = openId === key;
-                  const long = String(a.body || "").length > 140;
-                  return (
-                    <article key={a.id} className={`an-tile${view === "removed" ? " gone" : ""}`}>
-                      <div className="an-tile-top">
-                        <span className={view === "removed" ? "an-tag rm" : "an-tag"}>{view === "removed" ? "Removed" : "Posted"}</span>
-                        <small>{fmtDay(view === "removed" ? a.removed_at : a.created_at)}</small>
-                      </div>
-                      <h4>{a.title}</h4>
-                      <p className={isOpen ? "open" : ""}>{a.body}</p>
-                      <div className="an-tile-ft">
-                        {long ? <button type="button" className="an-link" onClick={() => setOpenId(isOpen ? null : key)}>{isOpen ? "Show less" : "Read more"}</button> : <span />}
-                        {view === "posted" ? (
-                          <button type="button" className="an-link danger" disabled={busy === `p${a.id}`} onClick={() => remove(a)}>
-                            <Icon name="trash" size={13} /> {busy === `p${a.id}` ? "..." : "Remove"}</button>
-                        ) : (
-                          <button type="button" className="an-link danger" disabled={busy === `h${a.id}`} onClick={() => purge(a)}>
-                            <Icon name="trash" size={13} /> {busy === `h${a.id}` ? "..." : "Delete for good"}</button>
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
+      {loading ? <Spinner /> : (() => {
+        const list = tab === "posted" ? postedList : removedList;
+        return (
+          /* one row per announcement: date · title and the first lines · action */
+          <div className="an-list2">
+            {list.length === 0 ? (
+              <div className="an-empty2">
+                <span className="an-empty2-ic"><Icon name={q ? "search" : "bell"} size={20} /></span>
+                <b>{q ? "Nothing matches your search." : tab === "posted" ? "No announcements posted." : "No removed announcements."}</b>
+                <small>{q ? "Try other words." : tab === "posted" ? "Click “New announcement” to post one. Every intern gets a notification." : "Announcements you remove are kept here."}</small>
               </div>
-            </Fragment>
-          ))}
-        </>
-      )}
+            ) : list.map((a) => {
+              const key = `${tab}${a.id}`;
+              const isOpen = openId === key;
+              const long = String(a.body || "").length > 160;
+              const when = tab === "removed" ? a.removed_at : a.created_at;
+              return (
+                <article key={a.id} className={`an-row${tab === "removed" ? " gone" : ""}`}>
+                  <div className="an-when"><b>{fmtDay(when)}</b><small>{tab === "removed" ? "Removed" : "Posted"}</small></div>
+                  <div className="an-txt">
+                    <h4>{a.title}</h4>
+                    <p className={isOpen ? "open" : ""}>{a.body}</p>
+                    {long && <button type="button" className="an-link" onClick={() => setOpenId(isOpen ? null : key)}>{isOpen ? "Show less" : "Read more"}</button>}
+                  </div>
+                  <div className="an-act">
+                    {tab === "posted" ? (
+                      <button type="button" className="ix-b ghost sm an-del" disabled={busy === `p${a.id}`} onClick={() => remove(a)}>
+                        <Icon name="trash" size={13} /> {busy === `p${a.id}` ? "..." : "Remove"}</button>
+                    ) : (
+                      <button type="button" className="ix-b ghost sm an-del" disabled={busy === `h${a.id}`} onClick={() => purge(a)}>
+                        <Icon name="trash" size={13} /> {busy === `h${a.id}` ? "..." : "Delete for good"}</button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {compose && (
         <Drawer inPage title="New announcement" kicker="Announcement" icon="send" onClose={() => setCompose(false)}
@@ -3397,7 +3604,35 @@ export function AnnouncementManager({ user }) {
 
 const AN_CSS = `
 .ix-page .an-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.ix-page .an-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.ix-page .an-bar .an-search { margin-left: auto; }
+/* the list: one row per announcement */
+.ix-page .an-list2 { flex: none !important; background: #fff; border: 1px solid #e8ebf0; border-radius: 14px; overflow: hidden; }
+.ix-page .an-row { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto; gap: 18px; align-items: start; padding: 14px 18px; border-bottom: 1px solid #f1f3f6; }
+.ix-page .an-row:last-child { border-bottom: 0; }
+.ix-page .an-row:hover { background: #fcfcfd; }
+.ix-page .an-when { display: flex; flex-direction: column; gap: 2px; padding-top: 1px; }
+.ix-page .an-when b { font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; }
+.ix-page .an-when small { font-size: 11.5px; color: #15803d; font-weight: 600; }
+.ix-page .an-row.gone .an-when small { color: #9ca3af; }
+.ix-page .an-txt { min-width: 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.ix-page .an-txt h4 { margin: 0; font-size: 14.5px; font-weight: 600; color: #111827; overflow-wrap: anywhere; }
+.ix-page .an-txt p { margin: 0; font-size: 13px; line-height: 1.55; color: #4b5563; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ix-page .an-txt p.open { display: block; }
+.ix-page .an-row.gone .an-txt h4, .ix-page .an-row.gone .an-txt p { color: #6b7280; }
+.ix-page .an-act { display: flex; align-items: center; }
+.ix-page .an-del { color: #b91c1c !important; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ix-page .an-del:hover:not(:disabled) { border-color: #f3c9c9 !important; background: #fef2f2 !important; }
+.ix-page .an-empty2 { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 48px 16px; text-align: center; }
+.ix-page .an-empty2-ic { width: 44px; height: 44px; border-radius: 50%; background: #fff1ea; color: #ea580c; display: grid; place-items: center; margin-bottom: 6px; }
+.ix-page .an-empty2 b { font-size: 14px; color: #111827; } .ix-page .an-empty2 small { font-size: 12.5px; color: #6b7280; max-width: 360px; }
+@media (max-width: 760px) {
+  .ix-page .an-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .ix-page .an-when { flex-direction: row; gap: 8px; align-items: baseline; }
+  .ix-page .an-bar .an-search { margin-left: 0; width: 100%; }
+}
+.ix-page .an-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: auto; gap: 14px; align-content: start; align-items: stretch; flex: none !important; height: auto !important; }
+/* a tile is only as tall as its text (cards in one row still share the row's height) */
+.ix-page .an-grid > .an-tile { height: auto; max-height: none; }
 .ix-page .an-tile { border: 1px solid #e8ebf0; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 150px; background: #fff; }
 .ix-page .an-tile-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ix-page .an-tile-top small { font-size: 12px; color: #9ca3af; white-space: nowrap; }
@@ -3474,9 +3709,9 @@ const NOTIF_PAGES = {
     mov_submission: "/coordinator/approvals?tab=movs", online_submission: "/coordinator/approvals?tab=online",
     online_review: "/coordinator/approvals?tab=online", overtime: "/coordinator/approvals?tab=overtime",
     overtime_review: "/coordinator/approvals?tab=overtime", nfc_request: "/coordinator/approvals?tab=nfc",
-    dtr_certified: "/coordinator/reports?tab=dtr", supervisor_assigned: "/coordinator/supervisors",
-    time_correction: "/coordinator/supervisors", work_mode_request: "/coordinator/supervisors",
-    announcement: "/coordinator/announcements", evaluation: "/coordinator/interns?tab=evaluation",
+    dtr_certified: "/coordinator/reports?tab=dtr", supervisor_assigned: "/coordinator/htes?tab=supervisors",
+    time_correction: "/coordinator/htes?tab=supervisors", work_mode_request: "/coordinator/htes?tab=supervisors",
+    announcement: "/coordinator/announcements", evaluation: "/coordinator/interns?tab=evaluation", quarterly_report: "/coordinator/reports?tab=quarterly",
   },
   supervisor: {
     online_submission: "/supervisor/approvals?tab=online", overtime: "/supervisor/approvals?tab=overtime",
@@ -3493,7 +3728,7 @@ const NOTIF_GUESS = [
   [/overtime/i, "overtime"], [/online attendance|remote/i, "online_submission"],
   [/\bmovs?\b|requirement|document/i, "mov_submission"], [/\bnfc\b|\bcard\b/i, "nfc_request"],
   [/id card to print/i, "nfc_print"], [/dtr/i, "dtr_certified"], [/supervisor assigned|new intern assigned/i, "supervisor_assigned"],
-  [/announcement/i, "announcement"],
+  [/announcement/i, "announcement"], [/quarterly report/i, "quarterly_report"],
 ];
 export function notifTarget(n, role) {
   const pages = NOTIF_PAGES[role] || {};
@@ -3687,7 +3922,7 @@ function FirstPasswordGate({ user, onSignOut, children }) {
   );
 }
 
-/* ───────── Data Privacy Act: asked once, on an intern's first sign-in (interns only) ─────────
+/* ───────── Data Privacy Act: asked once, on each user's first sign-in (wording depends on the role) ─────────
    Shown until the user agrees. "I don't agree" signs them out (the system can't be used without it).
    Only shown when the server has the consent column (php artisan migrate was run). */
 function PrivacyGate({ user, onDecline }) {
@@ -3695,15 +3930,15 @@ function PrivacyGate({ user, onDecline }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [checked, setChecked] = useState(false);
-  const isIntern = user?.role === "intern";
+  const notice = PRIVACY_NOTICE[user?.role];
   useEffect(() => {
-    if (!user?.id || !isIntern) return;
+    if (!user?.id || !notice) return;
     fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
       .then((r) => r.json())
       .then((d) => { const u = d?.user || d; if (u && "privacy_consent_at" in u && !u.privacy_consent_at) setNeed(true); })
       .catch(() => {});
-  }, [user?.id, isIntern]);
-  if (!need || !isIntern) return null;
+  }, [user?.id, notice]);
+  if (!need || !notice) return null;
   const agree = async () => {
     setBusy(true); setErr("");
     try {
@@ -3720,24 +3955,19 @@ function PrivacyGate({ user, onDecline }) {
         <div className="ix-modal-body pv-body">
           <p>Caraga State University – College of Computing and Information Sciences (CCIS) collects and uses your personal information
             through this system in line with the <b>Data Privacy Act of 2012 (Republic Act No. 10173)</b>.</p>
-          <h3>What we collect</h3>
-          <p>Your name, student ID, program, contact details, emergency contact, photo, OJT placement, attendance taps,
-            online attendance, and the requirements you upload.</p>
-          <h3>Why we collect it</h3>
-          <p>Only to monitor your OJT: record attendance, compute rendered hours, review requirements, and produce your DTR and reports.</p>
-          <h3>Who can see it</h3>
-          <p>The CCIS admin and your OJT coordinator. Your HTE supervisor sees only your attendance and requests. Uploaded files are
-            visible only to the OJT coordinator. Nothing is shared outside the university.</p>
-          <h3>How long we keep it</h3>
-          <p>For as long as the university's records policy requires. After your internship your account is deactivated, but your
-            records are kept.</p>
-          <h3>Your rights</h3>
-          <p>You may ask the CCIS office to see or correct your information at any time.</p>
+          <div className="pv-grid">
+            {notice.sections.map(([title, text], i) => (
+              <section key={title} className={notice.sections.length % 2 && i === notice.sections.length - 1 ? "pv-wide" : undefined}>
+                <h3>{title}</h3>
+                <p>{text}</p>
+              </section>
+            ))}
+          </div>
         </div>
         <div className="pv-foot">
           <label className="pv-check">
             <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-            <span>I have read this notice and I agree to the collection and use of my personal information for OJT monitoring.</span>
+            <span>{notice.agree}</span>
           </label>
           {err && <p className="pv-err">{err}</p>}
           <div className="pv-actions">
@@ -3750,20 +3980,74 @@ function PrivacyGate({ user, onDecline }) {
     document.body
   );
 }
+/* What the notice says, per role: [title, text] pairs. An odd last section spans both columns. */
+const RIGHTS = ["Your rights", "You may ask the CCIS office to see or correct your information at any time."];
+const PRIVACY_NOTICE = {
+  intern: {
+    agree: "I have read this notice and I agree to the collection and use of my personal information for OJT monitoring.",
+    sections: [
+      ["What we collect", "Your name, student ID, program, contact details, emergency contact, photo, OJT placement, attendance taps, online attendance, and the requirements you upload."],
+      ["Why we collect it", "Only to monitor your OJT: record attendance, compute rendered hours, review requirements, and produce your DTR and reports."],
+      ["Who can see it", "The CCIS admin and your OJT coordinator. Your HTE supervisor sees only your attendance and requests. Uploaded files are visible only to the OJT coordinator. Nothing is shared outside the university."],
+      ["How long we keep it", "For as long as the university's records policy requires. After your internship your account is deactivated, but your records are kept."],
+      RIGHTS,
+    ],
+  },
+  ojt_coordinator: {
+    agree: "I have read this notice. I agree to the use of my information, and I will protect the interns' personal data I handle.",
+    sections: [
+      ["What we collect", "Your name, email, contact details, photo, the programs and interns assigned to you, and a log of what you do in the system (approvals, reviews, edits)."],
+      ["Why we collect it", "To run your account, show interns and supervisors who their coordinator is, and keep a record of who approved or changed what."],
+      ["Who can see it", "The CCIS admin. Your interns and their HTE supervisors see your name and contact details. Nothing is shared outside the university."],
+      ["Your responsibility", "You can see interns' personal details, attendance and uploaded files. Use them only for OJT monitoring. Don't share, download or post them elsewhere, and keep your password to yourself."],
+      ["How long we keep it", "For as long as the university's records policy requires. If you leave the role your account is deactivated, but the activity log is kept."],
+      RIGHTS,
+    ],
+  },
+  supervisor: {
+    agree: "I have read this notice. I agree to the use of my information, and I will protect the interns' personal data I handle.",
+    sections: [
+      ["What we collect", "Your name, email, contact details, position, your company (HTE), and a log of what you do in the system (approvals, evaluations, edits)."],
+      ["Why we collect it", "To link you to the interns placed with you, let you approve their attendance and requests, and record your evaluations."],
+      ["Who can see it", "The CCIS admin and OJT coordinators. Your interns see your name and contact details. Nothing is shared outside the university."],
+      ["Your responsibility", "You see only your own interns' attendance, requests and basic details. Use them only for their OJT. Don't share or post them elsewhere, and keep your password to yourself."],
+      ["How long we keep it", "For as long as the university's records policy requires. When your HTE partnership ends your account is deactivated, but your records are kept."],
+      RIGHTS,
+    ],
+  },
+  admin: {
+    agree: "I have read this notice. I agree to the use of my information, and I will protect the personal data of every user in this system.",
+    sections: [
+      ["What we collect", "Your name, email, contact details, photo, and a log of everything you do in the system (accounts created, settings changed, records edited)."],
+      ["Why we collect it", "To run your account and keep an audit trail of administrative changes, as required for accountability under the Data Privacy Act."],
+      ["Who can see it", "Other CCIS admins. Coordinators, supervisors and interns see only your name. Nothing is shared outside the university."],
+      ["Your responsibility", "You can see every user's personal data. Open it only when your work needs it, don't export or share it outside the university, and report any breach to the CCIS office right away."],
+      ["How long we keep it", "For as long as the university's records policy requires. The audit log is kept even after your account is deactivated."],
+      RIGHTS,
+    ],
+  },
+};
+
 const PRIVACY_CSS = `
   .pv-wrap { z-index: 20000 !important; }   /* above the top bar, side menu and drawers */
-  .pv-modal { max-width: 560px !important; display: flex; flex-direction: column; max-height: calc(100dvh - 24px) !important; overflow: hidden !important; }
-  .pv-modal > header { flex: none; }
-  .pv-body { font-size: 13px; line-height: 1.55; color: #374151; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 12px !important; }
-  .pv-foot { flex: none; padding: 12px 24px 18px; border-top: 1px solid #eef0f3; background: var(--ix-surface, #fff); }
-  .pv-body p { margin: 0 0 8px; }
-  .pv-body h3 { margin: 12px 0 3px; font-size: 13px; font-weight: 700; color: #111827; }
-  .pv-check { display: flex; gap: 10px; align-items: flex-start; margin-top: 0; padding: 10px 12px; border-radius: 10px;
+  .pv-modal { max-width: 760px !important; display: flex; flex-direction: column; max-height: calc(100dvh - 24px) !important; overflow: hidden !important; }
+  .pv-modal > header { flex: none; padding: 16px 24px 8px !important; }
+  .pv-body { font-size: 12.5px; line-height: 1.5; color: #374151; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 10px !important; }
+  .pv-foot { flex: none; padding: 10px 24px 14px; border-top: 1px solid #eef0f3; background: var(--ix-surface, #fff); }
+  .pv-body p { margin: 0 0 6px; }
+  .pv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 4px; }
+  .pv-grid section { padding: 8px 12px; border-radius: 10px; background: #f8fafc; border: 1px solid #eef0f3; }
+  .pv-grid section p { margin: 0; }
+  .pv-grid .pv-wide { grid-column: 1 / -1; }
+  .pv-body h3 { margin: 0 0 2px; font-size: 12.5px; font-weight: 700; color: #111827; }
+  .pv-check { display: flex; gap: 10px; align-items: flex-start; margin-top: 0; padding: 8px 12px; border-radius: 10px;
     background: #fff7f2; border: 1px solid #fde2cf; cursor: pointer; font-size: 12.5px; color: #1f2937; }
   .pv-check input { margin-top: 2px; accent-color: #e8582a; width: 16px; height: 16px; flex: none; }
   .pv-err { color: #dc2626; font-size: 12px; margin-top: 8px; }
-  .pv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  @media (max-width: 480px) { .pv-foot { padding: 10px 16px 14px; } .pv-actions .ix-b { flex: 1 1 100%; } }
+  .pv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  @media (max-width: 640px) { .pv-grid { grid-template-columns: 1fr; gap: 6px; } .pv-grid section { padding: 6px 10px; } }
+  @media (max-width: 480px) { .pv-modal > header { padding: 14px 16px 6px !important; } .pv-body { padding-left: 16px !important; padding-right: 16px !important; font-size: 12px; }
+    .pv-foot { padding: 8px 16px 12px; } .pv-actions .ix-b { flex: 1 1 0; } }
   .fp-wrap { z-index: 20010 !important; }
   .fp-modal { max-width: 420px !important; }
   .fp-body { display: flex; flex-direction: column; gap: 10px; }
@@ -3779,13 +4063,25 @@ const PRIVACY_CSS = `
 export default function Shell({ navItems, user, children }) {
   const navigate = useNavigate();
   const { pathname: path, search: navSearch } = useLocation();
-  const [openGroups, setOpenGroups] = useState({});   // sub-menus the user opened or closed by hand
+  const [openGroups, setOpenGroups] = useState({});   // the current section folded by hand (false); every other section is closed
   const [tip, setTip] = useState(null);               // tooltip next to an icon when the sidebar is closed
   const [menuOpen, setMenuOpen] = useState(() => {
     // open by default on computers (labels showing); it remembers if you collapse it
     try { return !isMobile() && localStorage.getItem(SIDEBAR_KEY) !== "0"; } catch { return !isMobile(); }
   });
   const [isFull, setIsFull] = useState(false);
+
+  // the coordinator's list of requirements: loaded once before the page shows (at most ~2.5 s, then the starting list)
+  const [reqReady, setReqReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(() => alive && setReqReady(true), 2500);
+    loadRequirements().finally(() => { clearTimeout(t); if (alive) setReqReady(true); });
+    // the coordinator changed something: get the list again (the pages reload their own data at the same time)
+    const again = () => loadRequirements(true);
+    window.addEventListener(LIVE_EVENT, again);
+    return () => { alive = false; clearTimeout(t); window.removeEventListener(LIVE_EVENT, again); };
+  }, []);
 
   // tell the server this account has the portal open (shown as "Online" to coordinators and supervisors)
   useEffect(() => {
@@ -4101,7 +4397,8 @@ export default function Shell({ navItems, user, children }) {
             const item = (it) => {
               const here = path === it.path;
               const kids = it.children || [];
-              const open = kids.length > 0 && menuOpen && (openGroups[it.path] ?? here);
+              // accordion: only the section you are in is open (clicking its name again folds it)
+              const open = kids.length > 0 && menuOpen && here && openGroups[it.path] !== false;
               return (
                 <div key={it.path} className={open ? "ix-side-group open" : "ix-side-group"}>
                   <button
@@ -4177,7 +4474,7 @@ export default function Shell({ navItems, user, children }) {
 
         <main className="ix-main">
           <PageIconCtx.Provider value={(navItems.find((it) => it.path === path) || navItems.filter((it) => path.startsWith(it.path + "/")).sort((a, b) => b.path.length - a.path.length)[0] || {}).icon || null}>
-            <div className="ix-content" key={path}>{children}</div>
+            <div className="ix-content" key={path}>{reqReady ? children : <Spinner />}</div>
           </PageIconCtx.Provider>
         </main>
       </div>
@@ -4189,9 +4486,45 @@ export default function Shell({ navItems, user, children }) {
       <style>{lay3}</style>
       {/* every page reaches the bottom of the panel, like the dashboard */}
       <style>{FILL_CSS}</style>
+      {/* every "pick one" control (Waiting · Supervisor · Reviewed, Pending · History, phase pills...) looks the same */}
+      <style>{SEG_CSS}</style>
     </div>
   );
 }
+
+/* One look for every "pick one" switch: a light grey track, the picked option white with orange text
+   (the same as "Online workday · Excused absence" on the intern's Submit Online page). */
+const SEG = ".oa-switch, .ix-pills, .ct-pills, .idq-tabs, .so-tabs, .dl-tabs, .mv2-ph, .req-tabs, .an-tabs, .nc-seg, .cm-seg, .so-kind";
+const segIn = (sel) => SEG.split(", ").map((c) => `.ix-page ${c}${sel}`).join(", ");
+const SEG_CSS = `
+${segIn("")} {
+  display: inline-flex !important; flex-wrap: wrap; align-items: stretch; gap: 4px !important; padding: 3px !important;
+  background: #f3f4f6 !important; border: 1px solid #e8ebf0 !important; border-radius: 10px !important; box-shadow: none !important;
+  width: fit-content !important; max-width: 100%; box-sizing: border-box; align-self: flex-start;
+}
+${segIn(" > button")} {
+  display: inline-flex !important; align-items: center; justify-content: center; gap: 6px !important;
+  min-height: 32px !important; height: auto !important; padding: 0 12px !important; margin: 0 !important;
+  border: 0 !important; border-radius: 8px !important; background: transparent !important; box-shadow: none !important;
+  color: #4b5563 !important; font: inherit; font-size: 12.5px !important; font-weight: 600 !important; line-height: 1.2;
+  cursor: pointer; white-space: nowrap; transform: none !important;
+}
+${segIn(" > button::after")} { display: none !important; }
+${segIn(" > button:hover:not(:disabled)")} { color: #c2410c !important; background: rgba(255,255,255,.55) !important; }
+${segIn(" > button:is(.on, .active, [aria-selected=\"true\"], [aria-checked=\"true\"])")} {
+  background: #fff !important; color: #c2410c !important; box-shadow: 0 1px 3px rgba(15,23,42,.12) !important;
+}
+${segIn(" > button:disabled")} { opacity: .5; cursor: not-allowed; }
+/* the small number next to an option stays readable on the white picked option */
+.ix-page .ix-pills .ix-pill .ix-pill-count, .ix-page .ix-pills .ix-pill.active .ix-pill-count { background: #e8582a !important; color: #fff !important; }
+/* the switch at the top of a list panel spans the panel */
+.ix-page .oa-switch { display: flex !important; width: auto !important; align-self: stretch; margin: 10px 10px 6px !important; flex-wrap: nowrap; }
+.ix-page .oa-switch > button { flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; padding: 0 6px !important; }
+/* switches that fill their row: two or three equal options */
+.ix-page :is(.so-kind, .cm-seg) { display: grid !important; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100% !important; align-self: stretch; }
+.ix-page .cm-seg.two > button { min-height: 52px !important; flex-direction: column; gap: 2px !important; }
+.ix-page .dl-tabs { margin-bottom: 12px !important; }
+`;
 
 /* Computers: the last card (or tab content) of every page grows down to the bottom of the white panel,
    so no page ends with a short card and empty space under it. Taller pages still scroll as before. */
@@ -4368,8 +4701,11 @@ export const lay3 = `
     /* a list fills its card: when a card in the same row is taller, the rows share the extra space
        evenly (no empty gap under the last row) */
     .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-col > * { display: flex !important; flex-direction: column !important; }
-    .ix-page.lay2 .ix-content .dbx-grid .dbx-fill { flex: 1 1 auto !important; justify-content: stretch !important; display: flex !important; flex-direction: column !important; }
-    .ix-page.lay2 .ix-content .dbx-grid .dbx-fill > * { flex: 1 1 auto !important; }
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-fill { flex: 1 1 auto !important; justify-content: stretch !important; display: flex !important; flex-direction: column !important;
+      min-height: 0; overflow-y: auto; }
+    /* rows may grow to fill a tall card, but never shrink below their own height (no overlapping on small or zoomed screens);
+       when the card is shorter than its rows, the list scrolls inside the card */
+    .ix-page.lay2 .ix-content .dbx-grid .dbx-fill > * { flex: 1 0 auto !important; }
     .ix-page.lay2 .ix-content .dbx-grid .dbx-fill > .dbx-more { flex: none !important; }
     /* every list row the same height as a Recent attendance row (clickable or not) */
     .ix-page.lay2 .ix-content .dbx-grid .dbx-it { min-height: 56px; box-sizing: border-box; padding: 8px 14px !important; line-height: 1.3 !important; margin: 0 !important; }
@@ -5628,7 +5964,14 @@ const css = `
   .ix-page .imc-bar { height: 6px; border-radius: 99px; background: #f3e5dc; overflow: hidden; }
   .ix-page .imc-bar i { display: block; height: 100%; background: linear-gradient(90deg, #f2864f, #e8582a); border-radius: 99px; }
   .ix-page .imc-detail { display: flex; flex-direction: column; gap: 12px; }
-  .ix-page .imc-back { align-self: flex-start; }
+  /* the header sits at the top of the profile and scrolls with it (it never covers the details) */
+  .ix-page .imc-head { position: static; display: flex; align-items: center; gap: 14px; padding: 10px 14px; margin: 0;
+    background: #fff; border: 1px solid #eceef1; border-radius: 14px; }
+  .ix-page .imc-back { flex: none; display: inline-flex; align-items: center; gap: 8px; }
+  .ix-page .imc-back span { font-size: 16px; line-height: 1; }
+  .ix-page .imc-head-t { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+  .ix-page .imc-head-t small { font-size: 11.5px; color: #6b7280; }
+  .ix-page .imc-head-t b { font-size: 15px; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ix-intern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
   .ix-ic { background: var(--ix-surface, #fff); border-radius: 20px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); transition: transform .2s, box-shadow .2s; }
   .ix-ic:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 14px 30px rgba(15,23,42,0.09); }
@@ -6129,6 +6472,12 @@ const css = `
 
   /* ───── Monitor Interns: list + details ───── */
   .ix-page .mon-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  /* every Export button sits at the right end of its toolbar */
+  .ix-page .ix-exp { margin-left: auto !important; flex: none; }
+  /* status · program · grouping switches, under the search row */
+  .ix-page .mon-bar2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -2px 0 14px; }
+  .ix-page .mon-bar2 .mon-group { margin-left: auto; }
+  @media (max-width: 760px) { .ix-page .mon-bar2 .mon-group { margin-left: 0; } }
   .ix-page .mon-search { width: 260px; height: 34px; }
   .ix-page .mon-search input { font-size: 12.5px; }
   .ix-page .mon-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 99px; cursor: pointer;
@@ -6136,6 +6485,7 @@ const css = `
   .ix-page .mon-chip:hover { border-color: #f6c7b0; color: #c2410c; }
   .ix-page .mon-filter { width: auto !important; min-width: 150px; flex: none; height: 38px; }
   .ix-page .mon-count { cursor: default; }
+  .ix-page .mon-exp { flex: none; }
   .ix-page .mon-chip.on { border-style: solid; border-color: #f6c7b0; background: #fff3ec; color: #c2410c; }
   .ix-page .mon-sep { width: 1px; height: 20px; background: #e6e8ec; margin: 0 4px; }
   .ix-page .mon-dot { width: 7px; height: 7px; border-radius: 50%; background: #cbd5e1; display: inline-block; flex-shrink: 0; }

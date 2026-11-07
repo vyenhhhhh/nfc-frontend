@@ -9,6 +9,7 @@ import campus from "../assets/campus.jpg";      // faded background of the ID
 import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh, Inbox, OA_CSS, OaHistory, Drawer } from "./DashKit.jsx";
 import { API } from "../config.js";
 import { createHelperReader } from "../kioskReaders.js";
+import ReviewQueue from "./ReviewQueue.jsx";   // the same table + drawer layout as the Approvals pages
 
 
 // where interns sign and claim their ID card (same text as the server notifications)
@@ -49,8 +50,6 @@ export function NfcReview({ user, onRefresh, preOf }) {
   const [q, setQ] = useState("");
   const [remarks, setRemarks] = useState({});
   const [busy, setBusy] = useState(null);
-  const [alertsOpen, setAlertsOpen] = useState(false);
-  const [alerts, setAlerts] = useState(0);
 
   const load = async () => {
     try {
@@ -61,11 +60,7 @@ export function NfcReview({ user, onRefresh, preOf }) {
     } catch (e) { setRequests((x) => x || []); setMsg({ type: "error", text: friendly(e) }); }
   };
   useEffect(() => { load(); return liveRefresh(load); }, []);
-  useEffect(() => {
-    const f = () => fetch(`${API}/card-flags`, { headers: { Accept: "application/json" } })
-      .then((r) => r.json()).then((d) => setAlerts((d?.flags || []).filter((x) => !x.resolved_at).length)).catch(() => {});
-    f(); const iv = setInterval(f, 60000); return () => clearInterval(iv);
-  }, []);
+  // (card alerts are the admin's: they are on the admin's Kiosks page, not here)
 
   if (!requests) return <Spinner />;
   const waiting = requests.filter((r) => r.status === "pending");
@@ -145,9 +140,6 @@ export function NfcReview({ user, onRefresh, preOf }) {
               </button>
             ))}
           </div>
-          <button type="button" className="nfcr-alerts" onClick={() => setAlertsOpen(true)}>
-            <Icon name="warn" size={14} /> Card alerts {alerts > 0 && <span className="oa-n hot">{alerts}</span>}
-          </button>
         </div>
 
         <div className="oa-detail">
@@ -207,11 +199,6 @@ export function NfcReview({ user, onRefresh, preOf }) {
           })()}
         </div>
       </div>
-      {alertsOpen && (
-        <Drawer inPage title="Card alerts" kicker="NFC cards" icon="warn" onClose={() => setAlertsOpen(false)}>
-          <div className="nfcr-ca"><CardAlerts /></div>
-        </Drawer>
-      )}
     </>
   );
 }
@@ -256,9 +243,11 @@ export default function NfcCards({ user, interns, onRefresh, preOf }) {
   const closed = requests.filter((r) => r.status === "issued" || r.status === "rejected");
   const pendingCount = requests.filter((r) => r.status === "pending").length;
 
-  // open copied-card alerts (one-time card codes), shown as a count on the tab
+  // open copied-card alerts (one-time card codes): the admin only
+  const isAdmin = user?.role === "admin";
   const [alerts, setAlerts] = useState(0);
   useEffect(() => {
+    if (!isAdmin) return undefined;
     const load = () => fetch(`${API}/card-flags`, { headers: { Accept: "application/json" } })
       .then((r) => r.json()).then((d) => setAlerts((d?.flags || []).filter((f) => !f.resolved_at).length)).catch(() => {});
     load();
@@ -277,9 +266,11 @@ export default function NfcCards({ user, interns, onRefresh, preOf }) {
         <button className={tab === "history" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("history")}>
           History <span className="ix-pill-count">{closed.length}</span>
         </button>
-        <button className={tab === "alerts" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("alerts")}>
-          Card Alerts {alerts > 0 && <span className="ix-pill-count">{alerts}</span>}
-        </button>
+        {isAdmin && (
+          <button className={tab === "alerts" ? "ix-pill active" : "ix-pill"} onClick={() => setTab("alerts")}>
+            Card Alerts {alerts > 0 && <span className="ix-pill-count">{alerts}</span>}
+          </button>
+        )}
       </div>
 
       {error && (
@@ -293,7 +284,7 @@ export default function NfcCards({ user, interns, onRefresh, preOf }) {
         />
       )}
       {tab === "history" && <History requests={closed} loading={loading} />}
-      {tab === "alerts" && <CardAlerts />}
+      {isAdmin && tab === "alerts" && <CardAlerts />}
     </>
   );
 }
@@ -635,10 +626,6 @@ const saveBlob = (blob, name) => {
 };
 
 export function CardRequests({ requests, interns, onChanged }) {
-  const [stage, setStage] = useState("toprint");
-  const [q, setQ] = useState("");
-  const [selected, setSelected] = useState([]);
-  const [preview, setPreview] = useState(null);       // user id whose card is shown
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
   const [uids, setUids] = useState({});                 // request id -> typed / scanned UID
@@ -685,6 +672,7 @@ export function CardRequests({ requests, interns, onChanged }) {
     return n;
   });
   const [sigMsg, setSigMsg] = useState("");
+  const [showSettings, setShowSettings] = useState(false);   // the "Card settings" drawer
   const pickSignature = (e) => {
     const f = e.target.files?.[0]; e.target.value = "";
     if (!f) return;
@@ -760,37 +748,27 @@ export function CardRequests({ requests, interns, onChanged }) {
   interns.forEach((u) => { if (u.nfc_uid && !latest[u.id]) rows.push({ u, r: null, stage: "released" }); });
   rows.sort((a, b) => String(b.r?.reviewed_at || b.r?.updated_at || "").localeCompare(String(a.r?.reviewed_at || a.r?.updated_at || "")));
 
-  const count = (k) => rows.filter((x) => x.stage === k).length;
-  const sq = q.trim().toLowerCase();
-  const shown = rows.filter((x) => x.stage === stage)
-    .filter((x) => `${x.u.name} ${x.u.email} ${x.u.student_id || ""} ${x.u.program || ""} ${x.u.placement || ""}`.toLowerCase().includes(sq));
-  const shownIds = shown.map((x) => x.u.id);
-  const sel = selected.filter((id) => shownIds.includes(id));
-  const allOn = shown.length > 0 && shown.every((x) => sel.includes(x.u.id));
-  const toggle = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
-  const toggleAll = () => setSelected((s) => (allOn ? s.filter((id) => !shownIds.includes(id)) : [...new Set([...s, ...shownIds])]));
-  const pick = sel.length ? shown.filter((x) => sel.includes(x.u.id)) : shown;   // nothing ticked = everything in this tab
-  const changeStage = (k) => { setStage(k); setSelected([]); setMsg(null); };
-
+  const byStage = (k) => rows.filter((x) => x.stage === k);
   const photoName = (u, ext = "jpg") => `${fileSafe(u.student_id || u.name)}.${ext}`;
 
-  const downloadCsv = () => {
+  // items = the ticked rows, or every row of the tab (after the search) when nothing is ticked
+  const downloadCsv = (items, st) => {
     const head = ["Student ID", "Name on card", "Last name", "First name", "Middle name", "Course", "Year level", "Birthday",
       "OJT placement", "Email", "Emergency contact", "Emergency number", "Valid until", "Photo file", "Status", "Approved on", "Printed on"];
-    const lines = pick.map(({ u, r, stage: st }) => {
+    const lines = items.map(({ u, r, stage: s }) => {
       const { course, year } = courseOf(u.program);
       return [u.student_id, cardName(u), u.last_name, u.first_name, u.middle_name, course, year, birthDate(u.date_of_birth),
         u.placement, u.email, u.emergency_contact_name, u.emergency_contact_number, longDate(settings.valid),
-        u.photo ? photoName(u) : "", STAGE_BADGE[st][0], r ? fmtDate(r.reviewed_at || r.updated_at) : "", r?.printed_at ? fmtDate(r.printed_at) : ""]
+        u.photo ? photoName(u) : "", STAGE_BADGE[s][0], r ? fmtDate(r.reviewed_at || r.updated_at) : "", r?.printed_at ? fmtDate(r.printed_at) : ""]
         .map(csvCell).join(",");
     });
     // the BOM makes Excel read the names (ñ, é...) correctly
     saveBlob(new Blob(["﻿" + [head.map(csvCell).join(","), ...lines].join("\r\n")], { type: "text/csv;charset=utf-8" }),
-      `id-cards-${stage}-${new Date().toISOString().slice(0, 10)}.csv`);
+      `id-cards-${st}-${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
-  const downloadPhotos = async () => {
-    const withPhoto = pick.filter((x) => x.u.photo);
+  const downloadPhotos = async (items) => {
+    const withPhoto = items.filter((x) => x.u.photo);
     if (!withPhoto.length) { setMsg({ type: "error", text: "None of these interns has a profile photo yet." }); return; }
     setBusy("photos"); setMsg(null);
     try {
@@ -807,7 +785,7 @@ export function CardRequests({ requests, interns, onChanged }) {
         } catch { missed += 1; }
       }));
       saveBlob(await zip.generateAsync({ type: "blob" }), `id-card-photos-${new Date().toISOString().slice(0, 10)}.zip`);
-      const noPhoto = pick.length - withPhoto.length;
+      const noPhoto = items.length - withPhoto.length;
       setMsg(missed || noPhoto
         ? { type: "error", text: `Downloaded ${withPhoto.length - missed} photo(s).${missed ? ` ${missed} couldn't be fetched.` : ""}${noPhoto ? ` ${noPhoto} intern(s) have no photo yet.` : ""}` }
         : { type: "success", text: `Downloaded ${withPhoto.length} photo(s), named by Student ID.` });
@@ -816,8 +794,8 @@ export function CardRequests({ requests, interns, onChanged }) {
     } finally { setBusy(null); }
   };
 
-  const mark = async (printed, only) => {
-    const ids = (only || pick).map((x) => x.r?.id).filter(Boolean);
+  const mark = async (printed, items, done) => {
+    const ids = items.map((x) => x.r?.id).filter(Boolean);
     if (!ids.length) return;
     setBusy(printed ? "mark" : "undo"); setMsg(null);
     try {
@@ -829,172 +807,184 @@ export function CardRequests({ requests, interns, onChanged }) {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || "Couldn't update the cards.");
       setMsg({ type: "success", text: data?.message || "Updated." });
-      setSelected([]);
+      done && done();
       onChanged && onChanged();
     } catch (e) {
       setMsg({ type: "error", text: e instanceof TypeError ? "Couldn't reach the server." : e.message });
     } finally { setBusy(null); }
   };
 
-  // the intern shown on the right: the one clicked, or the first one in this tab
-  const pv = shown.find((x) => String(x.u.id) === String(preview)) || null;     // nothing is shown until an intern is clicked
-  const [showDetail, setShowDetail] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const what = sel.length ? `${sel.length} selected` : `all ${shown.length}`;
+  const EMPTY = {
+    toprint:  ["No cards to print", "Interns appear here once the OJT coordinator approves their NFC card request."],
+    tolink:   ["No printed cards to link", "Cards marked as printed wait here until their UID is scanned."],
+    toclaim:  ["No cards waiting to be claimed", "Linked cards wait here until the intern picks them up."],
+    released: ["No released cards yet", "Cards the interns have claimed are listed here."],
+  };
+  const tabs = STAGES.map((t) => ({ key: t.key, label: t.label, items: byStage(t.key), hot: t.key !== "released", empty: EMPTY[t.key] }));
+
+  const columns = [
+    { label: "Intern", render: ({ u }) => (
+      <span className="rq2-who"><Avatar name={u.name} photo={u.photo} size={32} />
+        <span><b>{u.name}</b><small>{u.student_id || u.email}</small></span></span>
+    ) },
+    { label: "Course", className: "rq2-hide-sm", render: ({ u }) => {
+      const { course, year } = courseOf(u.program);
+      return <span className="rq2-muted">{course}{year !== "—" ? ` · ${year}` : ""}</span>;
+    } },
+    { label: "Placement", className: "rq2-hide-sm", render: ({ u }) => <span className="rq2-file">{u.placement || "—"}</span> },
+    { label: "Pre-internship", render: ({ r, stage: st }) => (st === "released" || !r?.pre_total ? <span className="rq2-muted">—</span>
+      : r.pre_missing > 0 ? <span className="nfc-not">{r.pre_total - r.pre_missing}/{r.pre_total}</span>
+      : <span className="rq2-muted">Complete</span>) },
+    { label: "Date", render: ({ r, stage: st }) => <span className="rq2-muted">{r ? fmtDate(st === "toprint" ? r.reviewed_at || r.updated_at : r.printed_at || r.updated_at) : "—"}</span> },
+    { label: "Status", render: ({ stage: st }) => { const [bl, bt] = STAGE_BADGE[st]; return <Badge label={bl} type={bt} />; } },
+  ];
+
+  // To print: the list and the photos for the printer's app · To link: nothing to download ·
+  // Ready to claim / Released: the list, as a record. Nothing ticked = every row of the tab.
+  const toolbar = (st, { list, picked }) => {
+    const items = picked.length ? picked : list;
+    const what = picked.length ? `${picked.length} selected` : `all ${list.length}`;
+    return (
+      <>
+        {st !== "tolink" && (
+          <button type="button" className="ix-b ghost" onClick={() => downloadCsv(items, st)} disabled={!list.length} title={`Download ${what} as a CSV for Excel or the printing app`}>
+            <Icon name="download" size={15} /> List (CSV)
+          </button>
+        )}
+        {st === "toprint" && (
+          <button type="button" className="ix-b ghost" onClick={() => downloadPhotos(items)} disabled={!list.length || !!busy} title={`Download ${what} photos for the printing app`}>
+            <Icon name="download" size={15} /> {busy === "photos" ? "Preparing..." : "Photos"}
+          </button>
+        )}
+        <button type="button" className="ix-b ghost" onClick={() => setShowSettings(true)} title="Valid date, coordinator, signature and office contact printed on every card">
+          <Icon name="settings" size={15} /> Card settings
+        </button>
+      </>
+    );
+  };
+
+  const bulk = (st) => (st === "toprint"
+    ? (picked, clear) => (
+      <button type="button" className="ix-b primary sm" onClick={() => mark(true, picked, clear)} disabled={!!busy}>
+        <Icon name="check" size={14} /> {busy === "mark" ? "Saving..." : "Mark as printed"}</button>)
+    : st === "tolink"
+      ? (picked, clear) => (
+        <button type="button" className="ix-b ghost sm" onClick={() => mark(false, picked, clear)} disabled={!!busy}>
+          {busy === "undo" ? "Saving..." : "Back to To print"}</button>)
+      : null);
+
+  const drawer = (x) => {
+    const { u, r, stage: st } = x;
+    const { course, year } = courseOf(u.program);
+    const [bl, bt] = STAGE_BADGE[st];
+    let footer = null;
+    if (st === "toprint" && r) {
+      footer = (<>
+        <span className="rq2-result">Printed this card after the intern signed?</span>
+        <button type="button" className="ix-b primary" onClick={() => mark(true, [x])} disabled={!!busy}>
+          <Icon name="check" size={15} /> {busy === "mark" ? "Saving..." : "Mark as printed"}</button>
+      </>);
+    } else if (st === "tolink" && r) {
+      footer = (<>
+        <input type="text" className={scanningId === r.id ? "ix-input scanning" : "ix-input"}
+          placeholder="Scan the card or type its UID" aria-label={`Card UID for ${u.name}`}
+          value={scanningId === r.id ? "Tap the card on the reader..." : uids[r.id] || ""} readOnly={scanningId === r.id}
+          onChange={(e) => setUids((v) => ({ ...v, [r.id]: e.target.value }))} />
+        <button type="button" className="ix-b ghost" onClick={(e) => { e.currentTarget.blur(); buffer.current = ""; setScanningId(scanningId === r.id ? null : r.id); }}>
+          <Icon name={scanningId === r.id ? "x" : "nfc"} size={15} /> {scanningId === r.id ? "Cancel" : "Scan"}</button>
+        <button type="button" className="ix-b primary" onClick={() => act(r, "link")} disabled={!!busy || (uids[r.id] || "").trim().length < 4}>
+          {busy === "link" + r.id ? "Saving..." : "Link card"}</button>
+        <button type="button" className="ix-b ghost" onClick={() => mark(false, [x])} disabled={!!busy}>Back to To print</button>
+      </>);
+    } else if (st === "toclaim" && r) {
+      footer = (<>
+        <span className="rq2-result"><span className="idq-uid"><Icon name="nfc" size={13} /> {r.uid}</span></span>
+        <button type="button" className="ix-b ghost" onClick={() => act(r, "unlink")} disabled={!!busy}>
+          {busy === "unlink" + r.id ? "Saving..." : "Change card"}</button>
+        <button type="button" className="ix-b primary" onClick={() => act(r, "claim")} disabled={!!busy || r.pre_missing > 0}
+          title={r.pre_missing > 0 ? "Not all pre-internship requirements are approved yet" : "The intern picked up the card"}>
+          <Icon name="check" size={15} /> {busy === "claim" + r.id ? "Saving..." : "Claimed"}</button>
+      </>);
+    } else if (st === "released") {
+      footer = <span className="rq2-result ok"><Icon name="check" size={15} /> The card is active.{u.nfc_uid ? ` UID ${u.nfc_uid}` : ""}</span>;
+    }
+    return {
+      icon: "card", kicker: STEP_SUB[st], title: u.name,
+      actions: <Badge label={bl} type={bt} />,
+      body: (<>
+        <Msg msg={msg} />
+        <div className="rq2-kv">
+          <div><small>Student ID</small><b>{u.student_id || "—"}</b></div>
+          <div><small>Course</small><b>{course}{year !== "—" ? ` · ${year}` : ""}</b></div>
+          <div><small>Placement</small><b title={u.placement || ""}>{u.placement || "—"}</b></div>
+          <div><small>Birthday</small><b>{birthDate(u.date_of_birth)}</b></div>
+          <div><small>Approved</small><b>{r ? fmtDate(r.reviewed_at || r.updated_at) : "—"}</b></div>
+          <div><small>Printed</small><b>{r?.printed_at ? fmtDate(r.printed_at) : "—"}</b></div>
+          <div><small>Email</small><b title={u.email || ""}>{u.email || "—"}</b></div>
+          <div><small>Photo</small><b>{u.photo ? "Uploaded" : "No photo yet"}</b></div>
+        </div>
+        {st !== "released" && r?.pre_missing > 0 && (
+          <div className="nfc-wait"><Icon name="warn" size={16} />
+            <span>Pre-internship {r.pre_total - r.pre_missing}/{r.pre_total}: the card can be printed and linked now, but it can only be claimed once every requirement is approved.</span></div>
+        )}
+        <CardFan key={u.id} u={u} settings={settings} />
+      </>),
+      footer,
+    };
+  };
 
   return (
-    <>
+    <div className="idq2">
       <style>{nfcCss}</style>
-      {/* stages as simple tabs (the count shows what needs doing), then search and actions in one row */}
-      <div className="idq-tabs" role="tablist" aria-label="Card stages">
-        {STAGES.map((t) => {
-          const n = count(t.key);
-          return (
-            <button key={t.key} type="button" role="tab" aria-selected={stage === t.key} title={STEP_SUB[t.key]}
-              className={stage === t.key ? "idq-tab on" : "idq-tab"} onClick={() => changeStage(t.key)}>
-              {t.label}<span className={n && t.key !== "released" ? "idq-n hot" : "idq-n"}>{n}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="ix-toolbar idq-toolbar">
-        <div className="ix-search">
-          <Icon name="search" size={16} />
-          <input type="text" placeholder="Search name, ID, course or placement..." value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        <div className="idq-actions">
-          <button className="ix-b ghost" onClick={downloadCsv} disabled={!shown.length} title={`Download ${what} as a CSV for Excel or the printing app`}>
-            <Icon name="download" size={16} /> List (CSV)
-          </button>
-          <button className="ix-b ghost" onClick={downloadPhotos} disabled={!shown.length || !!busy} title={`Download ${what} photos`}>
-            <Icon name="download" size={16} /> {busy === "photos" ? "Preparing..." : "Photos"}
-          </button>
-          {stage === "toprint" && (
-            <button className="ix-b primary" onClick={() => mark(true)} disabled={!shown.length || !!busy}>
-              <Icon name="check" size={16} /> {busy === "mark" ? "Saving..." : `Mark as printed (${sel.length || shown.length})`}
-            </button>
-          )}
-          {stage === "tolink" && (
-            <button className="ix-b ghost" onClick={() => mark(false)} disabled={!shown.length || !!busy}>
-              {busy === "undo" ? "Saving..." : `Back to To print (${sel.length || shown.length})`}
-            </button>
-          )}
-        </div>
-      </div>
+      <style>{`.idq2 { display: flex; flex-direction: column; gap: 12px; }
+        .idq2 > .ix-alert, .idq2 > .ix-msg { margin: 0; }
+        .ix-drawer .rq2-body .idq-fan { flex: 1 1 auto; min-height: 300px; }`}</style>
       <Msg msg={msg} />
+      <ReviewQueue tabs={tabs} columns={columns} rowKey={(x) => x.u.id}
+        searchText={(x) => `${x.u.name} ${x.u.email} ${x.u.student_id || ""} ${x.u.program || ""} ${x.u.placement || ""}`}
+        toolbar={toolbar} bulk={bulk} drawer={drawer} openLabel={() => "View"} />
 
-      {/* list on the left, the selected intern's card on the right (phones: one at a time) */}
-      {shown.length === 0 ? (
-        <div className="ix-card"><Empty icon="card"
-          title={q ? "No intern matches your search." : stage === "toprint" ? "No cards to print" : stage === "tolink" ? "No printed cards to link" : stage === "toclaim" ? "No cards waiting to be claimed" : "No released cards yet"}
-          sub={stage === "toprint" && !q ? "Interns appear here once the OJT coordinator approves their NFC card request." : undefined} /></div>
-      ) : (
-        <div className={showDetail && pv ? "mon show-detail" : "mon"}>
-          <div className="mon-split ibx-split idq-split">
-            <div className="mon-list" role="list">
-              <label className="idq-all"><input type="checkbox" checked={allOn} onChange={toggleAll} /> Select all ({shown.length})</label>
-              {shown.map((x) => {
-                const { u, r, stage: st } = x;
-                const [bl, bt] = STAGE_BADGE[st];
-                const on = sel.includes(u.id);
-                return (
-                  <div key={u.id} role="listitem" className={pv && pv.u.id === u.id ? "mon-item idq-row on" : on ? "mon-item idq-row ck" : "mon-item idq-row"}>
-                    <input type="checkbox" checked={on} onChange={() => toggle(u.id)} aria-label={`Select ${u.name}`} />
-                    <button type="button" className="idq-open" onClick={() => { setPreview(u.id); setShowDetail(true); }}>
-                      <Avatar name={u.name} photo={u.photo} size={32} />
-                      <span className="mon-who">
-                        <b>{u.name}</b>
-                        <small>{[u.student_id, courseOf(u.program).course].filter((v) => v && v !== "—").join(" · ") || u.email}</small>
-                      </span>
-                      <span className="mon-right">
-                        <Badge label={bl} type={bt} />
-                        <small>{st !== "released" && r?.pre_missing > 0 ? <span className="nfc-not">Pre {r.pre_total - r.pre_missing}/{r.pre_total}</span>
-                          : fmtDate(st === "toprint" ? r?.reviewed_at || r?.updated_at : r?.printed_at || r?.updated_at)}</small>
-                      </span>
-                    </button>
-                  </div>
-                );
-              })}
+      {/* what every card shows: saved on the server (the interns' card page and every computer use the same) */}
+      {showSettings && (
+        <Drawer inPage icon="settings" kicker="Card Requests" title="Card settings" onClose={() => setShowSettings(false)}
+          footer={(close) => (<>
+            <span className="cs-save">{saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : saveState === "error" ? "Couldn't save. Check the server." : "Changes save by themselves."}</span>
+            <button type="button" className="ix-b primary" onClick={close}>Done</button>
+          </>)}>
+          <div className="cs-form">
+            <div className="ix-field">
+              <label htmlFor="cs-valid">Valid until</label>
+              <input id="cs-valid" type="date" className="ix-input" value={settings.valid || ""} onChange={(e) => setS("valid", e.target.value)} />
             </div>
-
-            <div className="mon-detail">
-              <button type="button" className="mon-back" onClick={() => setShowDetail(false)}><Icon name="menu" size={14} /> Back to the list</button>
-              {!pv && (
-                <div className="idq-none">
-                  <Icon name="card" size={30} />
-                  <b>Select an intern</b>
-                  <span>Click a name in the list, or search for one, to see the ID card preview.</span>
-                </div>
-              )}
-              {pv && (() => {
-                const { u, r, stage: st } = pv;
-                const { course, year } = courseOf(u.program);
-                const [bl, bt] = STAGE_BADGE[st];
-                return (
-                  <div className="ibx-d idq-two" key={u.id}>
-                    <div className="idq-rail">
-                      <Avatar name={u.name} photo={u.photo} size={64} />
-                      <div className="idq-who"><b>{u.name}</b><small>{u.email}{u.photo ? "" : " · no photo yet"}</small></div>
-                      <span className="idq-st"><Badge label={bl} type={bt} /></span>
-                      <dl className="idq-dl">
-                        <dt>Student ID</dt><dd>{u.student_id || "—"}</dd>
-                        <dt>Course</dt><dd>{course}{year !== "—" ? ` · ${year}` : ""}</dd>
-                        <dt>Placement</dt><dd>{u.placement || "—"}</dd>
-                        <dt>Birthday</dt><dd>{birthDate(u.date_of_birth)}</dd>
-                        <dt>Approved</dt><dd>{r ? fmtDate(r.reviewed_at || r.updated_at) : "—"}</dd>
-                        <dt>Printed</dt><dd>{r?.printed_at ? fmtDate(r.printed_at) : "—"}</dd>
-                      </dl>
-                    </div>
-
-                    <div className="idq-main">
-                      {st !== "released" && r?.pre_missing > 0 && (
-                        <div className="nfc-wait"><Icon name="warn" size={16} />
-                          <span>Pre-internship {r.pre_total - r.pre_missing}/{r.pre_total}: the card can be printed and linked now, but it can only be claimed once every requirement is approved.</span></div>
-                      )}
-                      <CardFan u={u} settings={settings} />
-                    {/* what to do next for this card */}
-                    {st === "toprint" && r && (
-                      <div className="ibx-act">
-                        <span className="idq-act-text">Printed this card after the intern signed?</span>
-                        <button className="ix-b primary" onClick={() => mark(true, [pv])} disabled={!!busy}>
-                          <Icon name="check" size={15} /> {busy === "mark" ? "Saving..." : "Mark as printed"}</button>
-                      </div>
-                    )}
-                    {st === "tolink" && r && (
-                      <div className="ibx-act">
-                        <input type="text" className={scanningId === r.id ? "ix-input scanning" : "ix-input"}
-                          placeholder="Scan the card or type its UID" aria-label={`Card UID for ${u.name}`}
-                          value={scanningId === r.id ? "Tap the card on the reader..." : uids[r.id] || ""} readOnly={scanningId === r.id}
-                          onChange={(e) => setUids((x) => ({ ...x, [r.id]: e.target.value }))} />
-                        <button type="button" className="ix-b ghost" onClick={(e) => { e.currentTarget.blur(); buffer.current = ""; setScanningId(scanningId === r.id ? null : r.id); }}>
-                          <Icon name={scanningId === r.id ? "x" : "nfc"} size={15} /> {scanningId === r.id ? "Cancel" : "Scan"}</button>
-                        <button type="button" className="ix-b primary" onClick={() => act(r, "link")} disabled={!!busy || (uids[r.id] || "").trim().length < 4}>
-                          {busy === "link" + r.id ? "..." : "Link card"}</button>
-                        <button type="button" className="ix-b ghost sm" onClick={() => mark(false, [pv])} disabled={!!busy}>Back to To print</button>
-                      </div>
-                    )}
-                    {st === "toclaim" && r && (
-                      <div className="ibx-act">
-                        <span className="idq-uid"><Icon name="nfc" size={13} /> {r.uid}</span>
-                        <button type="button" className="ix-b ghost" onClick={() => act(r, "unlink")} disabled={!!busy}>
-                          {busy === "unlink" + r.id ? "..." : "Change card"}</button>
-                        <span style={{ flex: 1 }} />
-                        <button type="button" className="ix-b primary" onClick={() => act(r, "claim")} disabled={!!busy || r.pre_missing > 0}
-                          title={r.pre_missing > 0 ? "Not all pre-internship requirements are approved yet" : "The intern picked up the card"}>
-                          <Icon name="check" size={15} /> {busy === "claim" + r.id ? "..." : "Claimed"}</button>
-                      </div>
-                    )}
-                    {st === "released" && <div className="ibx-note"><Icon name="check" size={13} /> The card is active. {u.nfc_uid ? `UID ${u.nfc_uid}` : ""}</div>}
-                    </div>
-                  </div>
-                );
-              })()}
+            <div className="ix-field">
+              <label htmlFor="cs-coord">OJT coordinator (name on the back)</label>
+              <input id="cs-coord" type="text" className="ix-input" maxLength={120} placeholder="Jhoanna Victoria S. Pitao, MSc" value={settings.coordinator || ""} onChange={(e) => setS("coordinator", e.target.value)} />
             </div>
+            <div className="ix-field">
+              <label htmlFor="cs-contact">Office contact (back of the card)</label>
+              <input id="cs-contact" type="text" className="ix-input" maxLength={160} value={settings.contact || ""} onChange={(e) => setS("contact", e.target.value)} />
+            </div>
+            <div className="ix-field">
+              <label>Coordinator's signature</label>
+              <div className="cs-sig">
+                {settings.signature ? <img src={settings.signature} alt="Signature" /> : <span>No signature yet</span>}
+                <label className="ix-b ghost sm">Upload<input type="file" accept="image/png,image/jpeg" hidden onChange={pickSignature} /></label>
+                {settings.signature && <button type="button" className="ix-b ghost sm" onClick={() => setS("signature", "")}>Remove</button>}
+              </div>
+              <small className="cs-hint">{sigMsg || "A PNG with a clear background looks best. Under 600 KB."}</small>
+            </div>
+            <CardFan u={{ name: "Juan S. Dela Cruz", first_name: "Juan", last_name: "Dela Cruz", student_id: "221-00123", program: "BSIT 4" }} settings={settings} />
           </div>
-        </div>
+        </Drawer>
       )}
-    </>
+      <style>{`.cs-form { display: flex; flex-direction: column; gap: 14px; min-height: 100%; }
+        .cs-form .idq-fan { min-height: 260px; }
+        .cs-sig { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .cs-sig img { height: 44px; max-width: 160px; object-fit: contain; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px; background: #fff; }
+        .cs-sig > span { font-size: 12.5px; color: #94a3b8; }
+        .cs-hint { font-size: 12px; color: #64748b; }
+        .cs-save { margin-right: auto; font-size: 12.5px; color: #64748b; }`}</style>
+    </div>
   );
 }
 

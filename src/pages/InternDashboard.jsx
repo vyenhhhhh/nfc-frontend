@@ -7,6 +7,7 @@ import Shell, {
   calcHours, fmtTime, greeting, esc, requiredHoursFor, programKey,
   PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, reqsFor, dueStatus, AnnouncementBoard, AccountSecurity, UserDetails,
   sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, MODALITIES, SCOPES, modalityOf, scopeOf, SCHEDULE, liveRefresh, todayManila,
+  ojtComplete,
 } from "../components/DashKit.jsx";
 
 // Home look (stats, calendar, gaps) is shared with the admin / coordinator dashboards
@@ -15,7 +16,7 @@ import { DashLayout, Panel, DashRow, DashEmpty, TimeLine } from "../components/D
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API } from "../config.js";
-import { fileHref, openFile, useFileLink } from "../files.js";
+import { fileHref, openFile, useFileLinkState } from "../files.js";
 import RequirementForms from "./RequirementForms.jsx";   // blank forms to download and print
 import { MyGrade } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
 import { ID_OFFICE, CardFace, CardBack, idCardCss, loadCardSettings } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
@@ -91,6 +92,7 @@ export default function InternDashboard() {
   const [program, setProgram] = useState(user.program || "");
   const [dtrMode, setDtrMode] = useState(dtrModeOf(user));
   const [prior, setPrior] = useState(Number(user.prior_hours) || 0);   // hours from an earlier term
+  const [, setProjectDone] = useState(!!user.project_confirmed_at);   // re-renders once /me says the project is confirmed
 
   // the login response has no program / DTR type, so read them from the account
   useEffect(() => {
@@ -101,6 +103,12 @@ export default function InternDashboard() {
         setProgram(acct.program || "");
         setDtrMode(dtrModeOf(acct));
         setPrior(Number(acct.prior_hours) || 0);
+        // project-based interns finish by project, not by hours: keep the two fields with the signed-in user
+        try {
+          const cur = JSON.parse(sessionStorage.getItem("user") || "{}");
+          sessionStorage.setItem("user", JSON.stringify({ ...cur, modality: acct.modality ?? cur.modality, project_confirmed_at: acct.project_confirmed_at ?? null }));
+        } catch { /* keep the session as it is */ }
+        setProjectDone(!!acct.project_confirmed_at);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,6 +132,30 @@ export default function InternDashboard() {
     }
   };
 
+  // the sidebar count on Submit MOV: what the intern has to act on — requirements returned by the coordinator
+  // and reports the coordinator asked for that aren't sent yet (refreshes live, like the rest of the page)
+  const [movTodo, setMovTodo] = useState(0);
+  useEffect(() => {
+    const load = () => Promise.all([
+      fetch(`${API}/intern/my-movs?user_id=${user.id}`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => []),
+      fetch(`${API}/reports`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => []),
+    ]).then(([mv, rp]) => {
+      const list = Array.isArray(mv) ? [...mv].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))) : [];
+      const latest = new Map();   // newest upload per requirement (or per report)
+      list.forEach((m) => {
+        const k = m.report_id ? `r${m.report_id}` : `${m.phase || "pre"}:${m.requirement}`;
+        if (m.requirement && m.requirement !== "others" && !latest.has(k)) latest.set(k, m);
+      });
+      const returned = [...latest.values()].filter((m) => m.status === "rejected").length;
+      const toSend = (Array.isArray(rp) ? rp : []).filter((r) => !latest.has(`r${r.id}`)).length;
+      setMovTodo(returned + toSend);
+    }).catch(() => {});
+    load();
+    return liveRefresh(load);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const nav = NAV.map((it) => (it.path === "/intern/movs" && movTodo > 0 ? { ...it, badge: movTodo } : it));
+
   const uniqueDays = [...new Set(records.map((r) => r.date))].length;
   const totalHours = calcHours(records);
   const onsite = records.filter((r) => r.uid !== "ONLINE").length;
@@ -133,7 +165,7 @@ export default function InternDashboard() {
   const required = requiredHoursFor(program, prior);
 
   return (
-    <Shell navItems={NAV} user={user}>
+    <Shell navItems={nav} user={user}>
       {/* admin CSS first, intern CSS after so it can override, material theme last */}
       <style>{adminCss}</style>
       <style>{internCss}</style>
@@ -156,24 +188,14 @@ export default function InternDashboard() {
         <MyDtr user={user} records={records} loading={loading} mode={dtrMode} />
       )}
       {path === "/intern/online" && <SubmitOnline user={user} />}
-      {path === "/intern/movs" && <SubmitMov user={user} unlocked={totalHours >= required} totalHours={totalHours} required={required} />}
+      {path === "/intern/movs" && <SubmitMov user={user} unlocked={ojtComplete({ ...user, program, prior_hours: prior }, totalHours)} totalHours={totalHours} required={required} />}
       {path === "/intern/requests" && <MyRequests user={user} records={records} />}
       {path === "/intern/grade" && (
         <>
           <PageHeader title="My Grade" sub="Your internship grade, once your OJT coordinator releases it." />
           <div className="gr-page">
             <MyGrade />
-            <div className="ix-card gr-empty">
-              <b>No grade yet</b>
-              <small>Your grade appears here after your HTE supervisor's appraisal and your OJT coordinator's evaluation are in and the coordinator releases it.</small>
-            </div>
           </div>
-          <style>{`
-            .ix-page .gr-page > :not(.gr-empty) ~ .gr-empty { display: none; }
-            .ix-page .gr-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 48px 20px !important; }
-            .ix-page .gr-empty b { font-size: 15px; color: #1f2937; }
-            .ix-page .gr-empty small { font-size: 12.5px; color: #6b7280; max-width: 420px; line-height: 1.5; }
-          `}</style>
         </>
       )}
       {path === "/intern/calendar" && <Calendar mode="intern" />}
@@ -368,9 +390,12 @@ function MyRequests({ user, records }) {
       <PageHeader title="My Request" sub="Everything you filed and where it is now." live />
 
       <div className="mon-bar rq-bar">
-        {[["all", "All", ofType.length], ["waiting", "Waiting", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
-          <button key={k} type="button" className={filter === k ? "mon-chip on" : "mon-chip"} onClick={() => setFilter(k)}>{l} · {n}</button>
-        ))}
+        {/* same switch as "My online submissions" */}
+        <div className="so-tabs" role="tablist" aria-label="Filter by status">
+          {[["all", "All", ofType.length], ["waiting", "Waiting", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
+            <button key={k} type="button" role="tab" aria-selected={filter === k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{l} · {n}</button>
+          ))}
+        </div>
         <span className="mon-sep" />
         <select className="ix-select at-month rq-type" value={type} aria-label="Filter by type" onChange={(e) => setType(e.target.value)}>
           <option value="all">All types</option>
@@ -719,7 +744,15 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   const showSteps = steps.length > 0 && stepsDone < steps.length;
 
   // confetti only when the required hours are really rendered (never for an unfinished internship)
-  const done = Number(required) > 0 && Number(totalHours) >= Number(required);
+  // project-based: done when the coordinator confirms the project (marked first by the HTE supervisor)
+  const isProject = modalityOf(user) === "project";
+  const [proj, setProj] = useState(null);   // { marked_at, confirmed_at } for project-based interns
+  useEffect(() => {
+    if (!isProject || !user.id) return;
+    fetch(`${API}/interns/${user.id}/project`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => { if (d && "project_based" in d) setProj(d); }).catch(() => {});
+  }, [isProject, user.id]);
+  const done = isProject ? !!(proj?.confirmed_at || user.project_confirmed_at) : Number(required) > 0 && Number(totalHours) >= Number(required);
   const [confettiRun, setConfettiRun] = useState(1);
 
   // Finish line: when the intern finishes at their own pace (weekends and holidays skipped)
@@ -753,7 +786,8 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
   const daysLeft = left > 0 ? workdaysFor(left) : 0;
 
   // Requirements due: during- and post-internship requirements, the ones that need action first
-  const hoursDone = totalHours >= required;   // post-internship opens after the hours
+  // post-internship opens after the hours (project-based: once the project is confirmed complete)
+  const hoursDone = modalityOf(user) === "project" ? !!user.project_confirmed_at : totalHours >= required;
   const RANK = { overdue: 0, returned: 1, due: 2, todo: 3, locked: 4, waiting: 5, approved: 6 };
   const dueList = [["during", DURING_REQUIREMENTS], ["post", reqsFor("post", user)]].flatMap(([phase, list]) => list.map((r) => {
     const m = myMovs.find((x) => x.requirement === r.key && (x.phase || "pre") === phase);
@@ -764,7 +798,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
     if (m?.status === "approved" && !r.repeat) { st = "approved"; sub = "Approved"; }
     else if (m?.status === "pending") { st = "waiting"; sub = "Sent · waiting for your coordinator"; }
     else if (m?.status === "rejected") { st = "returned"; sub = m.remarks ? `Returned: ${m.remarks}` : "Returned · upload a corrected copy"; }
-    else if (phase === "post" && !hoursDone) { st = "locked"; sub = "Opens once you finish your required hours"; }
+    else if (phase === "post" && !hoursDone) { st = "locked"; sub = isProject ? "Opens once your project is confirmed complete" : "Opens once you finish your required hours"; }
     else if (ds?.tone === "rejected") { st = "overdue"; sub = ds.label; }
     else if (ds?.tone === "pending") { st = "due"; sub = ds.label; }
     else { st = "todo"; sub = r.repeat ? (m ? "Sent before · submit the next one" : "Submit one every week (or month)") : ds ? ds.label : "Not submitted yet"; }
@@ -810,7 +844,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
         { icon: "clock", tone: "t-orange", label: "Hours rendered", value: `${totalHours}h`, sub: left > 0 ? `${left}h left of ${required}h` : "Required hours completed" },
         { icon: "calendar", tone: "t-green", label: "Days present", value: uniqueDays, sub: "days logged" },
         { icon: "flame", tone: "t-amber", label: "Streak", value: streak + (streak === 1 ? " day" : " days"), sub: streak >= 3 ? "keep it going" : "weekdays in a row" },
-        { icon: "globe", tone: "t-blue", label: "Onsite / online", value: `${onsite} / ${online}`, sub: "taps and remote logs" },
+        { icon: "globe", tone: "t-blue", label: "Kiosk / online log", value: `${onsite} / ${online}`, sub: "kiosk taps and online logs" },
         { icon: "folder", tone: "t-purple", label: "Requirements", value: pre ? `${pre.approved} / ${pre.total}` : "—", sub: "pre-internship done", onClick: () => go("/intern/movs") },
       ]}
       left={(
@@ -892,7 +926,15 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
             <div><b>{pct.toFixed(0)}%</b><small>{totalHours}h of {required}h</small></div>
           </div>
           <div className="dbx-eta">
-            {left <= 0 ? (
+            {isProject ? (
+              done ? (
+                <><small>Congratulations!</small><div className="dbx-eta-big"><em>Project complete</em></div><small>The OJT coordinator confirmed your project. Your post-internship requirements are open.</small></>
+              ) : proj?.marked_at ? (
+                <><small>Your HTE supervisor marked your project as complete</small><div className="dbx-eta-big"><em>Waiting for the coordinator</em></div><small>Once the OJT coordinator confirms it, your post-internship requirements open.</small></>
+              ) : (
+                <><small>You are project-based</small><div className="dbx-eta-big"><em>Project in progress</em></div><small>Your OJT is complete when all the tasks of your project are done: your HTE supervisor marks it, then the coordinator confirms it. This can be before or after your {required}h.</small></>
+              )
+            ) : left <= 0 ? (
               <><small>Congratulations!</small><div className="dbx-eta-big"><em>Hours completed</em></div><small>You've finished your required OJT hours.</small></>
             ) : finishDate ? (
               <><small>At your pace ({Math.round(avgDay * 10) / 10}h a day) you finish around</small>
@@ -902,7 +944,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
               <><small>Your finish date</small><div className="dbx-eta-big"><em>Not yet</em></div><small>Log your first day to see when you'll finish.</small></>
             )}
             {/* one straight line from 0% to 100%: each dot sits at its own percent, the orange part is the hours done */}
-            <div className="dbx-ms">
+            {!isProject && <div className="dbx-ms">
               <span className="dbx-ms-track"><span className="dbx-ms-fill" style={{ width: Math.min(pct, 100) + "%" }} /></span>
               {milestones.map((x) => (
                 <div key={x.m} className={x.state} style={{ left: x.m + "%" }}>
@@ -911,7 +953,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
                   <small>{x.label}</small>
                 </div>
               ))}
-            </div>
+            </div>}
           </div>
         </div>
       </Panel>
@@ -928,7 +970,7 @@ function Home({ user, firstName, uniqueDays, totalHours, onsite, online, lastTap
                   <small>{dShort(t.date).toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}</small>
                 </span>
                 <span className="dbx-tap-day">{dShort(t.date).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}</span>
-                <span className={`dbx-tag ${t.online ? "purple" : "blue"}`}>{t.online ? "Online" : "Onsite"}</span>
+                <span className={`dbx-tag ${t.online ? "purple" : "blue"}`}>{t.online ? "Online log" : "Kiosk"}</span>
                 <span className={`dbx-tag ${t.kind === "in" ? "green" : "orange"}`}>{t.kind === "in" ? "Time in" : "Time out"}</span>
                 <span className="dbx-tap-time">{fmtTime(t.at).replace(/:\d\d(?= )/, "")}</span>
               </li>
@@ -1209,11 +1251,15 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
 
       {/* filters */}
       <div className="mon-bar at-bar">
-        {["all", "onsite", "online"].map((f) => (
-          <button key={f} type="button" onClick={() => setFilter(f)} className={filter === f ? "mon-chip on" : "mon-chip"}>
-            {cap(f)} · {counts[f]}
-          </button>
-        ))}
+        {/* same switch as "My online submissions" (All · Waiting · Approved · Rejected) */}
+        <div className="so-tabs" role="tablist" aria-label="Filter by type">
+          {["all", "onsite", "online"].map((f) => (
+            <button key={f} type="button" role="tab" aria-selected={filter === f} onClick={() => setFilter(f)} className={filter === f ? "on" : ""}>
+              {/* how the day was recorded (not the modality): a kiosk tap or a log sent through Submit Online */}
+              {{ all: "All", onsite: "Kiosk", online: "Online log" }[f]} · {counts[f]}
+            </button>
+          ))}
+        </div>
         <span className="mon-sep" />
         <select className="ix-select at-month" value={month} aria-label="Filter by month" onChange={(e) => setMonth(e.target.value)}>
           <option value="all">All months</option>
@@ -1238,7 +1284,7 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
                 return (
                   <li key={date}>
                     <span className="at-dd"><b>{x.getUTCDate()}</b><small>{weekday(date)}</small></span>
-                    <Badge label={t.online ? "Online" : "Onsite"} type={t.online ? "online" : "onsite"} />
+                    <Badge label={t.online ? "Online log" : "Kiosk"} type={t.online ? "online" : "onsite"} />
                     <span className="at-io">{hm(t.checkin)} {inFix(t)} <i>→</i> {outCell(date, t)}</span>
                     <span className="at-line" aria-hidden="true">
                       {a2 !== null && <i className={b2 === null ? "open" : ""} style={{ left: a2 + "%", width: Math.max(1.5, (b2 ?? a2 + 4) - a2) + "%" }} />}
@@ -1294,6 +1340,15 @@ function RemoveBtn({ onConfirm }) {
   );
 }
 
+/* on-site interns: why a day was not tapped at the kiosk (shown to the supervisor and coordinator) */
+const OFFSITE_REASONS = [
+  "My supervisor asked me to work from home",
+  "Off-site assignment (fieldwork, errand for the office)",
+  "Office closed (no power, bad weather, suspension)",
+  "My card was lost or damaged",
+  "Other (explained below)",
+];
+
 function SubmitOnline({ user }) {
   const [form, setForm] = useState({ date: "", description: "" });
   const [submitting, setSub] = useState(false);
@@ -1303,6 +1358,10 @@ function SubmitOnline({ user }) {
   const [tab, setTab] = useState("all");
   const [openId, setOpenId] = useState(null);
   const [kind, setKind] = useState("online");
+  // on-site interns normally tap at the kiosk: a remote day is the exception, so it is an "Off-site day" with a reason
+  const offsite = modalityOf(user) === "onsite";
+  const [why, setWhy] = useState("");
+  const dayLabel = offsite ? "Off-site day" : "Online workday";
   const [evs, setEvs] = useState([]);
   const [evf, setEvf] = useState({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" });
   const [proof, setProof] = useState(null);
@@ -1373,15 +1432,19 @@ function SubmitOnline({ user }) {
       finally { setSub(false); }
       return;
     }
+    if (offsite && !why) { setMsg({ type: "error", text: "Choose why you weren't at the office that day." }); setSub(false); return; }
     try {
+      // the reason goes at the start of the description, so the supervisor and coordinator see it when they review
+      const description = offsite ? `Reason: ${why}\n\n${form.description.trim()}` : form.description;
       const res = await fetch(`${API}/intern/submit-online`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id, ...form }),
+        body: JSON.stringify({ user_id: user.id, ...form, description }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       setMsg({ type: "success", text: data.message });
       setForm({ date: "", description: "" });
+      setWhy("");
       fetchSubs();
     } catch (err) { setMsg({ type: "error", text: err.message }); }
     finally { setSub(false); }
@@ -1390,15 +1453,16 @@ function SubmitOnline({ user }) {
   return (
     <>
       <PageHeader title="Submit Online Attendance" sub="For asynchronous or remote workdays." />
-      <WorkModeCard user={user} />
+      {/* the note at the top follows the picked tab: how to log a day, or what an excused absence is */}
+      <WorkModeCard user={user} tab={kind} />
       <Msg msg={msg} />
       <div className="so-cols">
         {/* left: the form, always there */}
-        <form onSubmit={handleSubmit} className="ix-card so-form">
-          <div className="so-hd"><b>{kind === "event" ? "File an excused absence" : "Log an online day"}</b></div>
+        <form onSubmit={handleSubmit} className={`ix-card so-form${kind === "event" ? " so-ev" : ""}`}>
+          <div className="so-hd"><b>{kind === "event" ? "File an excused absence" : offsite ? "Log an off-site day" : "Log an online day"}</b></div>
           <div className="so-body">
             <div className="so-kind" role="tablist">
-              <button type="button" role="tab" aria-selected={kind === "online"} className={kind === "online" ? "on" : ""} onClick={() => setKind("online")}>Online workday</button>
+              <button type="button" role="tab" aria-selected={kind === "online"} className={kind === "online" ? "on" : ""} onClick={() => setKind("online")}>{dayLabel}</button>
               <button type="button" role="tab" aria-selected={kind === "event"} className={kind === "event" ? "on" : ""} onClick={() => setKind("event")}>Excused absence</button>
             </div>
             {kind === "online" ? (<>
@@ -1407,6 +1471,15 @@ function SubmitOnline({ user }) {
                 <input id="ix-date" type="date" value={form.date} required max={manilaToday()}
                   onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
               </div>
+              {offsite && (
+                <div className="ix-field">
+                  <label htmlFor="ix-why">Why weren't you at the office?</label>
+                  <select id="ix-why" className="ix-select" required value={why} onChange={(e) => setWhy(e.target.value)}>
+                    <option value="" disabled>Choose a reason</option>
+                    {OFFSITE_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="ix-field so-fill">
                 <label htmlFor="ix-desc">Tasks completed</label>
                 <textarea id="ix-desc" rows={6} value={form.description} required
@@ -1422,28 +1495,31 @@ function SubmitOnline({ user }) {
               </div>
               <PortionPick value={evf.portion} onChange={(v) => setEvf((f) => ({ ...f, portion: v }))} />
               <div className="ix-field">
-                <label htmlFor="sev-name">Reason</label>
-                <input id="sev-name" type="text" required maxLength={160} value={evf.event_name} placeholder="e.g. Sick (fever), or University Foundation Day"
+                {/* the "mandatory school event" tick sits on the label's line, so the form stays short */}
+                <div className="so-lblrow">
+                  <label htmlFor="sev-name">Reason</label>
+                  <label className="ix-check so-mand">
+                    <input type="checkbox" checked={evf.mandatory} onChange={(e) => setEvf((f) => ({ ...f, mandatory: e.target.checked }))} />
+                    <span>Mandatory school event</span>
+                  </label>
+                </div>
+                <input id="sev-name" type="text" required maxLength={160} value={evf.event_name} placeholder="e.g. Sick (fever), Foundation Day"
                   onChange={(e) => setEvf((f) => ({ ...f, event_name: e.target.value }))} />
               </div>
-              <label className="ix-check">
-                <input type="checkbox" checked={evf.mandatory} onChange={(e) => setEvf((f) => ({ ...f, mandatory: e.target.checked }))} />
-                <span>Mandatory school event</span>
-              </label>
-              <div className="ix-field">
+              <div className="ix-field so-fill so-note-fill">
                 <label htmlFor="sev-reason">Note (optional)</label>
-                <textarea id="sev-reason" rows={2} style={{ minHeight: 64 }} maxLength={500} value={evf.reason} placeholder="e.g. Morning program, I will report to the office after lunch."
+                <textarea id="sev-reason" rows={2} maxLength={500} value={evf.reason} placeholder="e.g. I will report to the office after lunch."
                   onChange={(e) => setEvf((f) => ({ ...f, reason: e.target.value }))} />
               </div>
               <div className="ix-field so-proof">
-                <label htmlFor="sev-proof">Proof (photo or PDF, required)</label>
+                <label htmlFor="sev-proof">Proof (required)</label>
                 <label className={`so-file${proof ? " has" : ""}`} htmlFor="sev-proof">
-                  <Icon name="upload" size={15} /><span>{proof ? proof.name : "Tap to attach: medical certificate, invitation..."}</span>
+                  <Icon name="upload" size={15} /><span>{proof ? proof.name : "Attach a photo or PDF"}</span>
                   {proof && <button type="button" onClick={(e) => { e.preventDefault(); setProof(null); }} aria-label="Remove file">✕</button>}
                 </label>
                 <input id="sev-proof" type="file" accept="image/*,.pdf" hidden onChange={(e) => setProof(e.target.files?.[0] || null)} />
               </div>
-              <small className="so-note">The excused time gives no hours and is not marked absent. Hours you work outside it count as normal. Supervisor confirms, then coordinator approves.</small>
+              <small className="so-note">Excused time gives no hours and isn't marked absent.</small>
             </>)}
             <button type="submit" disabled={submitting} className="ix-b primary so-send">
               <Icon name="send" size={15} /> {submitting ? "Submitting..." : kind === "event" ? "Send for approval" : "Submit for approval"}</button>
@@ -1476,7 +1552,7 @@ function SubmitOnline({ user }) {
                     <button type="button" className="so-row" onClick={() => setOpenId(isOpen ? null : x.key)} aria-expanded={isOpen}>
                       <span className="so-dd"><b>{d.getDate()}</b><small>{d.toLocaleDateString("en-US", { weekday: "short" })}</small></span>
                       <span className="so-tx">
-                        <b><em className={`so-tag${x.isEv ? "" : " wd"}`}>{x.isEv ? `Excused absence${x.portion === "am" ? " · Morning" : x.portion === "pm" ? " · Afternoon" : ""}` : "Online workday"}</em>{x.description}</b>
+                        <b><em className={`so-tag${x.isEv ? "" : " wd"}`}>{x.isEv ? `Excused absence${x.portion === "am" ? " · Morning" : x.portion === "pm" ? " · Afternoon" : ""}` : dayLabel}</em>{x.description}</b>
                         <span className="so-steps"><i className={st.a} /><i className={st.b} /><em>{st.text}</em></span>
                       </span>
                       <span className={`so-pill ${st.tone}`}>{st.label}</span>
@@ -1556,7 +1632,19 @@ const SO_CSS = `
 .ix-page .ix-content .so-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 18px; }
 .ix-page .ix-content .so-body .ix-field { margin: 0 !important; }
 .ix-page .ix-content .so-body textarea { min-height: 150px; resize: vertical; }
+.ix-page .ix-content .so-body .so-note-fill textarea { min-height: 64px; }
 .ix-page .ix-content .so-note { font-size: 12px; line-height: 1.5; color: #6b7280; }
+.ix-page .ix-content .so-lblrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ix-page .ix-content .so-lblrow > label:first-child { margin: 0 !important; }
+.ix-page .ix-content .so-mand { margin: 0 !important; font-size: 12.5px; font-weight: 500; color: #4b5563; gap: 6px; }
+.ix-page .ix-content .so-mand input { width: 15px; height: 15px; margin: 0; }
+/* long notes: a thin grey scrollbar inside the box instead of the thick orange one */
+.ix-page .ix-content .so-form :is(textarea, .so-body) { scrollbar-width: thin; scrollbar-color: #d6d9de transparent; }
+.ix-page .ix-content .so-form :is(textarea, .so-body)::-webkit-scrollbar { width: 6px; }
+.ix-page .ix-content .so-form :is(textarea, .so-body)::-webkit-scrollbar-track { background: transparent; }
+.ix-page .ix-content .so-form :is(textarea, .so-body)::-webkit-scrollbar-thumb { background: #d6d9de; border-radius: 99px; }
+.ix-page .ix-content .so-form :is(textarea, .so-body)::-webkit-scrollbar-button { display: none; height: 0; }
+.ix-page .ix-content .so-form textarea { overflow-wrap: anywhere; }
 .ix-page .ix-content .so-send { width: 100%; justify-content: center; }
 .ix-page .ix-content .so-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .ix-page .ix-content .so-tabs button { height: 28px; padding: 0 11px !important; border-radius: 99px; border: 1px solid #e7e9ee; background: #fff; color: #4b5563;
@@ -1602,6 +1690,12 @@ const SO_CSS = `
   .ix-page .ix-content .so-form .so-body > .so-fill { flex-shrink: 1; }
   .ix-page .ix-content .so-form .so-body > .ix-field.so-fill { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
   .ix-page .ix-content .so-form .so-body .so-fill textarea { flex: 1 1 0; min-height: 70px !important; height: auto !important; resize: none; }
+  /* excused absence has more fields: tighter spacing, and the note box takes whatever room is left, so it fits without scrolling */
+  .ix-page.lay2 .ix-main:has(.so-cols) { padding-bottom: 18px !important; }
+  .ix-page .ix-content .so-form.so-ev .so-body { gap: 9px; padding: 12px 18px 14px; }
+  .ix-page .ix-content .so-form.so-ev .so-body > .ix-field.so-note-fill { min-height: auto; }
+  .ix-page .ix-content .so-form.so-ev .so-body .so-note-fill textarea { min-height: 64px !important; }
+  .ix-page .ix-content .so-form.so-ev .so-note { line-height: 1.4; }
 }
 @media (max-width: 900px) {
   .ix-page .ix-content .so-cols { grid-template-columns: 1fr; }
@@ -1614,7 +1708,7 @@ const SO_CSS = `
 /* ───────────────────────── Internship modality ─────────────────────────
    The HTE decides whether the intern works on-site, virtually, or hybrid; the OJT coordinator records it.
    Interns don't request it. Any intern can log a single day worked from home as online attendance. */
-function WorkModeCard({ user }) {
+function WorkModeCard({ user, tab = "online" }) {
   const [u, setU] = useState(null);
   const load = () => {
     fetch(`${API}/me?user_id=${user.id}`, { headers: { Accept: "application/json" } })
@@ -1629,7 +1723,7 @@ function WorkModeCard({ user }) {
   const m = modalityOf(u);
   // one short line that fits the modality (nothing about "working from home" for interns who work remotely by design)
   const NOTE = {
-    onsite: "Tap at the kiosk. Worked from home for a day? Log it below.",
+    onsite: "Tap at the kiosk. Only log a day below when you couldn't (your supervisor sent you off-site, the office was closed, or your card was lost), and say why.",
     hybrid: "Tap at the kiosk on office days and log your remote days below.",
     virtual: "Log every workday below.",
     project: "Log the days you worked on your project below.",
@@ -1637,7 +1731,9 @@ function WorkModeCard({ user }) {
   return (
     <div className="wm-strip">
       <span className={`wm-tag m-${m}`}>{MODALITIES[m]}</span>
-      <span className="wm-note">{NOTE[m]} Your supervisor confirms it, then your coordinator approves it.</span>
+      <span className="wm-note">{tab === "event"
+        ? "Missed a whole day or half a day for a valid reason (sickness, a school event)? File it below with a proof. Your supervisor confirms it, then your coordinator approves it."
+        : `${NOTE[m]} Your supervisor confirms it, then your coordinator approves it.`}</span>
       <small className="wm-help" title="Your modality is set by your HTE. Ask your OJT coordinator if it is wrong.">Wrong modality? Ask your OJT coordinator.</small>
       <style>{`
         .ix-content .wm-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; font-size: 12.5px; color: #6b7280; }
@@ -1653,16 +1749,20 @@ function WorkModeCard({ user }) {
 /* ───────────────────────── Submit MOV ───────────────────────── */
 /* a look at the submitted file inside the drawer: PDF and images show right there; Word files can only be opened */
 function FilePreview({ x }) {
-  const url = useFileLink(x.file_path) || "";   // private: a short-lived link from the server
+  // private: a short-lived link from the server. Nothing is shown in the frame until the link is here
+  // (an empty frame would load this page inside itself)
+  const { url, error, loading } = useFileLinkState(x.file_path);
   const ext = String(x.original_name || x.file_path || "").split(".").pop().toLowerCase();
   const isImg = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext);
   const isPdf = ext === "pdf";
   return (
     <div className="mv-prev">
       <div className="mv-prev-h"><span>Preview</span>
-        <a className="ix-link" href={url} target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
+        {url && <a className="ix-link" href={url} target="_blank" rel="noopener noreferrer">Open in a new tab</a>}</div>
       <div className="mv-prev-box">
-        {isPdf ? <iframe title={x.original_name || "Submitted file"} src={`${url}#toolbar=0&navpanes=0&view=FitH`} />
+        {loading ? <div className="mv-prev-none"><Spinner /><span>Loading the file…</span></div>
+          : !url ? <div className="mv-prev-none"><Icon name="warn" size={26} /><span>{error || "This file can't be opened."}</span></div>
+          : isPdf ? <iframe key={url} title={x.original_name || "Submitted file"} src={`${url}#toolbar=0&navpanes=0&view=FitH`} />
           : isImg ? <img src={url} alt={x.original_name || "Submitted file"} />
           : <div className="mv-prev-none"><Icon name="file" size={26} /><span>No preview for this file type.</span><a className="ix-link" href={url} target="_blank" rel="noopener noreferrer">Open {x.original_name || "the file"}</a></div>}
       </div>
@@ -1929,7 +2029,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
       )}>
         <button type="button" className="ix-b ghost sm" onClick={() => setFormsOpen(true)}><Icon name="file" size={14} /> Forms and templates</button>
       </PageHeader>
-      {formsOpen && <RequirementForms onClose={() => setFormsOpen(false)} />}
+      {formsOpen && <RequirementForms user={user} onClose={() => setFormsOpen(false)} />}
       <style>{`
         .mv-prev { flex: 1 1 0; min-height: 260px; display: flex; flex-direction: column; gap: 8px; }
         .mv-prev-h { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #94a3b8; }
@@ -2016,11 +2116,19 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
           <div className="req-locked">
             <span className="req-lock-icon"><Icon name="lock" size={28} /></span>
             <h3>Post-internship requirements are locked</h3>
+            {modalityOf(user) === "project" ? (
+              <p>
+                You are project-based, so they open once your project is done: your HTE supervisor marks it
+                as complete and the OJT coordinator confirms it. This can be before or after your{" "}
+                <strong>{required}h</strong> (you have <strong>{totalHours}h</strong> so far).
+              </p>
+            ) : (
             <p>
               They open once you complete your required OJT hours. You have rendered{" "}
               <strong>{totalHours}h</strong> of <strong>{required}h</strong>
               {" "}— <strong>{Math.max(Math.round((required - totalHours) * 10) / 10, 0)}h</strong> to go.
             </p>
+            )}
             <div className="ix-prog"><Bar pct={Math.max(Math.min((totalHours / required) * 100, 100), 0)} /></div>
           </div>
         </div>
@@ -2031,6 +2139,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
             // one state per requirement: approved / waiting / needs fix / to upload
             const stateOf = (r) => {
               if (r.key === "weekly_report") {
+                if (!reports.length) return "na";   // the coordinator hasn't asked for a report yet: nothing to do, not counted
                 const sts = reports.map((x) => reportStatus(x.id));
                 if (sts.length && sts.every((x) => x === "approved")) return "approved";
                 if (sts.includes("rejected")) return "rejected";
@@ -2040,13 +2149,14 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
               return latest(r.key)?.status || "none";
             };
             const c = { approved: 0, pending: 0, rejected: 0, none: 0 };
-            list.forEach((r) => { const k = stateOf(r); c[k in c ? k : "none"]++; });
-            const n = list.length || 1;
+            const counted = list.filter((r) => stateOf(r) !== "na");
+            counted.forEach((r) => { const k = stateOf(r); c[k in c ? k : "none"]++; });
+            const n = counted.length || 1;
             const othersWaiting = others.filter((m) => m.status === "pending").length;   // sent under "Other documents", still waiting
             const segs = [["approved", "approved"], ["pending", "waiting"], ["rejected", "needs fix"], ["none", "to upload"]];
             return (
               <div className="mv-prog2">
-                <b>{c.approved} of {list.length} approved</b>
+                <b>{c.approved} of {counted.length} approved</b>
                 <span className="mv-bar2" role="img" aria-label={segs.map(([k, l]) => `${c[k]} ${l}`).join(", ")}>
                   {segs.slice(0, 3).map(([k]) => c[k] > 0 && <i key={k} className={k} style={{ width: (c[k] / n) * 100 + "%" }} />)}
                 </span>
@@ -2062,7 +2172,8 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
               if (r.key === "weekly_report") {
                 const needs = reports.some((x) => ["none", "rejected"].includes(reportStatus(x.id)));
                 const allDone = reports.length > 0 && reportsApproved === reports.length;
-                return { r, i, report: true, group: allDone ? "approved" : needs ? "todo" : reports.length ? "waiting" : "todo" };
+                // nothing asked yet: the next step is the coordinator's, so it sits under "Waiting for your coordinator"
+                return { r, i, report: true, group: allDone ? "approved" : needs ? "todo" : "waiting" };
               }
               const m = latest(r.key);
               const st = m?.status || "none";
@@ -2931,7 +3042,19 @@ function NfcApply({ user, records = [] }) {
   };
   const tapTime = (t) => new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
   const cardUser = { ...user, ...(me || {}) };
-  const settings = loadCardSettings();
+  // the valid date, coordinator, signature and contact the admin saved (the server's copy: this browser has none)
+  const [settings, setCardSettings] = useState(loadCardSettings);
+  useEffect(() => {
+    let off = false;
+    fetch(`${API}/id-card-settings`, { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (off || !d?.settings) return;
+        setCardSettings((x) => ({ ...x, ...Object.fromEntries(Object.entries(d.settings).filter(([, v]) => v !== null && v !== undefined && v !== "")) }));
+      })
+      .catch(() => {});
+    return () => { off = true; };
+  }, []);
   // the card itself is shown only once it's released (claimed); before that, its journey
   const released = hasCard && !active;
   const reached = { none: 0, rejected: 1, pending: 1, approved: 2, printed: 3, linked: 4, issued: 5 }[stage] ?? 0;
@@ -3174,12 +3297,17 @@ const NC_CSS = `
   .ix-page .nc-col { min-height: 0; }
   .ix-page .ix-card.nc-cardbox { background: #f7f1ec !important; border-color: transparent !important; overflow: hidden; min-height: 0; }
   .ix-page .ix-card.nc-hero { flex: none; padding: clamp(14px, 2.2vh, 24px) 28px !important; }
-  /* the bottom row reaches the bottom of the page, like the other pages */
-  .ix-page .nc-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); flex: 1 1 0; min-height: 0; }
+  /* the bottom row ends on the same line as the ID card box on the left (never shorter than its content);
+     both cards share the same height */
+  .ix-page .nc-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); flex: 1 0 auto; min-height: 0; align-items: stretch; }
   .ix-page .nc-row > .ix-card { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .ix-page .nc-tlist { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
-  /* the notes box stays about 3 lines; the card itself reaches the bottom */
-  .ix-page .nc-act .nc-notes { flex: none; height: 84px !important; }
+  /* the 5 tap slots share the card's height, so the list fills the card on any screen size */
+  .ix-page .nc-tlist { flex: 1 0 auto; display: grid; grid-template-rows: repeat(5, minmax(44px, 1fr)); align-content: stretch; }
+  .ix-page .nc-tlist li:last-child { border-bottom: 1px solid #f1f2f4; }
+  .ix-page .nc-tlist li:nth-child(5) { border-bottom: 0; }
+  /* the form fills its card: the notes box takes the extra height and the button sits at the bottom */
+  .ix-page .nc-act > .nc-form { flex: 1 0 auto; }
+  .ix-page .nc-act .nc-notes { flex: 1 0 84px; height: auto !important; min-height: 84px !important; max-height: none !important; resize: none; }
   .ix-page .nc-empty { flex: 1; display: grid; place-items: center; margin: 12px; border: 1.5px dashed #e5e7eb; border-radius: 12px; }
   .ix-page .ix-card.nc-cardbox.nc-locked { overflow-y: auto; }
 }
@@ -3187,6 +3315,12 @@ const NC_CSS = `
 @media (min-width: 1001px) and (min-height: 920px) {
   .ix-page .nc-info h3 { font-size: 24px; } .ix-page .nc-info > p { font-size: 14.5px; }
   .ix-page .nc-steps { max-width: 720px; margin-top: 18px; }
+  /* bigger text in the bottom row too, so it doesn't look small in the taller cards */
+  .ix-page .nc-hd b, .ix-page .nc-act-t { font-size: 16px; }
+  .ix-page .nc-tlist li { font-size: 14px; padding: 12px 20px; }
+  .ix-page .nc-act-p { font-size: 13.5px; }
+  .ix-page .ix-card.nc-act { padding: 22px 24px !important; gap: 14px; }
+  .ix-page .nc-form { gap: 14px; }
 }
 @media (min-width: 1001px) and (max-height: 860px) { .ix-page .nc-info h3 { font-size: 19px; } }
 
@@ -3385,6 +3519,27 @@ const PF_CSS = `
 @media (min-width: 1200px) and (max-height: 1000px) { .ix-page .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 /* tall screens: roomier facts so the cards are filled */
 @media (min-width: 901px) and (min-height: 901px) { .ix-page .pf-body { gap: 18px 24px; } .ix-page .pf-kv b { font-size: 14px; } }
+/* full screen / tall windows: both rows share the extra height evenly and the facts spread out inside each card,
+   so no card is left with a big blank at the bottom */
+@media (min-width: 901px) and (min-height: 600px) {
+  .ix-page.lay2 .ix-content .pf-page > .pf-grid:last-child { grid-template-rows: minmax(min-content, 1fr) minmax(min-content, 1fr) !important; }
+  .ix-page .ix-card.pf-card { display: flex; flex-direction: column; }
+  .ix-page .pf-card > header { flex: none; }
+  .ix-page .pf-card > .pf-body { flex: 1 0 auto; align-content: space-evenly; }
+  /* account security: the code and the button sit in the middle of the space under the title */
+  .ix-page .pf-sec .sec-card > .sec-row2 { margin-top: auto !important; }
+  .ix-page .pf-sec .sec-card > .sec-change { margin-bottom: auto !important; margin-top: clamp(6px, 1.6vh, 18px) !important; }
+}
+@media (min-width: 901px) and (min-height: 960px) {
+  .ix-page .pf-who h2 { font-size: 24px; }
+  .ix-page .pf-sub { font-size: 13.5px; }
+  .ix-page .pf-stats b { font-size: 22px; } .ix-page .pf-stats small { font-size: 12.5px; }
+  .ix-page .pf-card > header, .ix-page .pf-sec .sec-card > .ipv-title { font-size: 15.5px !important; height: 54px; }
+  .ix-page .pf-kv small { font-size: 12.5px; } .ix-page .pf-kv b { font-size: 15.5px; }
+  .ix-page .pf-body { padding: 18px 22px !important; }
+  .ix-page .pf-sec .sec-card > :not(.ipv-title) { margin-left: 22px !important; margin-right: 22px !important; }
+  .ix-page .pf-sec .sec-hint { font-size: 12.5px; }
+}
 @media (min-width: 901px) and (max-height: 800px) {
   .ix-page .pf-sec .sec-hint { display: none; }
   .ix-page .pf-kv small { margin-bottom: 0; font-size: 11px; } .ix-page .pf-kv b { font-size: 12.5px; }

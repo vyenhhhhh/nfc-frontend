@@ -56,3 +56,21 @@ export function useFileLink(path) {
   }, [path]);
   return url;
 }
+
+/** like useFileLink, but also says whether it is still waiting and why it failed
+ *  (so a preview never shows an empty frame: an <iframe src=""> would load this app inside itself) */
+export function useFileLinkState(path) {
+  const direct = path && !isPrivateFile(path) ? (/^(https?:|blob:|data:)/.test(path) ? path : STORAGE + clean(path)) : null;
+  const [st, setSt] = useState(() => ({ url: direct, error: null, loading: !!path && !direct }));
+  useEffect(() => {
+    let alive = true;
+    if (!path) { setSt({ url: null, error: null, loading: false }); return undefined; }
+    setSt((s) => ({ url: direct || null, error: null, loading: !direct }));
+    fileLink(path)
+      .then((u) => { if (alive) setSt({ url: u, error: u ? null : "This file can't be opened.", loading: false }); })
+      .catch((err) => { if (alive) setSt({ url: null, error: err instanceof TypeError ? "Couldn't reach the server." : err.message || "This file can't be opened.", loading: false }); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
+  return st;
+}

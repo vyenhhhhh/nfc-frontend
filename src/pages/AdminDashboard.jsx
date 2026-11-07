@@ -1,5 +1,5 @@
 // AdminDashboard.jsx
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
@@ -16,13 +16,17 @@ import { CardRequests } from "../components/NfcCards.jsx";
 import CardAlerts from "../components/CardAlerts.jsx";
 import { currentFit } from "../fit.js";
 import { API, STORAGE } from "../config.js";
+import { HteBoard, RequirementsTracker } from "../components/CoordinatorTools.jsx";
+import ReviewQueue, { Pager } from "../components/ReviewQueue.jsx";   // the same page numbers as the Approvals tables
+// the coordinator's Supervisors page, shared with the admin (loaded on demand: that file also imports this one)
+const AssignSupervisorsLazy = lazy(() => import("./OjtCoordinatorDashboard.jsx").then((m) => ({ default: m.AssignSupervisors })));
 
 const NAV = [
   { path: "/admin",          label: "Dashboard",  icon: "dashboard" },
   { path: "/admin/interns",  label: "Interns",    icon: "users" },
   { path: "/admin/accounts", label: "Accounts",   icon: "settings" },
   { path: "/admin/cards",    label: "Card Requests", icon: "card" },
-  { path: "/admin/kiosks",   label: "Kiosks",     icon: "tap" },
+  { path: "/admin/htes",     label: "Partner HTEs", icon: "globe" },   // HTEs & MOAs · All Supervisors · Kiosks
   // no Reports: the DTR and the quarterly report belong to the OJT coordinator (and the supervisor certifies DTRs)
   { path: "/admin/calendar", label: "Calendar",   icon: "calendar" },
   { path: "/admin/activity", label: "Activity Log", icon: "list", section: "System" },
@@ -37,8 +41,17 @@ const GROUPS = {
     title: "Interns",
     live: true,
     tabs: [
-      { key: "monitor", label: "Monitor Interns",    icon: "users", sub: "Real-time status of all interns." },
-      { key: "records", label: "Attendance Records", icon: "list",  sub: "Complete system-wide attendance log." },
+      { key: "monitor", label: "All Interns", icon: "users", sub: "Every intern and their real-time status. Click a name to open their full information." },
+      { key: "records", label: "Attendance",  icon: "list",  sub: "Complete system-wide attendance log." },
+      { key: "requirements", label: "Requirements", icon: "folder", sub: "Every intern and every requirement in one table. Filter it, then export it to Excel." },
+    ],
+  },
+  "/admin/htes": {
+    title: "Partner HTEs",
+    tabs: [
+      { key: "htes",        label: "HTEs & MOAs", icon: "globe",     sub: "Every Host Training Establishment, its MOA and its interns. The MOA date is set on the HTE supervisor's account." },
+      { key: "supervisors", label: "All Supervisors", icon: "briefcase", sub: "HTE supervisors and their interns. Assign or move an intern's supervisor here." },
+      { key: "kiosks",      label: "Kiosks",      icon: "tap",       sub: "Each kiosk has its own key. An HTE kiosk only accepts the interns placed at that HTE." },
     ],
   },
   "/admin/accounts": {
@@ -57,6 +70,7 @@ const OLD_PATHS = {
   "/admin/reports": "/admin",
   "/admin/hours":   "/admin",
   "/admin/term":    "/admin/accounts?tab=term",
+  "/admin/kiosks":  "/admin/htes?tab=kiosks",
 };
 
 /* ───────── Page with tabs (one title, a row of tabs, then the open tab) ─────────
@@ -186,6 +200,8 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [users, setUsers] = useState([]);
+  const [movs, setMovs] = useState([]);
+  const [cardReqs, setCardReqs] = useState([]);   // NFC card requests: the sidebar count on Card Requests
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -195,10 +211,14 @@ export default function AdminDashboard() {
 
   const fetchAll = async () => {
     try {
-      const [r, u] = await Promise.all([
+      const [r, u, m, c] = await Promise.all([
         fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
         fetch(`${API}/admin/users`).then((r) => r.json()),
+        fetch(`${API}/coordinator/movs`).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/supervisor/nfc-requests`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => []),
       ]);
+      if (Array.isArray(m)) setMovs([...m]);
+      if (Array.isArray(c)) setCardReqs(c);
       if (Array.isArray(r)) setRecords([...r]);
       if (Array.isArray(u)) setUsers([...u]);
     } catch (err) {
@@ -220,7 +240,7 @@ export default function AdminDashboard() {
   // the old Accounts tabs for kiosks, end of term and backups open their own pages now
   useEffect(() => {
     const t = new URLSearchParams(search).get("tab");
-    const moved = { kiosks: "/admin/kiosks", activity: "/admin/activity", backup: "/admin/backups", cards: "/admin/cards" };
+    const moved = { kiosks: "/admin/htes?tab=kiosks", activity: "/admin/activity", backup: "/admin/backups", cards: "/admin/cards" };
     if (path === "/admin/accounts" && moved[t]) navigate(moved[t], { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, search]);
@@ -232,7 +252,10 @@ export default function AdminDashboard() {
   const pickTab = (key) => navigate(`${path}?tab=${key}`, { replace: true });
 
   return (
-    <Shell navItems={navWithTabs(NAV, GROUPS)} user={user}>
+    // the admin's own work on Card Requests: approved cards to print, and printed cards still to link
+    <Shell navItems={navWithTabs(NAV, GROUPS, {}, {
+      "/admin/cards": cardReqs.filter((q) => q.status === "approved" && (!q.printed_at || !q.uid)).length,
+    })} user={user}>
       <style>{adminCss}</style>
       <style>{internCss}</style>
       <style>{formalLayout}</style>
@@ -251,6 +274,15 @@ export default function AdminDashboard() {
             />
           )}
           {tab.key === "records" && <Records records={records} loading={loading} interns={interns} />}
+          {tab.key === "requirements" && <RequirementsTracker interns={interns} movs={movs} records={records} reviewPath={null} />}
+          {/* HTEs */}
+          {tab.key === "htes" && <HteBoard supervisors={users.filter((u) => u.role === "supervisor")} interns={interns} onRefresh={fetchAll} monitorPath="/admin/interns?tab=monitor" supervisorsPath="/admin/htes?tab=supervisors" />}
+          {tab.key === "supervisors" && (
+            <Suspense fallback={<Spinner />}>
+              <AssignSupervisorsLazy interns={interns} supervisors={users.filter((u) => u.role === "supervisor")} records={records} onRefresh={fetchAll} />
+            </Suspense>
+          )}
+          {tab.key === "kiosks" && <Kiosks interns={interns} />}
           {/* Accounts */}
           {tab.key === "users" && <Accounts users={users} onRefresh={fetchAll} />}
           {tab.key === "term" && <EndOfTerm users={users} records={records} onRefresh={fetchAll} />}
@@ -262,10 +294,6 @@ export default function AdminDashboard() {
       {path === "/admin/cards" && (<>
         <PageHeader title="Card Requests" sub="Approved ID cards: download the details for your printing app, then mark them as printed." />
         <PrintIdCards interns={interns} />
-      </>)}
-      {path === "/admin/kiosks" && (<>
-        <PageHeader title="Kiosks" sub="Each kiosk has its own key. An HTE kiosk only accepts the interns placed at that HTE." />
-        <Kiosks />
       </>)}
       {path === "/admin/activity" && (<>
         <PageHeader title="Activity Log" sub="Who did what, and when: sign-ins, approvals, edits and deletions." />
@@ -382,14 +410,14 @@ function Home({ user, records, interns, coordinators, loading }) {
             ))}
           </div>
         </Panel>
-        <Panel title="Kiosks" count={kiosks ? kiosks.length : undefined} link="Manage" onLink={() => go("/admin/kiosks")}>
+        <Panel title="Kiosks" count={kiosks ? kiosks.length : undefined} link="Manage" onLink={() => go("/admin/htes?tab=kiosks")} className="adm-fit3">
           {!kiosks ? <Spinner /> : kiosks.length === 0 ? <DashEmpty title="No kiosks yet" sub="Add one in Kiosks." /> : (
             <div className="dbx-fill">
-              {kiosks.slice(0, 4).map((k) => {
+              {kiosks.slice(0, 3).map((k) => {
                 const st = kioskState(k);
                 return <DashRow key={k.id} icon="tap" tone={st.tone === "green" ? "green" : ""} title={k.name}
                   sub={`${k.placement ? `Interns at ${k.placement}` : "Every intern (CCIS)"} · ${ago(k.last_seen_at)}`}
-                  tag={st.tag} tagTone={st.tone} onClick={() => go("/admin/kiosks")} />;
+                  tag={st.tag} tagTone={st.tone} onClick={() => go("/admin/htes?tab=kiosks")} />;
               })}
             </div>
           )}
@@ -398,10 +426,10 @@ function Home({ user, records, interns, coordinators, loading }) {
       )}
       right={<>
         <HomeCalendar />
-        <Panel title="Recent activity" link="Activity log" onLink={() => go("/admin/activity")}>
+        <Panel title="Recent activity" link="Activity log" onLink={() => go("/admin/activity")} className="adm-fit3">
           {!acts ? <Spinner /> : acts.length === 0 ? <DashEmpty title="Nothing logged yet" /> : (
             <div className="dbx-fill">
-              {acts.map((r, i) => (
+              {acts.slice(0, 3).map((r, i) => (
                 <DashRow key={r.id ?? i} icon="list" title={r.user_name || "Not signed in"}
                   sub={`${r.action}${r.details ? " · " + r.details : ""}`}
                   tag={ago(r.created_at)} onClick={() => go("/admin/activity")} />
@@ -799,7 +827,7 @@ export function Records({ records, loading, interns = [] }) {
       .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.name).localeCompare(String(b.name)));
   };
   const printRows = (list) => list.map((r) => [
-    r.name || "", placeOf(r) === "—" ? "" : placeOf(r), day(r.date), r.uid === "ONLINE" ? "Online" : "Onsite",
+    r.name || "", placeOf(r) === "—" ? "" : placeOf(r), day(r.date), r.uid === "ONLINE" ? "Online log" : "Kiosk",
     r.checked_out_at ? "Time out" : "Time in", hm(r.checked_in_at) === "—" ? "" : hm(r.checked_in_at),
     r.checked_out_at ? hm(r.checked_out_at) : "No time out yet", hrs(r) === "—" ? "" : hrs(r),
   ]);
@@ -828,20 +856,26 @@ export function Records({ records, loading, interns = [] }) {
           <Icon name="search" size={15} />
           <input type="text" placeholder="Search intern..." value={search} onChange={(e) => { setSearch(e.target.value); setLimit(60); }} />
         </div>
-        <select className="ix-select mon-filter" value={type} onChange={(e) => { setType(e.target.value); setLimit(60); }} aria-label="Filter by type">
-          {[["all", "All records"], ["onsite", "Onsite"], ["online", "Online"]].map(([k, l]) => <option key={k} value={k}>{l} ({counts[k]})</option>)}
-        </select>
-        <select className="ix-select mon-filter" value={prog} onChange={(e) => { setProg(e.target.value); setLimit(60); }} aria-label="Filter by program">
-          <option value="all">All programs</option>
-          {[["BSIT", "BSIT (IT)"], ["BSCS", "BSCS (CS)"], ["BSIS", "BSIS (IS)"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
         <select className="ix-select mon-filter" value={hte} onChange={(e) => { setHte(e.target.value); setLimit(60); }} aria-label="Filter by placement">
           <option value="all">All placements</option>
           {htes.map((h) => <option key={h} value={h}>{h}</option>)}
         </select>
         {(search || hte !== "all" || prog !== "all" || type !== "all") && <button type="button" className="ix-b ghost sm" onClick={() => { setDateFilter(""); setDateTo(""); setSearch(""); setHte("all"); setProg("all"); setType("all"); }}>Clear</button>}
         <span className="mon-chip on">{filtered.length} record{filtered.length === 1 ? "" : "s"}</span>
-        <button type="button" className="ix-b ghost sm acc-add" onClick={() => setPrinting(true)}><Icon name="download" size={14} /> Export Excel</button>
+        <button type="button" className="ix-b ghost sm acc-add ix-exp" onClick={() => setPrinting(true)}><Icon name="download" size={14} /> Export Excel</button>
+      </div>
+      {/* how the day was recorded, and the program: one click each (same switch as the other pages) */}
+      <div className="mon-bar2">
+        <div className="so-tabs" role="tablist" aria-label="Filter by type">
+          {[["all", "All records"], ["onsite", "Kiosk"], ["online", "Online log"]].map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={type === k} className={type === k ? "on" : ""} onClick={() => { setType(k); setLimit(60); }}>{l} · {counts[k]}</button>
+          ))}
+        </div>
+        <div className="so-tabs" role="tablist" aria-label="Filter by program">
+          {[["all", "All programs"], ["BSIT", "BSIT"], ["BSCS", "BSCS"], ["BSIS", "BSIS"]].map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={prog === k} className={prog === k ? "on" : ""} onClick={() => { setProg(k); setLimit(60); }}>{l}</button>
+          ))}
+        </div>
       </div>
       {printing && (
         <Drawer inPage icon="file" kicker="Attendance Records" title="Export attendance" sub="Pick the dates, program and HTE to include in the Excel file." onClose={() => setPrinting(false)}
@@ -884,7 +918,7 @@ export function Records({ records, loading, interns = [] }) {
               <span className="rec-who"><Avatar name={r.name} photo={r.photo} size={28} /><strong>{r.name}</strong></span>,
               <span className="rec-place" title={placeOf(r)}>{placeOf(r)}</span>,
               day(r.date),
-              <Badge label={r.uid === "ONLINE" ? "Online" : "Onsite"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
+              <Badge label={r.uid === "ONLINE" ? "Online log" : "Kiosk"} type={r.uid === "ONLINE" ? "online" : "onsite"} />,
               r.checked_out_at
                 ? <Badge label="Time out" type="out" />
                 : <Badge label="Time in" type="in" />,
@@ -898,23 +932,8 @@ export function Records({ records, loading, interns = [] }) {
           />
         )}
         {!loading && filtered.length > PAGE && (
-          <div className="rec-more rec-more-c">
-            {(() => {
-              const total = Math.ceil(filtered.length / PAGE);
-              const start = Math.max(1, Math.min(page - 3, total - 6));
-              const nums = Array.from({ length: Math.min(7, total) }, (_, i) => start + i);
-              return (
-                <span className="rec-pg">
-                  <button type="button" className="ix-b ghost sm" disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>‹ Previous</button>
-                  {nums.map((n) => (
-                    <button key={n} type="button" className={"ix-b sm rec-pn" + (n === page ? " on" : " ghost")} onClick={() => setPage(n)} aria-current={n === page ? "page" : undefined}>{n}</button>
-                  ))}
-                  <button type="button" className="ix-b ghost sm" disabled={page >= total} onClick={() => setPage((n) => n + 1)}>Next ›</button>
-                </span>
-              );
-            })()}
-            <small>Showing {(page - 1) * PAGE + 1}–{Math.min(page * PAGE, filtered.length)} of {filtered.length}</small>
-          </div>
+          /* the same page numbers as the Approvals tables (MOV Submissions) */
+          <Pager page={page} total={filtered.length} perPage={PAGE} onPage={setPage} />
         )}
       </div>
       <style>{`
@@ -935,7 +954,7 @@ const BLANK_FORM = {
   email: "", password: "", date_of_birth: "", role: "intern",
   student_id: "", contact_number: "", address: "",
   placement: "", semester: "1st Semester", program: "BSIT - 4",
-  uid: "", work_mode: "onsite", tracking_type: "hours", modality: "onsite", scope: "local", dtr_mode: "two", supervisor_id: "", photo: null,
+  uid: "", work_mode: "onsite", tracking_type: "hours", modality: "hte", scope: "local", hte_modality: "", hte_category: "", dtr_mode: "two", supervisor_id: "", photo: null,
   output_required: "1", prior_hours: "",
   emergency_contact_name: "", emergency_contact_relation: "",
   emergency_contact_number: "", emergency_contact_address: "",
@@ -1096,7 +1115,10 @@ export function Accounts({ users, onRefresh, limited = false }) {
       placement: u.placement || "",
       work_mode: u.work_mode || "onsite",
       tracking_type: u.tracking_type || "hours",
-      modality: u.modality || "onsite",
+      // an intern who follows their HTE shows "Same as the HTE"; one with their own shows it
+      modality: u.role === "intern" && !(u.modality_custom && Number(u.modality_custom) !== 0) ? "hte" : (u.modality || "onsite"),
+      hte_modality: u.hte_modality || "",
+      hte_category: u.hte_category || "",
       scope: u.scope || "local",
       dtr_mode: dtrModeOf(u),
       supervisor_id: u.supervisor_id ? String(u.supervisor_id) : "",
@@ -1442,7 +1464,8 @@ function PrintIdCards({ interns }) {
       .catch(() => setError("Couldn't reach the server."))
       .finally(() => setLoading(false));
 
-  useEffect(() => { load(); }, []);
+  // live: a request the coordinator just approved shows up in "To print" without refreshing the page
+  useEffect(() => { load(); return liveRefresh(load); }, []);
 
   return (
     <>
@@ -2488,7 +2511,18 @@ export function AdminProfile({ user }) {
         </form>
       )}
       <style>{STAFF_PF_CSS}</style>
-      <style>{`@media (min-width: 1200px) { .ix-page .pf-page:has(.pf-sec-full) .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }`}</style>
+      <style>{`@media (min-width: 1200px) { .ix-page .pf-page:has(.pf-sec-full) .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* computers: the details row and Account security share the free height evenly (no huge blank in one card),
+   the facts spread out inside their cards and the security part sits in the middle of its card */
+@media (min-width: 901px) and (min-height: 600px) {
+  .ix-page.lay2 .ix-content .pf-page:has(.pf-sec-full) > .pf-grid { flex: 1 1 0 !important; min-height: min-content; grid-template-rows: minmax(min-content, 1fr) !important; }
+  .ix-page.lay2 .ix-content .pf-page:has(.pf-sec-full) > .pf-sec-full { flex: 1 1 0 !important; min-height: min-content; display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-content .pf-page:has(.pf-sec-full) > .pf-sec-full > .ix-card.sec-card { flex: 1 1 auto !important; height: auto !important; }
+  .ix-page .pf-page:has(.pf-sec-full) .pf-card { display: flex; flex-direction: column; }
+  .ix-page .pf-page:has(.pf-sec-full) .pf-card > .pf-body { flex: 1 0 auto; align-content: space-evenly; }
+  .ix-page .pf-sec-full .sec-card > .sec-row2 { margin-top: auto !important; }
+  .ix-page .pf-sec-full .sec-card > .sec-change { margin-bottom: auto !important; margin-top: 14px !important; }
+}`}</style>
       <style>{`
         .ix-page .pf-photo { position: relative; flex-shrink: 0; }
         .ix-page .pf-preview { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; display: block; }
@@ -2661,6 +2695,13 @@ export const adminCss = `
 .ix-content .ix-note { border-radius: 14px; }
 .ix-modal-wrap .ix-field input, .ix-modal-wrap .ix-field select { border-radius: 14px; border-color: #f1e2d9; background: #fffaf7; }
 .ix-modal-wrap .ix-modal { border-radius: 26px; }
+/* Kiosks and Recent activity on Home: 3 rows that share the card's height on a big screen;
+   a row never gets smaller than its own text (no overlapping when the window is small or zoomed in) —
+   then the rows scroll inside the card instead */
+.ix-page .ix-content .dbx-card.adm-fit3, .ix-page.lay2 .ix-content .dbx-grid .dbx-col > .dbx-card.adm-fit3 { overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+.ix-page.lay2 .ix-content .dbx-grid .adm-fit3 > .dbx-fill { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; overflow-x: hidden !important; }
+.ix-page.lay2 .ix-content .dbx-grid .adm-fit3 > .dbx-fill > .dbx-it { flex: 1 0 auto !important; min-height: 52px !important; padding-top: 6px !important; padding-bottom: 6px !important; }
+.ix-page.lay2 .ix-content .dbx-grid .adm-fit3 > .dbx-fill > .dbx-it .dbx-tx :is(b, small) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ix-modal-wrap .ix-modal header h2 { font-family: 'Bricolage Grotesque', 'Segoe UI', sans-serif; }
 
 /* calendar management page */
@@ -2884,7 +2925,7 @@ export const adminCss = `
 /* ───────────────────────── Kiosks (Accounts → Kiosks) ─────────────────────────
    Each kiosk has its own key. The key is shown once, as a setup link to open on the kiosk device.
    "CCIS" kiosks accept every intern; an HTE kiosk only accepts the interns placed at that HTE. */
-function Kiosks() {
+function Kiosks({ interns = [] }) {
   const [data, setData] = useState(null);       // { kiosks, placements }
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -2892,11 +2933,7 @@ function Kiosks() {
   const [shown, setShown] = useState(null);     // { name, key } just made: shown once
   const [copied, setCopied] = useState(false);
   const [readerPick, setReaderPick] = useState("auto");   // which card reader the kiosk device uses
-  const [adding, setAdding] = useState(false);
-  const [kq, setKq] = useState("");
-  const [kf, setKf] = useState("all");
-  const [sel, setSel] = useState(null);           // the picked kiosk
-  const [open, setOpen] = useState(false);        // phones: the details replace the list
+  const [adding, setAdding] = useState(false);    // false | true (the form) | "done" (the new kiosk's setup link)
   const [alertsOpen, setAlertsOpen] = useState(false);
 
   const load = () => fetch(`${API}/admin/kiosks`, { headers: { Accept: "application/json" } })
@@ -2920,7 +2957,7 @@ function Kiosks() {
   const add = async (e) => {
     e.preventDefault();
     const d = await call(`${API}/admin/kiosks`, "POST", { name: form.name.trim(), placement: form.placement || null }, "add");
-    if (d?.key) { setShown({ id: d.id, name: form.name.trim(), key: d.key }); setSel(d.id); setOpen(true); setKf("all"); setCopied(false); setForm({ name: "", placement: "" }); setAdding(false); }
+    if (d?.key) { setShown({ id: d.id, name: form.name.trim(), key: d.key }); setCopied(false); setForm({ name: "", placement: "" }); setAdding("done"); }
   };
   const newKey = async (k) => {
     if (!window.confirm(`Make a new key for "${k.name}"? The old key stops working right away, so you'll need to set up the kiosk again.`)) return;
@@ -2944,136 +2981,132 @@ function Kiosks() {
   const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}${readerPick !== "auto" ? `&reader=${readerPick}` : ""}` : "";
   const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select it by hand */ } };
   const seen = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Never");
-  const kqs = kq.trim().toLowerCase();
-  const kiosksShown = (data?.kiosks || [])
-    .filter((k) => kf === "all" || (kf === "on" && k.active) || (kf === "off" && !k.active))
-    .filter((k) => !kqs || `${k.name} ${k.placement || ""}`.toLowerCase().includes(kqs))
-    .sort((a, b) => (b.active - a.active) || String(a.name).localeCompare(String(b.name)));
+  const added = (d) => (d ? new Date(String(d).replace(" ", "T")).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
+  const norm = (v) => String(v || "").trim().toLowerCase();
+  const canTap = (k) => (k.placement ? interns.filter((u) => norm(u.placement) === norm(k.placement)).length : interns.length);
+  const all = [...(data?.kiosks || [])].sort((a, b) => (b.active - a.active) || String(a.name).localeCompare(String(b.name)));
+  const tabs = [
+    { key: "all", label: "All", items: all, empty: ["No kiosks yet", "Click Add kiosk. The main kiosk key in the server's .env still works as a CCIS kiosk."] },
+    { key: "on",  label: "On",  items: all.filter((k) => k.active), empty: ["No kiosk is on", "Turn a kiosk on to accept taps again."] },
+    { key: "off", label: "Off", items: all.filter((k) => !k.active), empty: ["Every kiosk is on", "Kiosks you turn off are listed here."] },
+  ];
+  const columns = [
+    { label: "Kiosk", render: (k) => (
+      <span className="rq2-who"><span className={k.active ? "ks-ic on" : "ks-ic"}><Icon name="tap" size={16} /></span>
+        <span><b>{k.name}</b><small>{k.placement ? "HTE kiosk" : "CCIS kiosk"}</small></span></span>
+    ) },
+    { label: "HTE", render: (k) => (k.placement
+      ? <span className="rq2-file rq2-main" title={k.placement}>{k.placement}</span>
+      : <span className="rq2-muted">CCIS · every intern</span>) },
+    // interns who can tap here: placed at the HTE, or everyone for a CCIS kiosk (0 = an HTE with no interns yet)
+    { label: "Interns", render: (k) => { const n = canTap(k); return <span className={n ? "rq2-muted" : "ks-zero"}>{n}</span>; } },
+    { label: "Last used", render: (k) => <span className="rq2-muted">{seen(k.last_seen_at)}</span> },
+    { label: "Added", className: "rq2-hide-sm", render: (k) => <span className="rq2-muted">{added(k.created_at)}</span> },
+    { label: "Status", render: (k) => <span className={k.active ? "ks-stat on" : "ks-stat"}><i />{k.active ? "On" : "Off"}</span> },
+  ];
 
-  const cur = kiosksShown.find((k) => k.id === sel) || null;
-  const pickK = (k) => { setSel(k.id); setOpen(true); if (!shown || shown.id !== k.id) { setShown(null); } };
+  // the setup link (shown after adding, or after "Show link" / "Make a new key")
+  const linkBox = () => (
+    <>
+      <p>Open this link <b>once</b> on the kiosk device. It saves the key there. Keep it private: anyone with it can set up a kiosk.</p>
+      <div className="ks-reader">
+        <label htmlFor="ks-reader">Card reader on this kiosk</label>
+        <select id="ks-reader" className="ix-select" value={readerPick} onChange={(e) => { setReaderPick(e.target.value); setCopied(false); }}>
+          <option value="auto">Find it automatically</option>
+          <option value="acr122u">ACR122U (with the helper program)</option>
+          <option value="usb">Old USB reader (can't protect cards)</option>
+        </select>
+      </div>
+      <div className="ks-link"><code>{link}</code><button type="button" className="ix-b primary sm" onClick={copy}>{copied ? "Copied" : "Copy link"}</button></div>
+    </>
+  );
+
+  const drawer = (cur, { close }) => ({
+    icon: "tap", kicker: cur.placement ? "HTE kiosk" : "CCIS kiosk", title: cur.name,
+    actions: (
+      <button type="button" className={cur.active ? "ks-sw on" : "ks-sw"} role="switch" aria-checked={cur.active} disabled={!!busy}
+        onClick={() => toggle(cur)} title={cur.active ? "Turn off" : "Turn on"}><i /><span>{cur.active ? "On" : "Off"}</span></button>
+    ),
+    body: (<>
+      <Msg msg={msg} />
+      <div className="rq2-kv">
+        <div><small>HTE</small><b title={cur.placement || ""}>{cur.placement || "CCIS · every intern"}</b></div>
+        <div><small>Interns who can tap</small><b className={canTap(cur) ? "" : "ks-zero"}>{canTap(cur)}</b></div>
+        <div><small>Last used</small><b>{seen(cur.last_seen_at)}</b></div>
+        <div><small>Added</small><b>{added(cur.created_at)}</b></div>
+      </div>
+      <div className="ks-setup">
+        <div className="ks-setup-h"><Icon name="key" size={16} /><b>Setup link</b>
+          {!(shown && shown.id === cur.id) && (
+            <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => showLink(cur)}>
+              <Icon name="eye" size={13} /> {busy === "show" + cur.id ? "..." : "Show link"}</button>
+          )}
+        </div>
+        {shown && shown.id === cur.id ? linkBox() : <p>Click <b>Show link</b> to see it again and copy it to the kiosk device.</p>}
+      </div>
+    </>),
+    footer: (<>
+      <span className="rq2-result">{cur.placement ? `Only interns placed at ${cur.placement} can tap here.` : "Every intern can tap here."}</span>
+      <button type="button" className="ix-b ghost" disabled={!!busy} onClick={() => newKey(cur)} title="The old link stops working: use it if the link was shared by mistake or a device was lost">
+        <Icon name="key" size={14} /> {busy === "key" + cur.id ? "..." : "Make a new key"}</button>
+      <button type="button" className="ix-b danger" disabled={!!busy} onClick={async () => { if (await remove(cur)) close(); }}>
+        <Icon name="trash" size={14} /> Remove</button>
+    </>),
+  });
+
+  const newOne = shown && adding === "done" ? shown : null;
 
   return (
-    <div className="ks-wrap">
+    <div className="ks-wrap ks3">
       <style>{OA_CSS}</style>
       <style>{KIOSK_CSS}</style>
       <Msg msg={msg} />
-      <div className={open && cur ? "oa ks2 oa-open" : "oa ks2"}>
-        {/* kiosks */}
-        <div className="oa-list">
-          <div className="oa-switch" role="tablist" aria-label="Show">
-            {[["all", "All", (data?.kiosks || []).length], ["on", "On", (data?.kiosks || []).filter((k) => k.active).length], ["off", "Off", (data?.kiosks || []).filter((k) => !k.active).length]].map(([k, l, n]) => (
-              <button key={k} type="button" role="tab" aria-selected={kf === k} className={kf === k ? "on" : ""} onClick={() => { setKf(k); }}>
-                {l} <span className="oa-n">{n}</span>
-              </button>
-            ))}
-          </div>
-          <div className="oa-search"><Icon name="search" size={14} />
-            <input type="search" placeholder="Search kiosk or HTE" value={kq} onChange={(e) => setKq(e.target.value)} aria-label="Search kiosk" /></div>
-          <div className="oa-items" role="list">
-            {!data ? <Spinner /> : kiosksShown.length === 0 ? (
-              <div className="oa-none">
-                <span className="oa-none-ic"><Icon name="tap" size={18} /></span>
-                <b>{data.kiosks.length ? "No match" : "No kiosks yet"}</b>
-                <small>{data.kiosks.length ? "Try another name or filter." : "Add one below. The main kiosk key in the server's .env still works as a CCIS kiosk."}</small>
-              </div>
-            ) : kiosksShown.map((k) => (
-              <button key={k.id} type="button" role="listitem" className={cur && cur.id === k.id ? "oa-item on" : "oa-item"} onClick={() => pickK(k)}>
-                <span className={k.active ? "ks-ic on" : "ks-ic"}><Icon name="tap" size={16} /></span>
-                <span className="oa-who"><b>{k.name}</b><small>{k.placement ? `Interns at ${k.placement}` : "Every intern (CCIS)"} · {seen(k.last_seen_at)}</small></span>
-                <span className={k.active ? "ks-dot on" : "ks-dot"} title={k.active ? "On" : "Off"} />
-              </button>
-            ))}
-          </div>
-          <button type="button" className="ix-b primary sm ks-addbtn2" onClick={() => setAdding(true)}><Icon name="plus" size={14} /> Add kiosk</button>
-          <button type="button" className="nfcr-alerts" onClick={() => setAlertsOpen(true)}>
-            <Icon name="warn" size={14} /> Card alerts
-          </button>
-        </div>
-
-        {/* the picked kiosk */}
-        <div className="oa-detail">
-          {!cur ? (
-            <div className="oa-blank">
-              <span className="oa-none-ic"><Icon name="tap" size={20} /></span>
-              <b>Pick a kiosk</b>
-              <small>Its details, setup link and key show here.</small>
-            </div>
-          ) : (
+      {!data ? <Spinner /> : (
+        <ReviewQueue tabs={tabs} columns={columns} rowKey={(k) => k.id}
+          searchText={(k) => `${k.name} ${k.placement || ""}`} openLabel={() => "Open"}
+          toolbar={(
             <>
-              <button type="button" className="oa-back" onClick={() => setOpen(false)}><Icon name="menu" size={14} /> Back to the list</button>
-              <div className="oa-head">
-                <span className={cur.active ? "ks-ic big on" : "ks-ic big"}><Icon name="tap" size={22} /></span>
-                <div className="oa-hn"><b>{cur.name}</b><small>{cur.placement ? `HTE kiosk · only interns placed at ${cur.placement}` : "CCIS kiosk · every intern can tap here"}</small></div>
-                <button type="button" className={cur.active ? "ks-sw on" : "ks-sw"} role="switch" aria-checked={cur.active} disabled={!!busy}
-                  onClick={() => toggle(cur)} title={cur.active ? "Turn off" : "Turn on"}><i /><span>{cur.active ? "On" : "Off"}</span></button>
-              </div>
-              <div className="oa-kv">
-                <div><small>Who can tap</small><b>{cur.placement || "Every intern"}</b></div>
-                <div><small>Last used</small><b>{seen(cur.last_seen_at)}</b></div>
-                <div><small>Added</small><b>{cur.created_at ? new Date(String(cur.created_at).replace(" ", "T")).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}</b></div>
-                <div><small>Status</small><b className={cur.active ? "ks-ok" : "ks-off"}>{cur.active ? "Accepting taps" : "Turned off"}</b></div>
-              </div>
-
-              {/* setup link */}
-              <div className="ks-setup">
-                <div className="ks-setup-h"><Icon name="key" size={16} /><b>Setup link</b>
-                  {!(shown && shown.id === cur.id) && (
-                    <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => showLink(cur)}>
-                      <Icon name="eye" size={13} /> {busy === "show" + cur.id ? "..." : "Show link"}</button>
-                  )}
-                </div>
-                {shown && shown.id === cur.id ? (
-                  <>
-                    <p>Open this link <b>once</b> on the kiosk device. It saves the key there. Keep it private: anyone with it can set up a kiosk.</p>
-                    <div className="ks-reader">
-                      <label htmlFor="ks-reader">Card reader on this kiosk</label>
-                      <select id="ks-reader" className="ix-select" value={readerPick} onChange={(e) => { setReaderPick(e.target.value); setCopied(false); }}>
-                        <option value="auto">Find it automatically</option>
-                        <option value="acr122u">ACR122U (with the helper program)</option>
-                        <option value="usb">Old USB reader (can't protect cards)</option>
-                      </select>
-                    </div>
-                    <div className="ks-link"><code>{link}</code><button type="button" className="ix-b primary sm" onClick={copy}>{copied ? "Copied" : "Copy link"}</button></div>
-                  </>
-                ) : <p>Click <b>Show link</b> to see it again and copy it to the kiosk device.</p>}
-              </div>
-
-              <div className="ks-foot">
-                <button type="button" className="ix-b ghost" disabled={!!busy} onClick={() => newKey(cur)} title="The old link stops working: use it if the link was shared by mistake or a device was lost">
-                  <Icon name="key" size={14} /> {busy === "key" + cur.id ? "..." : "Make a new key"}</button>
-                <button type="button" className="ix-b danger" disabled={!!busy} onClick={async () => { if (await remove(cur)) { setSel(null); setOpen(false); } }}>
-                  <Icon name="trash" size={14} /> Remove kiosk</button>
-              </div>
+              <button type="button" className="ix-b ghost ks-alertbtn" onClick={() => setAlertsOpen(true)}><Icon name="warn" size={15} /> Card alerts</button>
+              <button type="button" className="ix-b primary" onClick={() => { setAdding(true); setShown(null); }}><Icon name="plus" size={15} /> Add kiosk</button>
             </>
           )}
-        </div>
-      </div>
+          drawer={drawer} />
+      )}
 
       {adding && (
-        <Drawer inPage title="Add a kiosk" kicker="Kiosks" icon="tap" onClose={() => setAdding(false)}
-          footer={(close) => (
+        <Drawer inPage title={newOne ? "Kiosk added" : "Add a kiosk"} kicker="Kiosks" icon="tap" onClose={() => { setAdding(false); setShown(null); }}
+          footer={(close) => newOne ? (
+            <button type="button" className="ix-b primary" onClick={close}>Done</button>
+          ) : (
             <>
               <button type="button" className="ix-b ghost" onClick={close}>Cancel</button>
               <button type="submit" form="ks-add-form" className="ix-b primary" disabled={busy === "add" || !form.name.trim()}>{busy === "add" ? "Adding..." : "Add kiosk"}</button>
             </>
           )}>
-          <form id="ks-add-form" className="ks-form" onSubmit={add}>
-            <div className="ix-field">
-              <label htmlFor="ks-name">Kiosk name</label>
-              <input id="ks-name" className="ix-input" required maxLength={120} placeholder="e.g. CCIS lobby, City Hall IT office" autoFocus
-                value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+          {newOne ? (
+            <div className="ks-setup">
+              <div className="ks-setup-h"><Icon name="key" size={16} /><b>Setup link for {newOne.name}</b></div>
+              {linkBox()}
             </div>
-            <div className="ix-field">
-              <label htmlFor="ks-place">Who can tap here?</label>
-              <select id="ks-place" className="ix-select" value={form.placement} onChange={(e) => setForm((f) => ({ ...f, placement: e.target.value }))}>
-                <option value="">Every intern (CCIS kiosk)</option>
-                {(data?.placements || []).map((p) => <option key={p} value={p}>Only interns placed at {p}</option>)}
-              </select>
-              <small className="ks-hint">The HTE list comes from the interns' OJT placement.</small>
-            </div>
-            <p className="ks-hint">After adding, the new kiosk opens with its setup link ready to copy.</p>
-          </form>
+          ) : (
+            <form id="ks-add-form" className="ks-form" onSubmit={add}>
+              <Msg msg={msg} />
+              <div className="ix-field">
+                <label htmlFor="ks-name">Kiosk name</label>
+                <input id="ks-name" className="ix-input" required maxLength={120} placeholder="e.g. CCIS lobby, City Hall IT office" autoFocus
+                  value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div className="ix-field">
+                <label htmlFor="ks-place">Who can tap here?</label>
+                <select id="ks-place" className="ix-select" value={form.placement} onChange={(e) => setForm((f) => ({ ...f, placement: e.target.value }))}>
+                  <option value="">Every intern (CCIS kiosk)</option>
+                  {(data?.placements || []).map((p) => <option key={p} value={p}>Only interns placed at {p}</option>)}
+                </select>
+                <small className="ks-hint">The HTE list comes from the interns' OJT placement.</small>
+              </div>
+              <p className="ks-hint">After adding, the setup link shows here, ready to copy.</p>
+            </form>
+          )}
         </Drawer>
       )}
       {alertsOpen && (
@@ -3105,6 +3138,18 @@ const KIOSK_CSS = `
   .ix-page .ks-setup-h { display: flex; align-items: center; gap: 8px; color: #c2410c; }
   .ix-page .ks-setup-h b { flex: 1; color: #111827; font-size: 14px; }
   .ix-page .ks-setup p { margin: 6px 0 10px; font-size: 12.5px; color: #4b5563; }
+  /* the table + side panel layout (same as Approvals / Card Requests) */
+  .ks3 { display: flex; flex-direction: column; gap: 12px; }
+  .ks3 > .ix-msg, .ks3 > .ix-alert { margin: 0; }
+  .ix-page .ks-alertbtn { color: #92400e !important; border-color: #f3c48b !important; background: #fffaf2 !important; }
+  .ix-page .ks-zero { color: #b45309; font-weight: 700; }
+  .ix-page .ks-stat { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700; color: #94a3b8; }
+  .ix-page .ks-stat i { width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; }
+  .ix-page .ks-stat.on { color: #15803d; } .ix-page .ks-stat.on i { background: #16a34a; box-shadow: 0 0 0 3px #dcfce7; }
+  .ks-setup { border: 1px solid #fbcfb5; background: #fff7f2; border-radius: 12px; padding: 12px 14px; flex: none; }
+  .ks-setup-h { display: flex; align-items: center; gap: 8px; color: #c2410c; }
+  .ks-setup-h b { flex: 1; color: #111827; font-size: 14px; }
+  .ks-setup p { margin: 6px 0 10px; font-size: 12.5px; color: #4b5563; }
   .ix-page .ks-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; padding-top: 12px; border-top: 1px solid #eef0f4; flex: none; }
   .ix-page .nfcr-alerts { flex: none; display: flex; align-items: center; gap: 8px; margin: 6px; padding: 9px 12px; border: 1px dashed #f3c48b; border-radius: 10px;
     background: #fffaf2; font: inherit; font-size: 12.5px; font-weight: 700; color: #92400e; cursor: pointer; }
@@ -3410,21 +3455,21 @@ function ActivityLog() {
     }, 250);
     return () => { off = true; clearTimeout(t); };
   }, [q, role, page]);
-  const pages = data ? Math.max(1, Math.ceil(data.total / (data.per_page || 50))) : 1;
   const when = (v) => new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   const tone = (a) => (/refused|locked|failed|deleted|removed/i.test(a) ? "rejected" : /approved|signed in|added|agreed/i.test(a) ? "approved" : "pending");
   const ROLES = [["", "Everyone"], ["admin", "Admins"], ["ojt_coordinator", "Coordinators"], ["supervisor", "Supervisors"], ["intern", "Interns"]];
   return (
     <div className="al-wrap">
       <style>{ACT_CSS}</style>
-      <div className="mon-bar">
-        <div className="ix-search mon-search">
-          <Icon name="search" size={15} />
-          <input type="text" placeholder="Search a name, an action or a detail..." value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+      {/* who: the same segmented switch as the other pages · the search on the right */}
+      <div className="al-bar">
+        <div className="so-tabs" role="tablist" aria-label="Filter by role">
+          {ROLES.map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={role === k} className={role === k ? "on" : ""} onClick={() => { setRole(k); setPage(1); }}>{l}</button>
+          ))}
         </div>
-        {ROLES.map(([k, l]) => (
-          <button key={k} type="button" className={role === k ? "mon-chip on" : "mon-chip"} onClick={() => { setRole(k); setPage(1); }}>{l}</button>
-        ))}
+        <label className="al-search"><Icon name="search" size={14} />
+          <input type="search" placeholder="Search a name, an action or a detail" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} aria-label="Search the activity log" /></label>
       </div>
       <div className="ix-card al-card">
         {!data ? <Spinner /> : (
@@ -3439,13 +3484,7 @@ function ActivityLog() {
             ])}
           />
         )}
-        {data && data.total > 0 && (
-          <div className="al-pager">
-            <span>{data.total} entr{data.total === 1 ? "y" : "ies"} · page {page} of {pages}</span>
-            <button type="button" className="ix-b ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Newer</button>
-            <button type="button" className="ix-b ghost sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Older</button>
-          </div>
-        )}
+        {data && <Pager page={page} total={data.total} perPage={data.per_page || 50} onPage={setPage} />}
       </div>
     </div>
   );
@@ -3457,10 +3496,12 @@ const ACT_CSS = `
   .ix-page .al-who { display: flex; flex-direction: column; }
   .ix-page .al-who small { font-size: 11px; color: #94a3b8; }
   .ix-page .al-det { display: inline-block; max-width: 420px; font-size: 12px; color: #4b5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
-  .ix-page .al-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; }
-  .ix-page .al-pager span { margin-right: auto; }
-  /* the search box fits its whole hint (phones keep the full-width box) */
-  @media (min-width: 901px) { .ix-page .al-wrap .mon-search { width: 340px; flex: 0 1 340px; } }
+  .ix-page .al-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .ix-page .al-search { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #9ca3af;
+    flex: 0 1 340px; min-width: 220px; box-sizing: border-box; }
+  .ix-page .al-search input { border: 0 !important; outline: 0; background: transparent; font: inherit; font-size: 13px; color: #111827; width: 100%; padding: 0 !important; box-shadow: none !important; height: auto !important; }
+  .ix-page .al-search:focus-within { border-color: #f6c7b0; box-shadow: 0 0 0 3px rgba(232,88,42,.12); }
+  @media (max-width: 760px) { .ix-page .al-bar .so-tabs { overflow-x: auto; max-width: 100%; } .ix-page .al-search { flex: 1 1 100%; } }
 `;
 const ACC_OFF_CSS = `
   .ix-page .acc-role-tag.off { background: #e5e7eb; color: #4b5563; }
@@ -3779,7 +3820,7 @@ const IMPORT_CSS = `
   .im-table table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   .im-table th { position: sticky; top: 0; background: #f6f7f9; text-align: left; padding: 8px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
   .im-table td { padding: 7px 10px; border-bottom: 1px solid #f1f2f4; vertical-align: top; }
-  .im-table tr.bad td { background: #fff7f7; }
+  .im-table tr.bad td { background: #fff7f7 !important; }   /* !important: the even-row stripes must not hide it */
   .im-ok { color: #15803d; font-weight: 600; }
   .im-err { color: #b91c1c; font-size: 12px; }
   .im-later { color: #9ca3af; font-style: normal; }
