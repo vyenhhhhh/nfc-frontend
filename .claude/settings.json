@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npx eslint src/pages/InternDashboard.jsx 2>&1)",
+      "Bash(npx eslint *)",
+      "Bash(node -e 'let s=\"\";process.stdin.on\\(\"data\",d=>s+=d\\).on\\(\"end\",\\(\\)=>{for\\(const f of JSON.parse\\(s\\)\\){for\\(const m of f.messages\\){if\\(m.fatal||/no-undef|no-unused-vars|rules-of-hooks/.test\\(m.ruleId||\"\"\\)\\)console.log\\(f.filePath.split\\(/[\\\\\\\\/]/\\).pop\\(\\)+\":\"+m.line+\" \"+\\(m.ruleId||\"FATAL\"\\)+\" \"+m.message.slice\\(0,80\\)\\)}}}\\)')",
+      "PowerShell(npx vite build --logLevel error --outDir \"$env:TEMP\\\\claude\\\\vite-check\" --emptyOutDir 2>&1 | Select-Object -Last 10; \"exit: $LASTEXITCODE\")",
+      "Bash(php -l routes/api.php)",
+      "Bash(php artisan *)"
+    ]
+  }
+}
