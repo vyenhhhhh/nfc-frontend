@@ -189,7 +189,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
   const [r, setR] = useState(() => ex?.ratings || {});
   const [f, setF] = useState({ strengths: ex?.strengths || "", improvements: ex?.improvements || "", comments: ex?.comments || "" });
   const [edit, setEdit] = useState(!ex);
-  const [share, setShare] = useState(ex ? ex.share_comments !== false : true);
+  const [shareComments, setShareComments] = useState(ex ? ex.share_comments !== false : true);
   const [busy, setBusy] = useState(false);
   const total = supTotal(cfg, r);
   const rated = (cfg.supervisor || []).reduce((s, c) => s + c.items.filter((it) => r[it.key] >= 1).length, 0);
@@ -200,7 +200,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
     try {
       const res = await fetch(`${API}/evaluations`, {
         method: "POST", headers: { ...J, "Content-Type": "application/json" },
-        body: JSON.stringify({ intern_id: intern.id, mode: "system", ratings: r, share_comments: share, ...f }),
+        body: JSON.stringify({ intern_id: intern.id, mode: "system", ratings: r, share_comments: shareComments, ...f }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Couldn't save the appraisal.");
@@ -263,7 +263,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
         ))}
       </div>
       {edit && !locked && (
-        <label className="gr-share"><input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
+        <label className="gr-share"><input type="checkbox" checked={shareComments} onChange={(e) => setShareComments(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
       )}
       <div className="gr-bar">
         <div className="gr-total">
