@@ -76,11 +76,23 @@ const manilaDate = (d) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Manila
 
 const photoUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
 
+// the intern's photo in the taps list (their initial when there is no photo, or it can't load)
+function Avatar({ name, photo }) {
+  const [bad, setBad] = useState(false);
+  const url = photoUrl(photo);
+  return (
+    <span className="kq-av">
+      {url && !bad ? <img src={url} alt="" onError={() => setBad(true)} /> : String(name || "?").trim().charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
 export default function App() {
   const [status, setStatus] = useState(null);   // last successful tap
   const [error, setError] = useState(null);
   const [warning, setWarning] = useState(null);  // accidental second tap within 5 minutes
-  const [log, setLog] = useState([]);
+  const [log, setLog] = useState([]);          // this session's taps not yet in "today" (just tapped, saved offline, refused)
+  const [today, setToday] = useState([]);      // today's time ins / outs at this kiosk, from the server (kept after a reload)
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(new Date());
   const [photoBad, setPhotoBad] = useState(false);
@@ -100,6 +112,32 @@ export default function App() {
   const lastKey = useRef(0);
   const busy = useRef(false);
   const resetTimer = useRef(null);
+
+  // today's taps at this kiosk come from the server, so a reload doesn't empty the list
+  const loadToday = async () => {
+    try {
+      const r = await fetch(`${API}/kiosk/today`, { headers: { Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY } });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!Array.isArray(d.taps)) return;
+      setToday(d.taps);
+      // recorded taps are in the server list now: keep only the offline / refused ones here
+      setLog((prev) => prev.filter((e) => e.action !== "CHECK_IN" && e.action !== "CHECK_OUT"));
+    } catch { /* offline: keep what is shown */ }
+  };
+  const loadTodayRef = useRef(loadToday);
+  loadTodayRef.current = loadToday;
+  useEffect(() => {
+    // taps saved offline before a reload are shown again until they are sent
+    const pending = loadQueue().map((t) => {
+      const at = new Date(t.at); const known = cachedName(t.uid);
+      return { action: "OFFLINE", offlineId: t.id, uid: t.uid, name: known?.name || null, photo: known?.photo || null, time: manilaTime(at), date: manilaDate(at), token: t.id };
+    }).reverse();
+    if (pending.length) setLog(pending);
+    loadTodayRef.current();
+    const iv = setInterval(() => loadTodayRef.current(), 2 * 60 * 1000);   // also turns the list over at midnight
+    return () => clearInterval(iv);
+  }, []);
 
   // this kiosk's name and who can tap here (set by the admin in Accounts → Kiosks)
   const [kiosk, setKiosk] = useState(null);   // { name, who } | { error }
@@ -241,6 +279,7 @@ export default function App() {
         if (res.ok) {
           rememberName(t.uid, d.name, d.photo);
           setLog((prev) => prev.map((e) => (e.offlineId === t.id ? { ...d, synced: true } : e)));
+          loadTodayRef.current();
         } else {
           setLog((prev) => prev.map((e) => (e.offlineId === t.id ? { ...e, action: "REFUSED", reason: d.message } : e)));
         }
@@ -319,6 +358,7 @@ export default function App() {
       rememberName(uid, data.name, data.photo);
       setStatus(data);
       setLog((prev) => [data, ...prev].slice(0, 50));
+      loadTodayRef.current();
       syncRef.current();                    // anything saved while offline goes now too
     } catch (err) {
       signal(err instanceof TypeError);   // saved offline = ok, refused = error
@@ -335,9 +375,12 @@ export default function App() {
   tapRef.current = handleTap;
 
   const isIn = status?.action === "CHECK_IN";
-  const ins = log.filter((l) => l.action === "CHECK_IN").length;
-  const outs = log.filter((l) => l.action === "CHECK_OUT").length;
+  // today's numbers at this kiosk (server list + this session's taps not in it yet)
+  const ins = [...log, ...today].filter((l) => l.action === "CHECK_IN").length;
+  const outs = [...log, ...today].filter((l) => l.action === "CHECK_OUT").length;
   const src = photoUrl(status?.photo);
+  // the list on the right: this session's not-yet-listed taps first, then today's taps from the server
+  const shown = [...log, ...today];
 
   const dateLabel = time.toLocaleDateString("en-PH", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Manila" });
 
@@ -527,18 +570,17 @@ export default function App() {
           )}
 
           <div className="kq-side-h">
-            <h3>Recent taps{log.length > 0 && <em>{log.length}</em>}</h3>
-            {log.length > 0 && <button type="button" className="kq-clear" onClick={(e) => { e.currentTarget.blur(); setLog([]); }}>Clear</button>}
+            <h3>Today's taps{shown.length > 0 && <em>{shown.length}</em>}</h3>
           </div>
           <div className="kq-list">
-            {log.length === 0 ? (
+            {shown.length === 0 ? (
               <div className="kq-empty">
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 8.5a5 5 0 0 1 0 7M12 6a8.5 8.5 0 0 1 0 12M16 3.5a12 12 0 0 1 0 17" /></svg>
                 <b>No taps yet</b><small>Taps show up here as interns arrive.</small>
               </div>
-            ) : log.map((e, i) => (
-              <div key={e.token + i} className="kq-row">
-                <span className="kq-av">{first(e.name)}</span>
+            ) : shown.map((e, i) => (
+              <div key={(e.key || e.token) + i} className="kq-row">
+                <Avatar name={e.name} photo={e.photo} />
                 <div className="kq-row-t">
                   <b>{e.name || "Card ····" + String(e.uid || "").slice(-4)}</b>
                   <small>{e.action === "CHECK_IN" ? "Time in" : e.action === "CHECK_OUT" ? "Time out" : e.action === "OFFLINE" ? "Saved offline" : "Not recorded"}</small>
@@ -747,7 +789,8 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.3) transparent; }
 .kq-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 12px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
   animation: kq-rise .35s cubic-bezier(.16,1,.3,1) both; }
-.kq-av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; flex: none; background: linear-gradient(135deg, #f2864f, #e8582a); }
+.kq-av { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 15px; flex: none; overflow: hidden; background: linear-gradient(135deg, #f2864f, #e8582a); border: 2px solid rgba(255,255,255,.35); }
+.kq-av img { width: 100%; height: 100%; object-fit: cover; }
 .kq-row-t { min-width: 0; flex: 1; }
 .kq-row-t b { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kq-row-t small { font-size: 11px; color: rgba(255,255,255,.7); }

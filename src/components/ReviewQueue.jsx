@@ -19,9 +19,12 @@ import { Drawer, Icon } from "./DashKit.jsx";
  * openLabel:   (tabKey) => text of the row button ("Review" / "View")
  */
 export default function ReviewQueue({ tabs, columns, rowKey, searchText, toolbar = null, initialTab, initialQuery = "", initialOpen = null,
-  bulk = () => null, drawer, openLabel = (t) => (t === tabs[0]?.key ? "Review" : "View") }) {
+  bulk = () => null, drawer, openLabel }) {
+  // the tab that needs action (marked hot) opens first and gets "Review"; otherwise the first tab
+  const actKey = (tabs.find((t) => t.hot) || tabs[0])?.key;
+  openLabel = openLabel || ((t) => (t === actKey ? "Review" : "View"));
   // always opens on the first tab ("Needs my review"), even when it is empty; nothing opens until a row is clicked
-  const [tab, setTab] = useState(() => initialTab || tabs[0].key);
+  const [tab, setTab] = useState(() => initialTab || actKey);
   const [q, setQ] = useState(initialQuery);
   const [openId, setOpenId] = useState(initialOpen);
   const [lastIdx, setLastIdx] = useState(0);
@@ -71,18 +74,21 @@ export default function ReviewQueue({ tabs, columns, rowKey, searchText, toolbar
   return (
     <div className="rq2">
       <style>{RQ2_CSS}</style>
+      {/* row 1: the search (left) and the page's own buttons (right); row 2: the tabs, under the search */}
       <div className="rq2-bar">
+        <label className="rq2-search"><Icon name="search" size={14} />
+          <input type="search" placeholder="Search" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); clear(); }} aria-label="Search" /></label>
+        {toolbar && <div className="rq2-tools">
+          {typeof toolbar === "function" ? toolbar(cur.key, { list, picked: pickedItems }) : toolbar}
+        </div>}
+      </div>
+      <div className="rq2-tabrow">
         <div className="rq2-tabs" role="tablist" aria-label="Show">
           {tabs.map((t) => (
             <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={tab === t.key ? "on" : ""} onClick={() => go(t.key)}>
               {t.label} <span className={t.hot && t.items.length ? "rq2-n hot" : "rq2-n"}>{t.items.length}</span>
             </button>
           ))}
-        </div>
-        <div className="rq2-tools">
-          <label className="rq2-search"><Icon name="search" size={14} />
-            <input type="search" placeholder="Search" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); clear(); }} aria-label="Search" /></label>
-          {typeof toolbar === "function" ? toolbar(cur.key, { list, picked: pickedItems }) : toolbar}
         </div>
       </div>
 
@@ -203,16 +209,17 @@ const PAGER_CSS = `
 const RQ2_CSS = `
 /* the table is only as tall as its rows (10 a page); the page numbers sit right under the last row */
 .rq2 { display: flex; flex-direction: column; gap: 12px; flex: none !important; }
-.rq2-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; flex: none; }
+.rq2-bar { display: flex; align-items: center; justify-content: flex-start; gap: 12px; flex-wrap: wrap; flex: none; }
+.rq2-tabrow { display: flex; flex: none; margin-top: -2px; }
 .rq2-tabs { display: inline-flex; gap: 4px; padding: 3px; background: #f3f4f6; border: 1px solid #e8ebf0; border-radius: 10px; }
 .rq2-tabs button { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 12.5px; font-weight: 600; color: #4b5563; cursor: pointer; white-space: nowrap; }
 .rq2-tabs button:hover { color: #c2410c; background: rgba(255,255,255,.55); }
 .rq2-tabs button.on { background: #fff; color: #c2410c; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
 .rq2-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #e5e7eb; color: #475569; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
 .rq2-n.hot { background: #ef4444; color: #fff; }
-.rq2-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rq2-search { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #9ca3af; min-width: 220px; box-sizing: border-box; }
-.rq2-search input { border: 0 !important; outline: 0; background: transparent; font: inherit; font-size: 13px; color: #111827; width: 100%; padding: 0 !important; box-shadow: none !important; height: auto !important; }
+.rq2-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.rq2-search { display: inline-flex; background: #fff !important; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #9ca3af; width: 320px; max-width: 100%; box-sizing: border-box; }
+.rq2-search input { border: 0 !important; outline: 0; background: transparent !important; font: inherit; font-size: 13px; color: #111827; width: 100%; padding: 0 !important; box-shadow: none !important; height: auto !important; }
 .rq2-tools .ix-select { height: 38px; font-size: 13px; }
 .rq2-bulk { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-radius: 12px; background: #fff7f2; border: 1px solid #fbd9c7; flex: none; }
 .rq2-bulk b { font-size: 13px; color: #9a3412; margin-right: auto; }
@@ -285,7 +292,8 @@ const RQ2_CSS = `
 @media (max-width: 760px) {
   .rq2-bar { flex-direction: column; align-items: stretch; }
   .rq2-tabs { overflow-x: auto; }
-  .rq2-search { min-width: 0; flex: 1; }
+  .rq2-search { min-width: 0; flex: none; width: 100%; }
+  .rq2-tools { margin-left: 0; } .rq2-tools > * { flex: 1 1 auto; }
   .rq2-table thead { display: none; }
   .rq2-table, .rq2-table tbody, .rq2-table tr, .rq2-table td { display: block; width: auto; }
   .rq2-table tr { padding: 10px 12px; border-bottom: 1px solid #f1f3f6; position: relative; }

@@ -56,13 +56,12 @@ export default function CardAlerts() {
         <>
           <div className={`ca-body${flags.length === 0 ? " empty" : ""}`}>
           <Table
-            headers={["When", "Intern", "What happened", "Kiosk", ""]}
+            headers={["Intern", "What happened", ""]}
             empty={showDone ? "No card alerts yet." : "No open card alerts."}
             rows={flags.map((f) => [
-              when(f.created_at),
               f.intern_name ? <span><b>{f.intern_name}</b>{f.student_id ? <small className="ca-sub">{f.student_id}</small> : null}</span> : <span>UID {f.uid}</span>,
-              <span title={f.details || ""}>{REASON[f.reason] || f.reason}</span>,
-              f.kiosk || "—",
+              <span title={f.details || ""}>{REASON[f.reason] || f.reason}
+                <small className="ca-sub">{when(f.created_at)} · {f.kiosk || "kiosk not named"} · card UID {f.uid}</small></span>,
               f.resolved_at ? <Badge label={f.resolution === "reset" ? "Card reset" : "Dismissed"} type="approved" /> : (
                 <span className="ca-acts">
                   <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => resolve(f, "dismiss")}>Dismiss</button>

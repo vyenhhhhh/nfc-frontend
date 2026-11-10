@@ -3,12 +3,28 @@
 // (form F-PLN-006, Rev.003 — the 2026 layout).
 // Table 1 (enrolled / deployed per program) and Table 4 (interns per HTE) are counted by the system;
 // everything else is typed here, saved per quarter, and printed (or saved as PDF) in the college's layout.
-import { Fragment, useState, useEffect, useMemo } from "react";
-import { Icon, Msg, Spinner, programKey, esc, HTE_CATEGORIES } from "./DashKit.jsx";
+import { Fragment, useState, useEffect, useMemo, useRef } from "react";
+import { Icon, Msg, Spinner, programKey, esc, HTE_CATEGORIES, Drawer, Table, Badge, Modal } from "./DashKit.jsx";
 import { API } from "../config.js";
 import csuLogo from "../assets/csu-logo.png";
+import bpLogo from "../assets/bagong-pilipinas.png";     // Bagong Pilipinas, beside the CSU logo on the cover
+import isoLogo from "../assets/iso-cert.jpg";            // SOCOTEC ISO 9001 / PAB certification mark
 
 const Q_NAMES = ["1ST", "2ND", "3RD", "4TH"];
+// what to do in each part, in one sentence (shown at the top of the part)
+const JOB = { check: "Check", write: "Write", sign: "Sign" };
+const HOW = {
+  s1: "Already filled in from the college's report. Just add the office's structure picture; change the text only if the office updated it.",
+  s2a: "The system counted these from the interns' records. Check that the numbers are right; you don't need to type anything.",
+  s2b: "Write the MOAs signed or renewed this quarter and any meetings with partners. Leave it empty if there were none.",
+  s2c: "The system listed the interns per HTE. Just pick each HTE's category.",
+  s2d: "The system wrote this from the quarter's records. Read it and change anything that is not right.",
+  s2e: "Write the activities you held this quarter. You can also click the school events and announcements the system found.",
+  s3: "Write what worked well this quarter, in one or two sentences each.",
+  s4: "Write the problems that came up this quarter and what you did about each.",
+  s5: "Write what you plan to do next.",
+  sign: "Type who prepared and who noted the report. This is needed before you can print or download it.",
+};
 const Q_WORD = ["1st", "2nd", "3rd", "4th"];
 const Q_MONTHS = ["January – March", "April – June", "July – September", "October – December"];
 const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
@@ -23,16 +39,16 @@ const PROGRAM_NAME = {
 const PROGRAM_ORDER = ["BSCS", "BSIS", "BSIT"];
 // the parts of the report, named and grouped as in the college's table of contents
 const SECTIONS = [
-  { key: "s1", n: "1", label: "Objectives, Unit Profile and Quality Objectives" },
-  { key: "s2a", n: "A", group: "2", label: "Consolidated Internship Statistics" },
-  { key: "s2b", n: "B", group: "2", label: "Industry and Institutional Partnerships" },
-  { key: "s2c", n: "C", group: "2", label: "Student Internship Deployment" },
-  { key: "s2d", n: "D", group: "2", label: "Monitoring, Supervision and Support" },
-  { key: "s2e", n: "E", group: "2", label: "Highlights of Activities" },
-  { key: "s3", n: "3", label: "Best Practices" },
-  { key: "s4", n: "4", label: "Challenges and Solutions" },
-  { key: "s5", n: "5", label: "Future Plans and Initiatives" },
-  { key: "sign", n: "", label: "Prepared by / Noted by" },
+  { key: "s1", n: "1", job: "check", label: "Objectives, Unit Profile and Quality Objectives" },
+  { key: "s2a", n: "A", group: "2", job: "check", label: "Consolidated Internship Statistics" },
+  { key: "s2b", n: "B", group: "2", job: "write", label: "Industry and Institutional Partnerships" },
+  { key: "s2c", n: "C", group: "2", job: "check", label: "Student Internship Deployment" },
+  { key: "s2d", n: "D", group: "2", job: "check", label: "Monitoring, Supervision and Support" },
+  { key: "s2e", n: "E", group: "2", job: "write", label: "Highlights of Activities" },
+  { key: "s3", n: "3", job: "write", label: "Best Practices" },
+  { key: "s4", n: "4", job: "write", label: "Challenges and Solutions" },
+  { key: "s5", n: "5", job: "write", label: "Future Plans and Initiatives" },
+  { key: "sign", n: "", job: "sign", label: "Prepared by / Noted by" },
 ];
 // the categories used in the CCIS quarterly reports (Table 4)
 const CATEGORIES = HTE_CATEGORIES;   // shared with Partner HTEs (the category is set once on the HTE)
@@ -135,20 +151,192 @@ const duration = (a, b) => {
   return m > 0 ? `${m} month${m === 1 ? "" : "s"}` : "";
 };
 
-export default function QuarterlyReport({ user, supervisors = [], interns: allInterns = [] }) {
-  // which quarter opens first: ?q=2026-3 (from the reminder), else the quarter that just ended during the
-  // first month of a new quarter (that is when its report is written), else the current quarter
-  const start = (() => {
+// the quarter a new report is usually for: the one that just ended during the first month of a new quarter
+// (that is when its report is written), else the current quarter
+const suggestQuarter = () => {
+  const firstMonth = (Number(today.slice(5, 7)) - 1) % 3 === 0;
+  if (firstMonth) return nowQuarter === 1 ? [nowYear - 1, 4] : [nowYear, nowQuarter - 1];
+  return [nowYear, nowQuarter];
+};
+const qTitle = (y, q) => `${Q_WORD[q - 1]} quarter ${y}`;
+const when = (t) => (t ? new Date(String(t).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
+
+/* Coordinator → Reports → Quarterly Report: the list of reports first (Draft / Ready), then one report's form */
+export default function QuarterlyReport({ user, supervisors = [], interns = [] }) {
+  // ?q=2026-3 (from the reminder) opens that quarter's report straight away
+  const [open, setOpen] = useState(() => {
     const m = /^(\d{4})-([1-4])$/.exec(new URLSearchParams(window.location.search).get("q") || "");
-    if (m) return [Number(m[1]), Number(m[2])];
-    const firstMonth = (Number(today.slice(5, 7)) - 1) % 3 === 0;
-    if (firstMonth) return nowQuarter === 1 ? [nowYear - 1, 4] : [nowYear, nowQuarter - 1];
-    return [nowYear, nowQuarter];
-  })();
-  const [year, setYear] = useState(start[0]);
-  const [quarter, setQuarter] = useState(start[1]);
+    return m ? [Number(m[1]), Number(m[2])] : null;
+  });
+  const [list, setList] = useState(null);
+  const [adding, setAdding] = useState(null);     // [year, quarter] in the "New quarterly report" window
+  const [lmsg, setLmsg] = useState(null);
+  const loadList = () => {
+    fetch(`${API}/coordinator/quarterly-reports`, { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : [])).then((rows) => setList(Array.isArray(rows) ? rows : []))
+      .catch(() => { setList([]); setLmsg({ type: "error", text: "Couldn't reach the server." }); });
+  };
+  useEffect(() => { if (!open) loadList(); }, [open]);
+  const go = (y, q, mode = "edit") => {
+    setOpen([y, q, mode]);
+    const u = new URL(window.location.href); u.searchParams.set("q", `${y}-${q}`); window.history.replaceState(null, "", u);
+  };
+  const back = () => {
+    setOpen(null);
+    const u = new URL(window.location.href); u.searchParams.delete("q"); window.history.replaceState(null, "", u);
+  };
+
+  if (open) return <ReportForm key={open.join("-")} user={user} supervisors={supervisors} interns={interns} year={open[0]} quarter={open[1]}
+    view={open[2] === "view"} onMode={(m) => setOpen([open[0], open[1], m])} onBack={back} />;
+
+  const exists = (y, q) => (list || []).some((r) => r.year === y && r.quarter === q);
+  return (
+    <div className="qr">
+      <style>{QR_CSS}</style>
+      <div className="qr-listhead">
+        <p>One report for each quarter. View a report to see it as it prints, or Edit it to check, write and sign it.</p>
+        <button type="button" className="ix-b primary" onClick={() => setAdding(suggestQuarter())}><Icon name="plus" size={14} /> New quarterly report</button>
+      </div>
+      <Msg msg={lmsg} />
+      {!list ? <Spinner /> : (
+        <Table
+          headers={["Quarter", "Status", "Last saved", ""]}
+          empty="No quarterly reports yet. Click New quarterly report to start one."
+          rows={list.map((r) => {
+            const ready = r.total ? r.done >= r.total : false;
+            return [
+              <span className="qr-lq"><b>{qTitle(r.year, r.quarter)}</b><small>{Q_MONTHS[r.quarter - 1]}</small></span>,
+              <span className="qr-lst">{ready ? <Badge label="Ready" type="approved" /> : <Badge label="Draft" type="pending" />}
+                {!ready && r.total ? <small>{r.done} of {r.total} parts done</small> : null}</span>,
+              <span className="qr-lq"><span>{when(r.updated_at)}</span>{r.updated_by_name && <small>by {r.updated_by_name}</small>}</span>,
+              <span className="qr-lacts">
+                <button type="button" className="ix-b ghost sm" onClick={() => go(r.year, r.quarter, "view")} title="See the report as it will print"><Icon name="eye" size={14} /> View</button>
+                <button type="button" className="ix-b ghost sm" onClick={() => go(r.year, r.quarter)} title="Check, write and sign the report"><Icon name="pencil" size={14} /> Edit</button>
+              </span>,
+            ];
+          })}
+        />
+      )}
+      {adding && (
+        <Modal title="New quarterly report" sub="Pick the quarter the report is for." onClose={() => setAdding(null)}>
+          <div className="qr-newq">
+            <div className="ix-field"><label>Year</label>
+              <select className="ix-select" value={adding[0]} onChange={(e) => setAdding([Number(e.target.value), adding[1]])}>
+                {Array.from({ length: 6 }, (_, i) => nowYear - 4 + i).map((y) => <option key={y}>{y}</option>)}
+              </select></div>
+            <div className="ix-field"><label>Quarter</label>
+              <select className="ix-select" value={adding[1]} onChange={(e) => setAdding([adding[0], Number(e.target.value)])}>
+                {[1, 2, 3, 4].map((q) => <option key={q} value={q}>{Q_WORD[q - 1]} quarter ({Q_MONTHS[q - 1]})</option>)}
+              </select></div>
+            {exists(adding[0], adding[1]) && <p className="qr-newq-note"><Icon name="info" size={14} /> This quarter already has a report. It will open the saved one.</p>}
+            <div className="qr-newq-btns">
+              <button type="button" className="ix-b ghost" onClick={() => setAdding(null)}>Cancel</button>
+              <button type="button" className="ix-b primary" onClick={() => { const [y, q] = adding; setAdding(null); go(y, q); }}>
+                {exists(adding[0], adding[1]) ? "Open the report" : "Start the report"}</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* View: the printed report shown page by page (A4), like the DTR preview: the page scrolls, not a box inside it.
+   The pages are laid out on screen from the same HTML that is printed, so they match the print closely. */
+const PAGER = `<style>@media screen {
+  html, body { background: transparent; }
+  body > .run-head, body > .run-hex, body > .run-dots, body > .run-foot, body > .run-hex2, body > table.page { display: none !important; }
+  .pv { display: flex; flex-direction: column; align-items: center; padding: 4px 0 8px; }
+  .pv-sheet { display: flex; flex-direction: column; align-items: center; }
+  .pv-page { position: relative; width: 210mm; height: 297mm; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,.14); overflow: hidden; }
+  .pv-page > .cover, .pv-page > .toc { height: 297mm; }
+  .pv-page .pv-deco { position: absolute !important; }
+  .pv-body { position: absolute; top: 30mm; bottom: 24mm; left: 26mm; right: 18mm; overflow: hidden; }
+  .pv-no { margin: 8px 0 18px; font: 600 12px Arial, sans-serif; color: #6b7280; }
+}</style>
+<script>(function () {
+  function paginate() {
+    var td = document.querySelector("table.page > tbody > tr > td");
+    if (!td) return done(0);
+    var deco = ["run-head", "run-hex", "run-dots", "run-foot", "run-hex2"].map(function (c) { return document.querySelector("body > ." + c); }).filter(Boolean);
+    var wrap = document.createElement("div"); wrap.className = "pv"; document.body.appendChild(wrap);
+    var pages = [], box = null;
+    function page() { var p = document.createElement("div"); p.className = "pv-page"; wrap.appendChild(p); pages.push(p); return p; }
+    ["cover", "toc"].forEach(function (c) { var el = document.querySelector("body > ." + c); if (el) page().appendChild(el); });
+    function body() {
+      var p = page();
+      deco.forEach(function (d) { var c = d.cloneNode(true); c.classList.add("pv-deco"); p.appendChild(c); });
+      box = document.createElement("div"); box.className = "pv-body"; p.appendChild(box);
+    }
+    function over() { return box.scrollHeight > box.clientHeight + 1; }
+    var KEEPS = ["bar", "ybar", "sub", "cap", "act"];   // headings and captions stay with what follows
+    var KEEP = { test: function (c) { return String(c).split(" ").some(function (x) { return KEEPS.indexOf(x) >= 0; }); } };
+    function tableOf(el) { return el.tagName === "TABLE" ? el : (el.children.length === 1 && el.firstElementChild.tagName === "TABLE" ? el.firstElementChild : null); }
+    function split(el) {
+      var tb = tableOf(el); if (!tb || !tb.tBodies[0]) return;
+      var rows = Array.prototype.slice.call(tb.tBodies[0].rows), moved = [];
+      while (over() && rows.length > 1) { var r = rows.pop(); moved.unshift(r); r.remove(); }
+      if (!moved.length) return;
+      var tb2 = tb.cloneNode(false);
+      if (tb.tHead) tb2.appendChild(tb.tHead.cloneNode(true));
+      var b2 = document.createElement("tbody"); moved.forEach(function (r) { b2.appendChild(r); }); tb2.appendChild(b2);
+      var el2 = tb === el ? tb2 : el.cloneNode(false); if (el2 !== tb2) el2.appendChild(tb2);
+      body(); box.appendChild(el2);
+      if (over()) split(el2);
+    }
+    function place(el) {
+      box.appendChild(el);
+      if (!over()) return;
+      if (box.children.length === 1) return split(el);           // alone and still too tall: split its table
+      el.remove();
+      var carry = [];
+      while (box.children.length > 1 && KEEP.test(box.lastElementChild.className || "")) carry.unshift(box.removeChild(box.lastElementChild));
+      body(); carry.forEach(function (c) { box.appendChild(c); }); box.appendChild(el);
+      if (over()) split(el);
+    }
+    var nodes = Array.prototype.slice.call(td.childNodes).filter(function (n) { return n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()); });
+    body();
+    nodes.forEach(function (n) {
+      if (n.nodeType === 3) { var p = document.createElement("p"); p.textContent = n.textContent; n = p; }
+      place(n);
+    });
+    // empty last page (nothing left to place) is dropped
+    if (box && !box.children.length) { pages.pop().remove(); }
+    pages.forEach(function (p, i) {
+      var s = document.createElement("div"); s.className = "pv-sheet"; p.parentNode.insertBefore(s, p); s.appendChild(p);
+      var n = document.createElement("div"); n.className = "pv-no"; n.textContent = "Page " + (i + 1) + " of " + pages.length; s.appendChild(n);
+    });
+    done(pages.length);
+  }
+  function done(n) { parent.postMessage({ qrPages: n, qrH: document.documentElement.scrollHeight }, "*"); }
+  if (document.readyState === "complete") paginate(); else window.addEventListener("load", paginate);
+})();<\/script>`;
+
+function PagedView({ html, title }) {
+  const ref = useRef(null);
+  const [h, setH] = useState(1200);
+  const [n, setN] = useState(null);
+  useEffect(() => {
+    const on = (e) => {
+      if (!ref.current || e.source !== ref.current.contentWindow || !e.data || e.data.qrH == null) return;
+      setH(e.data.qrH + 4); setN(e.data.qrPages);
+    };
+    window.addEventListener("message", on);
+    return () => window.removeEventListener("message", on);
+  }, []);
+  const doc = useMemo(() => html.replace("</body>", `${PAGER}</body>`), [html]);
+  return (
+    <div className="qr-view">
+      {n != null && <div className="qr-view-n">{n} page{n === 1 ? "" : "s"} · A4</div>}
+      <iframe ref={ref} title={title} srcDoc={doc} style={{ height: h }} scrolling="no" />
+    </div>
+  );
+}
+
+/* one quarter's report: the parts to check, write and sign, then Print / Word */
+function ReportForm({ user, supervisors = [], interns: allInterns = [], year, quarter, onBack, view = false, onMode }) {
   const [srv, setSrv] = useState(null);           // { period, interns, enrolled, program_hours, data, updated_at }
-  const [d, setD] = useState(blank(user, start[0], start[1]));
+  const [d, setD] = useState(blank(user, year, quarter));
   const [feed, setFeed] = useState({ cal: [], ann: [] });   // the quarter's school events and announcements (for 2.E)
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(null);
@@ -237,11 +425,12 @@ export default function QuarterlyReport({ user, supervisors = [], interns: allIn
     try {
       const res = await fetch(`${API}/coordinator/quarterly-report`, {
         method: "PUT", headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ year, quarter, data: d }),
+        // how many parts are done is saved too, so the list can show Draft or Ready
+        body: JSON.stringify({ year, quarter, data: { ...d, _progress: { done: doneN, total: SECTIONS.length } } }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.message || "Couldn't save.");
-      setDirty(false); setSrv((s) => ({ ...s, updated_at: j.updated_at }));
+      setDirty(false); setSrv((s) => ({ ...s, updated_at: j.updated_at, data: { ...d, _progress: { done: doneN, total: SECTIONS.length } } }));
       setMsg({ type: "success", text: "Saved." });
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
@@ -249,6 +438,12 @@ export default function QuarterlyReport({ user, supervisors = [], interns: allIn
   };
 
   // the parts that usually stay the same: profile, structure, categories, best practices, challenges, plans, signatories
+  const [copyOpen, setCopyOpen] = useState(false);   // the "Copy from another quarter" page
+  const copyFrom = (src, keys, label) => {
+    setD((x) => ({ ...x, ...Object.fromEntries(keys.filter((k) => src[k] !== undefined).map((k) => [k, src[k]])) }));
+    setDirty(true); setCopyOpen(false);
+    setMsg({ type: "success", text: `Copied from ${label}. Check what changed this quarter, then save.` });
+  };
   const copyPrevious = async (only = null) => {
     const py = quarter === 1 ? year - 1 : year, pq = quarter === 1 ? 4 : quarter - 1;
     setBusy("copy"); setMsg(null);
@@ -303,7 +498,6 @@ export default function QuarterlyReport({ user, supervisors = [], interns: allIn
 
   // which section is open, and how complete each one is
   const [sec, setSec] = useState("s1");
-  const [edit1, setEdit1] = useState(false);   // section 1 is shown as text until the coordinator clicks Edit
   const idx = Math.max(0, SECTIONS.findIndex((x) => x.key === sec));
   const go = (i) => {
     setSec(SECTIONS[i].key);
@@ -326,6 +520,21 @@ export default function QuarterlyReport({ user, supervisors = [], interns: allIn
     sign: filled(d.prepared?.name) && filled(d.noted?.name) ? "ok" : filled(d.prepared?.name) || filled(d.noted?.name) ? "part" : "none",
   };
   const doneN = SECTIONS.filter((x) => status[x.key] === "ok").length;
+  // the list's Draft / Ready comes from the count saved with the report: when a saved report's count is
+  // missing or out of date (saved before this was kept), save it again quietly so the list shows the truth
+  useEffect(() => {
+    if (!srv || !srv.data || dirty || busy) return;
+    const p = srv.data._progress;
+    if (p && p.done === doneN && p.total === SECTIONS.length) return;
+    const data = { ...d, _progress: { done: doneN, total: SECTIONS.length } };
+    fetch(`${API}/coordinator/quarterly-report`, {
+      method: "PUT", headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ year, quarter, data }),
+    }).then((r) => (r.ok ? r.json() : null)).then((j) => {
+      if (j) setSrv((x) => (x ? { ...x, data: { ...(x.data || {}), _progress: data._progress }, updated_at: j.updated_at || x.updated_at } : x));
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srv, doneN, dirty]);
   // what is left, in words (shown above the section list)
   const todo = {
     s1: !d.structure && "add the office's structure picture",
@@ -364,24 +573,16 @@ export default function QuarterlyReport({ user, supervisors = [], interns: allIn
   const expired = htes.filter((h) => h.valid && h.valid < todayIso);
   const soon = htes.filter((h) => h.valid && h.valid >= todayIso && (new Date(h.valid) - new Date(todayIso)) / 86400000 <= 60);
   const noSup = allInterns.filter((i) => !i.supervisor_id).length;
+  // Only what the records show is offered (★): expiring MOAs and interns without a supervisor.
+  // Best practices, other challenges and future plans are the coordinator's own judgment, so the system
+  // offers no ready-made sentences for them; she writes them (or copies last quarter's and edits them).
   const IDEAS = {
-    best: [
-      { title: "Real-time attendance monitoring through NFC", text: "Interns recorded their daily time-in and time-out by tapping their NFC card at the kiosk, so the coordinator and HTE supervisors could follow attendance and rendered hours in real time." },
-      { title: "Online submission and review of internship requirements", text: "Pre-, during- and post-internship documents were submitted and checked online, which made it easier to see who was complete and who still needed to comply." },
-      { title: "Regular coordination with HTE supervisors", text: "The coordinator kept in close contact with the HTE supervisors, who confirmed online workdays and overtime before the final approval." },
-      { title: "Conducted the Pre-Deployment Orientation", text: "Students were oriented on the internship policies, requirements and expected conduct before they were deployed." },
-    ],
+    best: [],
     challenges: [
-      ...(expired.length || soon.length ? [{ sys: true, challenge: "Expiring or expired MOAs", description: `${expired.length ? `${expired.length} partner HTE MOA${expired.length === 1 ? " has" : "s have"} expired` : ""}${expired.length && soon.length ? " and " : ""}${soon.length ? `${soon.length} will expire within 60 days` : ""}.`, solution: "Coordinated early with the HTEs and the university to renew the MOAs before deploying new interns." }] : []),
-      ...(noSup ? [{ sys: true, challenge: "Interns without an assigned HTE supervisor", description: `${noSup} intern${noSup === 1 ? " had" : "s had"} no HTE supervisor in the system, so their requests could not be confirmed.`, solution: "Assigned a supervisor to each intern and asked the HTEs to activate their supervisor accounts." }] : []),
-      { challenge: "Late submission of internship requirements", description: "Some interns submitted their documents after the deadline.", solution: "Sent reminders through the system and set clear due dates for each requirement." },
-      { challenge: "Interns forgetting to tap out", description: "Some interns left without recording their time-out.", solution: "Missing time-outs were corrected through supervisor-confirmed time correction requests." },
+      ...(expired.length || soon.length ? [{ sys: true, challenge: "Expiring or expired MOAs", description: `${expired.length ? `${expired.length} partner HTE MOA${expired.length === 1 ? " has" : "s have"} expired` : ""}${expired.length && soon.length ? " and " : ""}${soon.length ? `${soon.length} will expire within 60 days` : ""}.`, solution: "" }] : []),
+      ...(noSup ? [{ sys: true, challenge: "Interns without an assigned HTE supervisor", description: `${noSup} intern${noSup === 1 ? " had" : "s had"} no HTE supervisor in the system, so their requests could not be confirmed.`, solution: "" }] : []),
     ],
-    plans: [
-      { title: "Expand local and international internship opportunities", text: "Partner with more Host Training Establishments that match the programs' learning outcomes." },
-      { title: "Renew expiring MOAs ahead of deployment", text: "Track MOA validity every quarter and start the renewal at least two months before it expires." },
-      { title: "Strengthen HTE supervisor engagement", text: "Guide HTE supervisors in using the system to confirm attendance and appraise the interns." },
-    ],
+    plans: [],
   };
   const has = (k, title) => (d[k] || []).some((x) => String(x.title || x.challenge || "").trim().toLowerCase() === title.toLowerCase());
   // add an idea: fills the first empty item, else adds a new one
@@ -400,31 +601,59 @@ export default function QuarterlyReport({ user, supervisors = [], interns: allIn
 
   if (!srv) return <Spinner />;
 
+  // View: the report exactly as it prints, read-only (Open to change it)
+  if (view) {
+    return (
+      <div className="qr">
+        <style>{QR_CSS}</style>
+        <div className="ix-card qr-bar">
+          <div className="qr-title">
+            <button type="button" className="qr-back" onClick={onBack}><Icon name="menu" size={14} /> Back to the list</button>
+            <h3>{qTitle(year, quarter)} <small>{Q_MONTHS[quarter - 1]}</small></h3>
+            {doneN === SECTIONS.length ? <Badge label="Ready" type="approved" /> : <Badge label="Draft" type="pending" />}
+          </div>
+          <div className="qr-acts">
+            <span className="qr-saved">{srv.updated_at ? `Saved ${new Date(String(srv.updated_at).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Nothing saved for this quarter"}</span>
+            <button type="button" className="ix-b ghost sm" onClick={() => onMode && onMode("edit")}><Icon name="pencil" size={14} /> Edit</button>
+            <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={word}><Icon name="download" size={14} /> {busy === "word" ? "Making..." : "Word"}</button>
+            <button type="button" className="ix-b primary sm" onClick={print}><Icon name="print" size={14} /> Print / PDF</button>
+          </div>
+        </div>
+        <Msg msg={msg} />
+        {doneN < SECTIONS.length && <div className="qr-viewnote"><Icon name="info" size={14} /> This report is still a draft: {SECTIONS.length - doneN} part{SECTIONS.length - doneN === 1 ? " is" : "s are"} not finished yet. Click <b>Edit</b> to finish {SECTIONS.length - doneN === 1 ? "it" : "them"}.</div>}
+        <PagedView html={reportHtml({ year, quarter, d, t })} title={`Quarterly report, ${qTitle(year, quarter)}`} />
+      </div>
+    );
+  }
+
   return (
     <div className="qr">
       <style>{QR_CSS}</style>
       <div className="ix-card qr-bar">
-        <div className="ix-field"><label>Year</label>
-          <select className="ix-select" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-            {Array.from({ length: 6 }, (_, i) => nowYear - 4 + i).map((y) => <option key={y}>{y}</option>)}
-          </select></div>
-        <div className="ix-field"><label>Quarter</label>
-          <select className="ix-select" value={quarter} onChange={(e) => setQuarter(Number(e.target.value))}>
-            {[1, 2, 3, 4].map((q) => <option key={q} value={q}>{Q_WORD[q - 1]} quarter ({Q_MONTHS[q - 1]})</option>)}
-          </select></div>
+        <div className="qr-title">
+          <button type="button" className="qr-back" onClick={() => { if (!dirty || window.confirm("You have changes that are not saved. Leave without saving?")) onBack(); }}>
+            <Icon name="menu" size={14} /> Back to the list</button>
+          <h3>{qTitle(year, quarter)} <small>{Q_MONTHS[quarter - 1]}</small></h3>
+          {doneN === SECTIONS.length ? <Badge label="Ready" type="approved" /> : <Badge label="Draft" type="pending" />}
+        </div>
         <div className="qr-acts">
           <span className="qr-saved">{dirty ? "Not saved yet" : srv.updated_at ? `Saved ${new Date(String(srv.updated_at).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Nothing saved for this quarter"}</span>
-          <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => copyPrevious()}>{busy === "copy" ? "Copying..." : "Copy from last quarter"}</button>
+          {!srv.updated_at && <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => setCopyOpen(true)}><Icon name="file" size={14} /> Copy from another quarter</button>}
           <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={save}>{busy === "save" ? "Saving..." : "Save"}</button>
           <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={word}><Icon name="download" size={14} /> {busy === "word" ? "Making..." : "Word"}</button>
           <button type="button" className="ix-b primary sm" onClick={print}><Icon name="print" size={14} /> Print / PDF</button>
         </div>
       </div>
       <Msg msg={msg} />
+      {copyOpen && <CopyDrawer year={year} quarter={quarter} nowYear={nowYear} onClose={() => setCopyOpen(false)} onCopy={copyFrom} />}
       {srv.ready === false && <div className="ix-alert"><Icon name="warn" size={16} /> Run "php artisan migrate" on the server so the report can be saved.</div>}
       <div className="qr-layout">
       {/* the sections, with how far each one is */}
       <nav className="ix-card qr-nav" aria-label="Report sections">
+        <div className="qr-steps"><b>How it works</b>
+          <span><small className="qr-job check">Check</small> what the system filled in</span>
+          <span><small className="qr-job write">Write</small> the parts only you know</span>
+          <span><small className="qr-job sign">Sign</small> then Print or Word</span></div>
         <div className="qr-prog"><b>Report progress</b><span>{doneN} of {SECTIONS.length} done</span></div>
         <div className="qr-prog-bar"><i style={{ width: `${(doneN / SECTIONS.length) * 100}%` }} /></div>
         {left.length > 0 ? (
@@ -440,52 +669,38 @@ export default function QuarterlyReport({ user, supervisors = [], interns: allIn
               {x.group && SECTIONS[i - 1]?.group !== x.group && <div className="qr-nav-g"><em>{x.group}</em>Initiatives and Achievements</div>}
               <button type="button" className={`qr-nav-i${x.group ? " sub" : ""}${sec === x.key ? " on" : ""}`} onClick={() => go(i)} title={st === "ok" ? "Done" : st === "part" ? "Needs checking" : "Empty"}>
                 {x.n ? <em>{x.n}</em> : <em className="blank" />}
-                <span>{x.label}</span>
+                <span>{x.label}<small className={`qr-job ${x.job}`}>{JOB[x.job]}</small></span>
                 <i className={st}>{st === "ok" ? "✓" : st === "part" ? "!" : ""}</i>
               </button>
             </Fragment>
           );
         })}
-        <small className="qr-nav-key"><i className="ok">✓</i> done <i className="part">!</i> needs checking <i className="none" /> empty</small>
+        <small className="qr-nav-key">
+          <span><i className="ok">✓</i> done</span><span><i className="part">!</i> needs checking</span><span><i className="none" /> empty</span>
+        </small>
       </nav>
       <div className="qr-main">
 
       {/* 1. A–C: the parts that rarely change */}
+      {HOW[sec] && <div className={`qr-how ${SECTIONS.find((x) => x.key === sec)?.job}`}><small className={`qr-job ${SECTIONS.find((x) => x.key === sec)?.job}`}>{JOB[SECTIONS.find((x) => x.key === sec)?.job]}</small> {HOW[sec]}</div>}
       {sec === "s1" && (
       <Sec n="1" title="Objectives, Unit Profile and Quality Objectives">
         <div className="qr-fixed">
-          <div className="qr-fixed-top">
-            <p className="qr-hint">These stay the same every quarter and are already filled in from the college's report. Change them only when the office updates them.</p>
-            <button type="button" className="ix-b ghost sm" onClick={() => setEdit1((v) => !v)}>
-              <Icon name={edit1 ? "check" : "pencil"} size={14} /> {edit1 ? "Done editing" : "Edit text"}
-            </button>
-          </div>
           {!d.structure && <div className="qr-todo"><Icon name="warn" size={14} /> Add the picture of the office's functional structure to finish this section.</div>}
-          {edit1 ? (
-          <div className="qr-fixed-body">
-          <Sub>A. Objectives</Sub>
-          <textarea className="ix-input" rows={4} value={d.objectives} onChange={(e) => set("objectives", e.target.value)} />
-          <label className="qr-lbl">"Specifically, this UPR Report seeks to:" (one per line)</label>
-          <textarea className="ix-input" rows={4} value={d.objectives_list} onChange={(e) => set("objectives_list", e.target.value)} />
-          <Sub>B. Unit Profile</Sub>
-          <textarea className="ix-input" rows={7} value={d.profile} onChange={(e) => set("profile", e.target.value)} />
-          <Sub>C. Quality Objectives of the Office (one per line)</Sub>
-          <textarea className="ix-input" rows={7} value={d.quality} onChange={(e) => set("quality", e.target.value)} />
-          </div>
-          ) : (
-          <div className="qr-read">
+          {/* the text from the college's report, editable in place (open a part to change it) */}
+          <div className="qr-read qr-edit1">
             <details open><summary>A. Objectives</summary>
-              <p>{d.objectives}</p>
-              <ol>{String(d.objectives_list || "").split("\n").filter((x) => x.trim()).map((x, i) => <li key={i}>{x}</li>)}</ol>
+              <textarea className="ix-input" rows={4} value={d.objectives} onChange={(e) => set("objectives", e.target.value)} />
+              <label className="qr-lbl">"Specifically, this UPR Report seeks to:" (one per line)</label>
+              <textarea className="ix-input" rows={4} value={d.objectives_list} onChange={(e) => set("objectives_list", e.target.value)} />
             </details>
             <details><summary>B. Unit Profile</summary>
-              {String(d.profile || "").split(/\n\s*\n/).filter((x) => x.trim()).map((x, i) => <p key={i}>{x}</p>)}
+              <textarea className="ix-input" rows={8} value={d.profile} onChange={(e) => set("profile", e.target.value)} />
             </details>
-            <details><summary>C. Quality Objectives of the Office</summary>
-              <ul>{String(d.quality || "").split("\n").filter((x) => x.trim()).map((x, i) => <li key={i}>{x}</li>)}</ul>
+            <details><summary>C. Quality Objectives of the Office <small>(one per line)</small></summary>
+              <textarea className="ix-input" rows={7} value={d.quality} onChange={(e) => set("quality", e.target.value)} />
             </details>
           </div>
-          )}
           <label className="qr-lbl">Functional structure of the Office (picture)</label>
           <Photos onError={(text) => setMsg({ type: "error", text })} list={d.structure ? [d.structure] : []} max={1} onChange={(l) => set("structure", l[0] || null)} />
         </div>
@@ -788,6 +1003,90 @@ function Photos({ list, onChange, max = 6, onError }) {
     </div>
   );
 }
+/* "Copy from another quarter": pick a saved quarter, see what it has, tick the parts to copy.
+   The counted parts (2.A, 2.C tables, 2.D) are never copied: the system counts them again for this quarter. */
+const COPY_PARTS = [
+  { id: "p1", label: "1 · Objectives, unit profile and quality objectives", keys: ["objectives", "objectives_list", "profile", "structure", "quality"],
+    peek: (s) => (s.structure ? "Text and the structure picture" : "Text (no structure picture)") },
+  { id: "p2c", label: "2.C · HTE categories and modalities", keys: ["hte_cat", "hte_mod"],
+    peek: (s) => `${Object.keys(s.hte_cat || {}).length} HTE${Object.keys(s.hte_cat || {}).length === 1 ? "" : "s"} with a category` },
+  { id: "p3", label: "3 · Best practices", keys: ["best_intro", "best"], peek: (s) => titles(s.best, "title") },
+  { id: "p4", label: "4 · Challenges and solutions", keys: ["challenges_intro", "challenges"], peek: (s) => titles(s.challenges, "challenge") },
+  { id: "p5", label: "5 · Future plans and initiatives", keys: ["plans_intro", "plans", "closing"], peek: (s) => titles(s.plans, "title") },
+  { id: "ps", label: "Prepared by / Noted by", keys: ["prepared", "noted"],
+    peek: (s) => [s.prepared?.name, s.noted?.name].filter((x) => String(x || "").trim()).join(" · ") || "Empty" },
+];
+function titles(list, k) {
+  const t = (list || []).map((x) => String(x?.[k] || "").trim()).filter(Boolean);
+  return t.length ? `${t.length}: ${t.slice(0, 2).join("; ")}${t.length > 2 ? "; …" : ""}` : "Empty";
+}
+const hasPart = (s, p) => p.keys.some((k) => {
+  const v = s?.[k];
+  if (Array.isArray(v)) return v.some((x) => Object.values(x || {}).some((y) => String(y || "").trim()));
+  if (v && typeof v === "object") return Object.values(v).some((y) => String(y || "").trim());
+  return String(v || "").trim() !== "";
+});
+function CopyDrawer({ year, quarter, nowYear, onClose, onCopy }) {
+  const [sy, setSy] = useState(quarter === 1 ? year - 1 : year);
+  const [sq, setSq] = useState(quarter === 1 ? 4 : quarter - 1);
+  const [src, setSrc] = useState(undefined);   // undefined = loading, null = nothing saved
+  const [pick, setPick] = useState({});
+  useEffect(() => {
+    let off = false;
+    setSrc(undefined);
+    fetch(`${API}/coordinator/quarterly-report?year=${sy}&quarter=${sq}`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((j) => {
+        if (off) return;
+        const data = j?.data ? (j.data.v === 2 ? j.data : fromOld(j.data)) : null;
+        setSrc(data);
+        setPick(Object.fromEntries(COPY_PARTS.map((p) => [p.id, !!data && hasPart(data, p)])));
+      }).catch(() => { if (!off) setSrc(null); });
+    return () => { off = true; };
+  }, [sy, sq]);
+  const same = sy === year && sq === quarter;
+  const chosen = COPY_PARTS.filter((p) => pick[p.id]);
+  const label = `the ${Q_WORD[sq - 1]} quarter of ${sy}`;
+  return (
+    <Drawer inPage icon="file" kicker="Quarterly Report" title="Copy from another quarter" onClose={onClose}
+      footer={(close) => (<>
+        <button type="button" className="ix-b ghost" onClick={close}>Cancel</button>
+        <button type="button" className="ix-b primary" disabled={!src || same || !chosen.length}
+          onClick={() => onCopy(src, chosen.flatMap((p) => p.keys), label)}>
+          Copy {chosen.length || ""} part{chosen.length === 1 ? "" : "s"}</button>
+      </>)}>
+      <div className="qr-cp">
+        <p className="qr-cp-lead">Start this quarter from a report you already saved. Pick the quarter, tick the parts you want, then edit what changed.</p>
+        <div className="qr-cp-row">
+          <div className="ix-field"><label>Copy from year</label>
+            <select className="ix-select" value={sy} onChange={(e) => setSy(Number(e.target.value))}>
+              {Array.from({ length: 6 }, (_, i) => nowYear - 4 + i).map((y) => <option key={y}>{y}</option>)}
+            </select></div>
+          <div className="ix-field"><label>Quarter</label>
+            <select className="ix-select" value={sq} onChange={(e) => setSq(Number(e.target.value))}>
+              {[1, 2, 3, 4].map((q) => <option key={q} value={q}>{Q_WORD[q - 1]} quarter</option>)}
+            </select></div>
+        </div>
+        {same ? <div className="qr-cp-none">This is the quarter you are working on. Pick another one.</div>
+          : src === undefined ? <Spinner />
+          : src === null ? <div className="qr-cp-none">Nothing saved for {label}. Pick another quarter.</div>
+          : (<>
+            <small className="qr-cp-h">Parts to copy</small>
+            {COPY_PARTS.map((p) => {
+              const has = hasPart(src, p);
+              return (
+                <label key={p.id} className={`qr-cp-part${has ? "" : " off"}`}>
+                  <input type="checkbox" disabled={!has} checked={!!pick[p.id]} onChange={(e) => setPick((x) => ({ ...x, [p.id]: e.target.checked }))} />
+                  <span><b>{p.label}</b><small>{has ? p.peek(src) : "Nothing saved in this part"}</small></span>
+                </label>
+              );
+            })}
+            <small className="qr-cp-note">The ticked parts replace what this quarter has now. The counted numbers (2.A, the interns per HTE in 2.C, and 2.D) are never copied: the system counts them again for this quarter. MOAs and activities (2.B, 2.E) are not copied either, because they change every quarter.</small>
+          </>)}
+      </div>
+    </Drawer>
+  );
+}
+
 function Sec({ n, title, auto, children }) {
   return (
     <section className="ix-card qr-sec">
@@ -810,7 +1109,7 @@ function Guide({ onCopy, ideas, label, onIdea, note }) {
       <div className="qr-guide-h"><span>Answer the questions below; the report puts your answers in its format.</span>
         <button type="button" className="ix-b ghost sm" onClick={onCopy}>Use last quarter's</button></div>
       {ideas.length > 0 && (
-        <div className="qr-ideas"><small>Start from an idea:</small>
+        <div className="qr-ideas"><small>Found in this quarter&apos;s records:</small>
           {ideas.map((x) => <button key={label(x)} type="button" className={x.sys ? "sys" : ""} onClick={() => onIdea(x)}>{x.sys ? "★" : "+"} {label(x)}</button>)}
           {note && ideas.some((x) => x.sys) && <small className="mut">{note}</small>}
         </div>
@@ -932,7 +1231,7 @@ ${P(d.closing)}
   <div>Noted by:<b>${esc(d.noted.name)}</b>${esc(d.noted.title)}</div>
 </div>
 `;
-  if (word) return wordHtml({ year, quarter, qName, content, logo: abs(csuLogo) });
+  if (word) return wordHtml({ year, quarter, qName, content, logo: abs(csuLogo), bp: abs(bpLogo), iso: abs(isoLogo) });
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Unit Performance Review Report - ${qName}</title>
 <style>
@@ -953,7 +1252,8 @@ ${P(d.closing)}
   .hsp { height: 30mm; } .fsp { height: 24mm; }
   /* cover */
   .cover { position: relative; z-index: 5; background: #fff; height: 297mm; padding: 14mm 18mm 0 22mm; page-break-after: always; overflow: hidden; }
-  .cover .logos img { height: 70px; }
+  .cover .logos { display: flex; align-items: center; gap: 12px; }
+  .cover .logos img { height: 70px; } .cover .logos img.bp { height: 58px; } .cover .logos img.iso { height: 54px; }
   .cover .dia { position: absolute; border: 2.5px solid #e9c94a; border-radius: 14px; transform: rotate(45deg); }
   .cover .dia.r { border-color: #c0504d; }
   .cover .tri { position: absolute; width: 0; height: 0; }
@@ -1026,7 +1326,7 @@ ${P(d.closing)}
 </div>
 
 <div class="cover">
-  <div class="logos"><img src="${abs(csuLogo)}" alt=""></div>
+  <div class="logos"><img src="${abs(csuLogo)}" alt=""><img class="bp" src="${abs(bpLogo)}" alt=""><img class="iso" src="${abs(isoLogo)}" alt=""></div>
   <i class="dia" style="width:120px;height:120px;right:48mm;top:22mm"></i>
   <i class="dia r" style="width:80px;height:80px;right:14mm;top:58mm"></i>
   <i class="dia r" style="width:85px;height:85px;left:8mm;bottom:58mm"></i>
@@ -1065,7 +1365,7 @@ ${content}
 }
 
 /* the same report for Word: no page decorations (Word can't place them), a simple cover, the same sections */
-function wordHtml({ year, quarter, qName, content: raw, logo }) {
+function wordHtml({ year, quarter, qName, content: raw, logo, bp, iso }) {
   // Word ignores display:block on <b>, so the signatories get their own lines
   const content = raw.replace(/<div>(Prepared by:|Noted by:)<b>([\s\S]*?)<\/b>([\s\S]*?)<\/div>/g, '<p>$1</p><p><br><br><b>$2</b><br>$3</p>');
   const boxes = Q_NAMES.map((n, i) => `<p class="qb">${i + 1 === quarter ? "&#9632;" : "&#9633;"} ${n} QUARTER</p>`).join("");
@@ -1104,7 +1404,7 @@ function wordHtml({ year, quarter, qName, content: raw, logo }) {
   .sign { margin-top: 30pt; } .sign div { margin-bottom: 26pt; } .sign b { display: block; margin-top: 24pt; text-transform: uppercase; }
 </style></head><body><div class="Section1">
 <div class="cover">
-  <p style="text-align:left"><img src="${logo}" width="70" height="70" alt=""></p>
+  <p style="text-align:left"><img src="${logo}" width="50" height="70" alt="">&nbsp;&nbsp;<img src="${bp}" width="61" height="58" alt="">&nbsp;&nbsp;<img src="${iso}" width="92" height="54" alt=""></p>
   <h1>UNIT PERFORMANCE<br>REVIEW REPORT</h1>
   <p class="year">${year}</p>
   ${boxes}
@@ -1117,8 +1417,27 @@ ${content}
 }
 
 const QR_CSS = `
+.qr-lacts { display: inline-flex; gap: 8px; justify-content: flex-end; width: 100%; }
+.qr-view { background: #eef0f3; border: 1px solid #e5e7eb; border-radius: 14px; padding: 14px 16px 4px; margin-top: 12px; overflow-x: auto; }
+.qr-view-n { text-align: center; font-size: 12px; font-weight: 600; color: #6b7280; margin-bottom: 8px; }
+.qr-view iframe { display: block; width: 100%; min-width: 820px; border: 0; background: transparent; }
+.qr-viewnote { display: flex; gap: 6px; align-items: center; margin-top: 12px; font-size: 13px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 9px 12px; }
+.qr-edit1 details > textarea, .qr-edit1 details > .qr-lbl { margin-top: 8px; }
+.qr-edit1 summary small { font-weight: 500; color: #9ca3af; }
+.qr-listhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.qr-listhead p { margin: 0; color: #6b7280; font-size: 13.5px; }
+.qr-lq { display: flex; flex-direction: column; gap: 2px; } .qr-lq small, .qr-lst small { color: #9ca3af; font-size: 12px; }
+.qr-lst { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qr-newq { display: grid; gap: 12px; } .qr-newq .ix-field { margin: 0; }
+.qr-newq-note { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 8px 10px; }
+.qr-newq-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.qr-title { display: grid; grid-template-columns: auto auto; justify-content: start; align-items: center; column-gap: 10px; row-gap: 6px; min-width: 0; }
+.qr-title .qr-back { grid-column: 1 / -1; }
+.qr-title h3 { margin: 0; font-size: 17px; text-transform: capitalize; } .qr-title h3 small { font-size: 12.5px; font-weight: 500; color: #9ca3af; text-transform: none; margin-left: 4px; }
+.qr-back { display: inline-flex; align-items: center; gap: 6px; justify-self: start; border: 0; background: none; padding: 0; font: inherit; font-size: 13px; font-weight: 600; color: #ea580c; cursor: pointer; }
+.qr-back:hover { text-decoration: underline; }
   .ix-page .qr { display: flex; flex-direction: column; gap: 14px; }
-  .ix-page .ix-content .qr-bar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 14px 18px !important; }
+  .ix-page .ix-content .qr-bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; padding: 14px 18px !important; }
   .ix-page .qr-bar .ix-field { min-width: 150px; }
   .ix-page .qr-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .ix-page .qr-saved { font-size: 12px; color: #94a3b8; margin-right: 4px; }
@@ -1178,6 +1497,25 @@ const QR_CSS = `
   .ix-page .qr-prog span { color: #64748b; }
   .ix-page .qr-prog-bar { height: 7px; border-radius: 4px; background: #f1e7e1; margin: 0 4px 10px; overflow: hidden; }
   .ix-page .qr-prog-bar i { display: block; width: 0; height: 100% !important; min-width: 0; border: 0; margin: 0; background: #ea580c; border-radius: inherit; transition: width .3s; }
+  .qr-cp { display: flex; flex-direction: column; gap: 12px; }
+  .qr-cp-lead { margin: 0; font-size: 13px; color: #475569; line-height: 1.5; }
+  .qr-cp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .qr-cp-h { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #64748b; margin-top: 4px; }
+  .qr-cp-part { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 10px; cursor: pointer; background: #fff; }
+  .qr-cp-part:has(input:checked) { border-color: #e8582a; background: #fff8f4; }
+  .qr-cp-part.off { opacity: .55; cursor: default; }
+  .qr-cp-part input { margin-top: 3px; accent-color: #e8582a; }
+  .qr-cp-part span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .qr-cp-part b { font-size: 13px; color: #111827; } .qr-cp-part small { font-size: 12px; color: #64748b; overflow-wrap: anywhere; }
+  .qr-cp-none { padding: 14px; border-radius: 10px; background: #f8fafc; border: 1px dashed #d6d9de; font-size: 13px; color: #475569; text-align: center; }
+  .qr-cp-note { font-size: 12px; color: #64748b; line-height: 1.5; }
+  .ix-page .qr-job { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 700; vertical-align: 1px; }
+  .ix-page .qr-nav-i span .qr-job { display: table; margin: 3px 0 0; }
+  .ix-page .qr-job.check { background: #e8f1fe; color: #1d4ed8; } .ix-page .qr-job.write { background: #fff1ea; color: #c2410c; } .ix-page .qr-job.sign { background: #e6f7ee; color: #15803d; }
+  .ix-page .qr-steps { display: flex; flex-direction: column; gap: 5px; padding: 0 2px 12px; margin-bottom: 10px; border-bottom: 1px solid #eef0f4; font-size: 12.5px; color: #475569; }
+  .ix-page .qr-steps b { font-size: 13px; color: #111827; } .ix-page .qr-steps .qr-job { margin: 0 4px 0 0; min-width: 40px; text-align: center; }
+  .ix-page .qr-how { display: flex; align-items: baseline; gap: 6px; margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.45; color: #334155; background: #f8fafc; border: 1px solid #eef0f4; }
+  .ix-page .qr-how .qr-job { margin: 0; flex: none; }
   .ix-page .qr-nav-i { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent;
     font: inherit; font-size: 13.5px; line-height: 1.3; color: #374151; text-align: left; cursor: pointer; }
   .ix-page .qr-nav-i span { flex: 1; min-width: 0; }
@@ -1192,8 +1530,9 @@ const QR_CSS = `
   .ix-page .qr-nav-i > i.ok, .ix-page .qr-nav-key i.ok { background: #16a34a; color: #fff; }
   .ix-page .qr-nav-i > i.part, .ix-page .qr-nav-key i.part { background: #fde68a; color: #92400e; }
   .ix-page .qr-nav-i > i.none, .ix-page .qr-nav-key i.none { background: transparent; border: 1.5px solid #d6dae1; }
-  .ix-page .qr-nav-key { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 12px 10px 0; padding-top: 10px; border-top: 1px solid #f1f3f6; font-size: 11.5px; color: #94a3b8; }
-  .ix-page .qr-nav-key i { width: 14px; height: 14px; font-size: 8.5px; margin-left: 4px; }
+  .ix-page .qr-nav-key { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; margin: 12px 10px 0; padding-top: 10px; border-top: 1px solid #f1f3f6; font-size: 11.5px; color: #94a3b8; }
+  .ix-page .qr-nav-key > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .ix-page .qr-nav-key i { width: 14px; height: 14px; font-size: 8.5px; flex: none; }
   .ix-page .qr-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
   .ix-page .qr-row { justify-content: space-between !important; }
   @media (max-width: 900px) { .ix-page .qr-layout { grid-template-columns: 1fr; } .ix-page .ix-content .qr-nav { position: static; } }

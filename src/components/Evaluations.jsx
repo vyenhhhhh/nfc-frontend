@@ -7,7 +7,7 @@
 // OJT coordinator: sees Part 1, rates Part 2, then releases the grade to the intern.
 // Intern: <MyGrade /> shows the grade once it is released.
 // The signed paper evaluation form is still uploaded by the intern as a post-internship requirement.
-import { Fragment, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Icon, Msg, Spinner, Badge, Avatar, OA_CSS, esc } from "./DashKit.jsx";
 import { API } from "../config.js";
 import { fileHref, openFile } from "../files.js";
@@ -182,18 +182,27 @@ export default function Evaluations({ user }) {
   );
 }
 
-/* ───────── HTE supervisor: the appraisal (60%) ───────── */
+/* ───────── HTE supervisor: the appraisal (60%) ─────────
+   Same look and buttons as the coordinator's grade panel: one card per category,
+   1–5 buttons per item, the total and the buttons in the bar at the bottom.
+   "Print" gives the paper form F-OSIP-PAR-004. */
 function SupervisorPanel({ intern, cfg, onDone, onError }) {
   const ex = intern.appraisal;
   const locked = !!intern.grade?.finalized_at;
-  const [r, setR] = useState(() => ex?.ratings || {});
-  const [f, setF] = useState({ strengths: ex?.strengths || "", improvements: ex?.improvements || "", comments: ex?.comments || "" });
-  const [edit, setEdit] = useState(!ex);
-  const [shareComments, setShareComments] = useState(ex ? ex.share_comments !== false : true);
+  const start = () => ({
+    r: ex?.ratings || {},
+    f: { strengths: ex?.strengths || "", improvements: ex?.improvements || "", comments: ex?.comments || "" },
+    shareComments: ex ? ex.share_comments !== false : true,
+  });
+  const [r, setR] = useState(() => start().r);
+  const [f, setF] = useState(() => start().f);
+  const [shareComments, setShareComments] = useState(() => start().shareComments);
   const [busy, setBusy] = useState(false);
   const total = supTotal(cfg, r);
   const rated = (cfg.supervisor || []).reduce((s, c) => s + c.items.filter((it) => r[it.key] >= 1).length, 0);
   const items = (cfg.supervisor || []).reduce((s, c) => s + c.items.length, 0);
+  const s0 = start();
+  const dirty = JSON.stringify([r, f, shareComments]) !== JSON.stringify([s0.r, s0.f, s0.shareComments]);
 
   const submit = async () => {
     setBusy(true);
@@ -204,79 +213,69 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Couldn't save the appraisal.");
-      setEdit(false); onDone(d.message || "Appraisal saved.");
+      onDone(d.message || "Appraisal saved.");
     } catch (e) { onError(e instanceof TypeError ? "Couldn't reach the server." : e.message); } finally { setBusy(false); }
   };
+  const reset = () => { const x = start(); setR(x.r); setF(x.f); setShareComments(x.shareComments); };
+  const print = () => printForm(intern, cfg, r, { ...f, evaluator_name: ex?.evaluator_name }, null, null);
 
   return (
     <>
-      {locked && <div className="oa-done ok"><Icon name="check" size={14} /><span>The OJT coordinator released this intern's grade, so your appraisal can no longer be changed.</span></div>}
-      {!edit && ex && !locked && (
-        <div className="oa-done"><Icon name="check" size={14} /><span>You rated {intern.name} on {day(ex.updated_at)}. You can still change it until the coordinator releases the grade.</span></div>
+      {locked
+        ? <div className="oa-done ok"><Icon name="check" size={14} /><span>The OJT coordinator released this intern's grade, so your appraisal can no longer be changed.</span></div>
+        : ex && <div className="oa-done"><Icon name="check" size={14} /><span>You rated {intern.name} on {day(ex.updated_at)}. You can still change it until the coordinator releases the grade.</span></div>}
+
+      <p className="gr-hint">Student-Trainee's Performance Appraisal Report (F-OSIP-PAR-004). Rate each item from 1 (lowest) to 5 (highest).</p>
+
+      {(cfg.supervisor || []).map((cat) => {
+        const sc = supCat(cat, r);
+        return (
+          <section key={cat.key} className="gr-sec">
+            <header><b>{cat.label}</b><span className="gr-w">{cat.weight} pts</span>
+              <span className="gr-sc">{sc === null ? "—" : num(sc)} / {cat.weight}</span></header>
+            {cat.key === "attendance" && (
+              <p className="gr-hint"><Icon name="clock" size={12} /> From the attendance log: {intern.attendance?.days ?? 0} days present, {intern.attendance?.late ?? 0} late time ins.</p>
+            )}
+            {cat.items.map((it, i) => (
+              <div key={it.key} className="gr-row">
+                <span>{i + 1}. {it.label}</span>
+                {locked ? <b className="gr-val">{r[it.key] || "—"} <small>{cfg.scale?.[r[it.key]] || ""}</small></b>
+                  : <Rate value={r[it.key]} scale={cfg.scale} label={it.label} onChange={(n) => setR((x) => ({ ...x, [it.key]: n }))} />}
+              </div>
+            ))}
+          </section>
+        );
+      })}
+
+      {locked ? (
+        [["strengths", "Strengths"], ["improvements", "Weaknesses"], ["comments", "Comment / suggestions"]].map(([k, l]) => (
+          f[k] ? <p key={k} className="gr-note"><b>{l}:</b> {f[k]}</p> : null
+        ))
+      ) : (
+        <>
+          <div className="gr-fields">
+            {[["strengths", "Strengths"], ["improvements", "Weaknesses"], ["comments", "Comment / suggestions"]].map(([k, l]) => (
+              <label key={k}>{l} (optional)<textarea className="ix-input" rows={2} value={f[k]} onChange={(e) => setF((x) => ({ ...x, [k]: e.target.value }))} /></label>
+            ))}
+          </div>
+          <label className="gr-share"><input type="checkbox" checked={shareComments} onChange={(e) => setShareComments(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
+        </>
       )}
-      {/* laid out like the paper form F-OSIP-PAR-004 rev.2: the header, then Part I (criteria × 1–5), total points */}
-      <div className="pf-form">
-        <div className="pf-title">STUDENT-TRAINEE'S PERFORMANCE APPRAISAL REPORT</div>
-        <div className="pf-info">
-          <div><small>Student-Trainee/Program/Year Level</small><b>{intern.name}{intern.program ? ` · ${intern.program}` : ""}</b></div>
-          <div><small>Name of Company</small><b>{intern.placement || "—"}</b></div>
-          <div><small>Semester/ No. of Training Hours</small><b>{[intern.semester, `${num(intern.hours, 1)} hrs`].filter(Boolean).join(" · ")}</b></div>
-          <div><small>Address of Company</small><b>{intern.hte_address || "—"}</b></div>
-        </div>
-        <p className="pf-dir"><b>Part I – DIRECTION:</b> Please rate by {edit && !locked ? "clicking" : "checking"} the appropriate column that best describes the performance of the above student trainee. Five (5) being the highest and One (1) the lowest.</p>
-        <table className="pf-tb">
-          <thead><tr><th>CRITERIA</th>{[1, 2, 3, 4, 5].map((n) => <th key={n} className="c" title={cfg.scale?.[n]}>{n}</th>)}</tr></thead>
-          <tbody>
-            {(cfg.supervisor || []).map((cat) => {
-              const sc = supCat(cat, r);
-              return (
-                <Fragment key={cat.key}>
-                  <tr className="cat"><td colSpan={6}>{cat.label.toUpperCase()}<span>{sc === null ? "—" : num(sc)} / {cat.weight}</span></td></tr>
-                  {cat.key === "attendance" && (
-                    <tr className="hint"><td colSpan={6}><Icon name="clock" size={12} /> From the attendance log: {intern.attendance?.days ?? 0} days present, {intern.attendance?.late ?? 0} late time ins.</td></tr>
-                  )}
-                  {cat.items.map((it, i) => (
-                    <tr key={it.key} className={r[it.key] >= 1 ? "" : "todo"}>
-                      <td className="it">{i + 1}. {it.label}</td>
-                      {[1, 2, 3, 4, 5].map((n) => (
-                        <td key={n} className="c">
-                          {edit && !locked
-                            ? <button type="button" className={r[it.key] === n ? "pf-ck on" : "pf-ck"} aria-label={`${it.label}: ${n}`} aria-pressed={r[it.key] === n}
-                                onClick={() => setR((x) => ({ ...x, [it.key]: n }))}>{r[it.key] === n ? "✔" : ""}</button>
-                            : <span className="pf-mark">{r[it.key] === n ? "✔" : ""}</span>}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </Fragment>
-              );
-            })}
-            <tr className="tot"><td>TOTAL POINTS:</td><td colSpan={5} className="c">{total === null ? `${rated} of ${items} rated` : `${num(total)} / 100`}</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div className="gr-fields">
-        {[["strengths", "Strengths"], ["improvements", "Weaknesses"], ["comments", "Comment / suggestions"]].map(([k, l]) => (
-          edit && !locked
-            ? <label key={k}>{l}<textarea className="ix-input" rows={2} value={f[k]} onChange={(e) => setF((x) => ({ ...x, [k]: e.target.value }))} /></label>
-            : f[k] ? <p key={k} className="gr-note"><b>{l}:</b> {f[k]}</p> : null
-        ))}
-      </div>
-      {edit && !locked && (
-        <label className="gr-share"><input type="checkbox" checked={shareComments} onChange={(e) => setShareComments(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
-      )}
+
       <div className="gr-bar">
-        <div className="gr-total">
-          <b>{total === null ? `${rated} of ${items} rated` : `${num(total)} / 100 points`}</b>
-          <small>{total === null ? "Rate every item to see the total points." : `Total points × 60% = ${num(total * share(cfg))} of the final grade.`}</small>
+        <div className="gr-total big">
+          <b>{total === null ? "—" : `${num(total)} / 100`}</b>
+          <small>{total === null
+            ? `${rated} of ${items} items rated. Rate every item to see the total points.`
+            : `Total points × ${Math.round(share(cfg) * 100)}% = ${num(total * share(cfg))} of the final grade`}{ex ? ` · saved ${day(ex.updated_at)}` : ""}</small>
         </div>
-        {ex && !edit && <button type="button" className="ix-b ghost" onClick={() => printForm(intern, cfg, ex.ratings || {}, { ...f, evaluator_name: ex.evaluator_name }, null, null)}><Icon name="print" size={14} /> Print form</button>}
-        {!locked && (edit ? (
+        <button type="button" className="ix-b ghost" onClick={print}><Icon name="print" size={14} /> Print</button>
+        {!locked && (
           <>
-            {ex && <button type="button" className="ix-b ghost" onClick={() => { setR(ex.ratings || {}); setEdit(false); }}>Cancel</button>}
-            <button type="button" className="ix-b primary" disabled={total === null || busy} onClick={submit}>{busy ? "Saving..." : ex ? "Save changes" : "Submit appraisal"}</button>
+            {ex && dirty && <button type="button" className="ix-b ghost" disabled={busy} onClick={reset}>Undo changes</button>}
+            <button type="button" className="ix-b primary" disabled={busy || total === null || (ex && !dirty)} onClick={submit}>{busy ? "Saving..." : ex ? "Save changes" : "Submit appraisal"}</button>
           </>
-        ) : <button type="button" className="ix-b ghost" onClick={() => setEdit(true)}><Icon name="pencil" size={14} /> Change ratings</button>)}
+        )}
       </div>
     </>
   );
@@ -324,6 +323,10 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
 
   return (
     <>
+      {isReleased
+        ? <div className="oa-done ok"><Icon name="check" size={14} /><span>{viewOnly ? "The OJT coordinator" : "You"} released this grade on {day(g.finalized_at)}.{viewOnly ? "" : " Reopen it to make changes."}</span></div>
+        : g && !viewOnly && <div className="oa-done"><Icon name="check" size={14} /><span>Draft saved on {day(g.updated_at)}. The intern sees the grade only after you release it.</span></div>}
+
       {/* Part 1: the supervisor's appraisal */}
       <section className="gr-sec">
         <header><b>HTE supervisor appraisal</b><span className="gr-w">60%</span>
@@ -635,6 +638,7 @@ const GR_CSS = `
 .gr .oa-detail { gap: 12px; }
 .gr .oa-kv b em { font-style: normal; font-weight: 500; font-size: 12px; color: #64748b; margin-left: 2px; }
 .gr .oa-kv b.warn { color: #b45309; }
+.gr .oa-kv b { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.3; }   /* long names (HTE supervisor) wrap instead of being cut */
 .gr-scale { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: #64748b; padding: 8px 12px; border-radius: 10px; background: #fafbfc; border: 1px solid #eef0f4; flex: none; }
 .gr-scale b { color: #c2410c; }
 .gr-sec { border: 1px solid #eef0f4; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; flex: none; }
@@ -672,27 +676,6 @@ const GR_CSS = `
 .gr-doc:hover { border-color: #e8582a; color: #c2410c; }
 .gr-doc .st { font-size: 10.5px; font-weight: 700; text-transform: capitalize; color: #b45309; }
 .gr-doc .st.approved { color: #15803d; } .gr-doc .st.rejected { color: #b91c1c; }
-/* the supervisor's appraisal, laid out like the paper form F-OSIP-PAR-004 */
-.pf-form { flex: none; border: 1px solid #d6d9de; border-radius: 10px; overflow: hidden; background: #fff; }
-.pf-title { padding: 10px 12px; text-align: center; font-size: 13px; font-weight: 800; letter-spacing: .02em; color: #111827; border-bottom: 1px solid #d6d9de; }
-.pf-info { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #d6d9de; }
-.pf-info > div { padding: 7px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pf-info > div:nth-child(odd) { border-right: 1px solid #d6d9de; } .pf-info > div:nth-child(-n+2) { border-bottom: 1px solid #eef0f4; }
-.pf-info small { font-size: 11px; font-weight: 700; color: #374151; } .pf-info b { font-size: 12.5px; font-weight: 500; color: #111827; overflow-wrap: anywhere; }
-.pf-dir { margin: 0; padding: 8px 12px; font-size: 12px; line-height: 1.5; color: #374151; border-bottom: 1px solid #d6d9de; }
-.pf-tb { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.pf-tb th { background: #f8f9fb; font-size: 11.5px; font-weight: 800; color: #111827; padding: 6px 8px; border-bottom: 1px solid #d6d9de; text-align: left; }
-.pf-tb td { padding: 0 8px; height: 30px; border-bottom: 1px solid #eef0f4; color: #1f2937; }
-.pf-tb .c { width: 44px; text-align: center; padding: 0; border-left: 1px solid #eef0f4; }
-.pf-tb tr.cat td { background: #f8f9fb; font-weight: 800; font-size: 11.5px; letter-spacing: .02em; color: #111827; height: 28px; }
-.pf-tb tr.cat td span { float: right; font-weight: 600; color: #6b7280; letter-spacing: 0; }
-.pf-tb tr.hint td { font-size: 11.5px; color: #6b7280; height: 24px; }
-.pf-tb td.it { padding-left: 18px; }
-.pf-tb tr.todo td.it { color: #b45309; }
-.pf-ck { width: 100%; height: 30px; border: 0; background: transparent; cursor: pointer; font: inherit; font-size: 14px; font-weight: 800; color: #15803d; padding: 0 !important; }
-.pf-ck:hover { background: #fff4ee; } .pf-ck.on { background: #e9f8ef; }
-.pf-mark { font-size: 14px; font-weight: 800; color: #15803d; }
-.pf-tb tr.tot td { background: #f8f9fb; font-weight: 800; text-align: right; height: 32px; border-bottom: 0; } .pf-tb tr.tot td.c { text-align: center; }
 /* grading inside the drawer (Interns → Grades) */
 .gr-drawer { display: flex; flex-direction: column; gap: 12px; min-height: 100%; }
 .ix-drawer .gr-bar { bottom: -16px !important; margin: auto -20px -16px !important; }

@@ -134,9 +134,13 @@ export function OnlineQueue({ mine = [], withSup = [], done = [], onReview, role
 
   return (
     <ReviewQueue
-      tabs={[
+      tabs={sup ? [
         { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No online days waiting for you to confirm." : "No online days waiting for your decision."] },
         { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Days you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
+        { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Days that were approved or rejected show here."] },
+      ] : [
+        { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Days you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
+        { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No online days waiting for you to confirm." : "No online days waiting for your decision."] },
         { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Days that were approved or rejected show here."] },
       ]}
       rowKey={(o) => o.id}
@@ -220,9 +224,13 @@ export function OvertimeQueue({ mine = [], withSup = [], done = [], all = [], ca
 
   return (
     <ReviewQueue
-      tabs={[
+      tabs={sup ? [
         { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", "No overtime waiting for your decision."] },
         { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Overtime you approved waits here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
+        { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Overtime that was approved or rejected shows here."] },
+      ] : [
+        { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Overtime you approved waits here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
+        { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", "No overtime waiting for your decision."] },
         { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Overtime that was approved or rejected shows here."] },
       ]}
       rowKey={(o) => o.id}
@@ -335,9 +343,13 @@ export function ExcusedQueue({ role = "coordinator" }) {
     <>
       <Msg msg={msg} />
       <ReviewQueue
-        tabs={[
+        tabs={sup ? [
           { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No excused absences waiting for you to confirm." : "No excused absences waiting for your decision."] },
           { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Requests you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
+          { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Requests you approve or reject show here."] },
+        ] : [
+          { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Requests you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
+          { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No excused absences waiting for you to confirm." : "No excused absences waiting for your decision."] },
           { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Requests you approve or reject show here."] },
         ]}
         rowKey={(r) => r.id}
@@ -503,8 +515,8 @@ export function ProjectQueue({ interns, records, onRefresh, role = "coordinator"
           { key: "mine", label: "With the coordinator", items: by("mine"), empty: ["Nothing here", "Projects you mark complete wait here for the OJT coordinator."] },
           { key: "done", label: "Confirmed", items: by("done"), empty: ["Nothing confirmed yet", "Projects the coordinator confirms show here."] },
         ] : [
-          { key: "mine", label: "Needs my review", items: by("mine"), hot: true, empty: ["All caught up", all.length ? "Projects the HTE supervisor marks as complete show here." : "No project-based interns. Set an intern's modality to Project-based on their profile."] },
           { key: "progress", label: "In progress", items: by("progress"), empty: ["Nothing here", "Project-based interns still working on their project show here."] },
+          { key: "mine", label: "Needs my review", items: by("mine"), hot: true, empty: ["All caught up", all.length ? "Projects the HTE supervisor marks as complete show here." : "No project-based interns. Set an intern's modality to Project-based on their profile."] },
           { key: "done", label: "Confirmed", items: by("done"), empty: ["Nothing confirmed yet", "Projects you confirm show here."] },
         ]}
         rowKey={(x) => x.id}

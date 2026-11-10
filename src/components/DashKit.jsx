@@ -3293,12 +3293,12 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
         {loading ? <Spinner /> : selected && showDetail ? (
           /* one intern: the summary details, with a way back to all the cards */
           <div className="imc-detail">
-            {/* header bar: the way back (orange, the main action here) and whose profile this is */}
+            {/* header bar: the way back (same link as the other detail pages) and whose profile this is */}
             <div className="imc-head">
-              <button type="button" className="ix-b primary imc-back" onClick={() => { setShowDetail(false); setSelectedId(null); }}>
-                <span aria-hidden="true">←</span> All interns
+              <button type="button" className="imc-back" onClick={() => { setShowDetail(false); setSelectedId(null); }}>
+                <Icon name="menu" size={14} /> Back to the list
               </button>
-              <span className="imc-head-t"><small>Intern profile</small><b>{selected.name}</b></span>
+              <span className="imc-head-t"><b>{selected.name}</b><small>Intern profile</small></span>
             </div>
             <InternProfile
               key={selected.id} u={selected} records={records} today={today} canViewFiles={canViewFiles}
@@ -3720,10 +3720,12 @@ const NOTIF_PAGES = {
   },
   admin: {
     nfc_print: "/admin/cards", nfc_request: "/admin/cards", nfc_review: "/admin/cards", announcement: "/admin",
+    card_flag: "/admin/htes?tab=kiosks&alerts=1",   // a copied card was caught: open Kiosks with Card alerts
   },
 };
 // title words -> type (for notifications saved before types were used everywhere)
 const NOTIF_GUESS = [
+  [/suspicious card/i, "card_flag"],
   [/time correction/i, "time_correction"], [/work arrangement|wfh/i, "work_mode_request"],
   [/overtime/i, "overtime"], [/online attendance|remote/i, "online_submission"],
   [/\bmovs?\b|requirement|document/i, "mov_submission"], [/\bnfc\b|\bcard\b/i, "nfc_request"],
@@ -3757,6 +3759,7 @@ const NOTIF_KIND = {
   nfc_request: ["card", "orange"], nfc_review: ["card", "orange"], nfc_print: ["print", "orange"],
   dtr_certified: ["check", "green"], supervisor_assigned: ["users", "teal"], announcement: ["bell", "orange"],
   evaluation: ["pencil", "violet"], grade_released: ["chart", "green"],
+  card_flag: ["warn", "red"],
 };
 function notifKind(n) {
   let type = n?.type;
@@ -5965,13 +5968,14 @@ const css = `
   .ix-page .imc-bar i { display: block; height: 100%; background: linear-gradient(90deg, #f2864f, #e8582a); border-radius: 99px; }
   .ix-page .imc-detail { display: flex; flex-direction: column; gap: 12px; }
   /* the header sits at the top of the profile and scrolls with it (it never covers the details) */
-  .ix-page .imc-head { position: static; display: flex; align-items: center; gap: 14px; padding: 10px 14px; margin: 0;
+  .ix-page .imc-head { position: static; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 18px; margin: 0;
     background: #fff; border: 1px solid #eceef1; border-radius: 14px; }
-  .ix-page .imc-back { flex: none; display: inline-flex; align-items: center; gap: 8px; }
-  .ix-page .imc-back span { font-size: 16px; line-height: 1; }
-  .ix-page .imc-head-t { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
-  .ix-page .imc-head-t small { font-size: 11.5px; color: #6b7280; }
-  .ix-page .imc-head-t b { font-size: 15px; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ix-page .imc-back { flex: none; display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; border: 0; background: none; padding: 0;
+    font: inherit; font-size: 13px; font-weight: 600; color: #ea580c; cursor: pointer; }
+  .ix-page .imc-back:hover { text-decoration: underline; }
+  .ix-page .imc-head-t { min-width: 0; display: flex; align-items: baseline; gap: 8px; line-height: 1.25; }
+  .ix-page .imc-head-t small { font-size: 12.5px; font-weight: 500; color: #9ca3af; }
+  .ix-page .imc-head-t b { font-size: 17px; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ix-intern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
   .ix-ic { background: var(--ix-surface, #fff); border-radius: 20px; padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.05); transition: transform .2s, box-shadow .2s; }
   .ix-ic:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 14px 30px rgba(15,23,42,0.09); }

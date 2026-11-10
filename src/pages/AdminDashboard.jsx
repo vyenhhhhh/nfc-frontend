@@ -11,7 +11,7 @@ import Shell, {
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
-import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, useExcused, excusedLabels, CertifyBar, DTR_PICK_CSS } from "./InternDashboard.jsx";
+import { internCss, cardUnify, CS48_CSS, dtrFormHtml, buildDtr, OFFICIAL_HOURS, useHolidays, useExcused, excusedLabels, CertifyBar, DTR_PICK_CSS, useDtrCerts, verifierOf } from "./InternDashboard.jsx";
 import { CardRequests } from "../components/NfcCards.jsx";
 import CardAlerts from "../components/CardAlerts.jsx";
 import { currentFit } from "../fit.js";
@@ -1582,6 +1582,7 @@ export function DTR({ interns, records, canCertify = false }) {
 
   const excusedDays = useExcused(shown?.id || null);   // that intern's approved school-event days
   const holidays = { ...excusedLabels(excusedDays), ...useHolidays(shown?.id || null) };   // days off (university + their HTE)
+  const certs = useDtrCerts(shown?.id || null);   // the supervisor's certifications: signed on the printed DTR
 
   // everything below is for the DTR that was displayed (not the fields being changed)
   const intern = shown ? interns.find((u) => u.id === shown.id) : null;
@@ -1596,6 +1597,7 @@ export function DTR({ interns, records, canCertify = false }) {
     const formHtml = dtrFormHtml({
       name: intern.name, office: "Caraga State University - MAIN", periodLabel: `${monthName} ${range.from} - ${range.to}, ${shown.year}`,
       officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin,
+      verifier: verifierOf(certs, `${month}-${String(range.from).padStart(2, "0")}`, `${month}-${String(range.to).padStart(2, "0")}`, totalHrs),
     });
     view = { mode, month, range, totalHrs, daysPresent, monthName, formHtml };
   }
@@ -2080,22 +2082,28 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
         {hteEvent && !sup && (
           <div className="cm-hte"><Icon name="info" size={14} /> {ev?.hte_name}'s own calendar{ev?.created_by_name ? `, added by ${ev.created_by_name}` : ""}. It applies only to the interns placed there.</div>
         )}
-        <div className="ix-field">
-          <label>Type</label>
-          <div className="cm-seg" role="radiogroup" aria-label="Type">
-            <button type="button" role="radio" aria-checked={type === "holiday"} className={type === "holiday" ? "on h" : ""} onClick={() => setType("holiday")}>Holiday</button>
-            <button type="button" role="radio" aria-checked={type === "non_working"} className={type === "non_working" ? "on n" : ""} onClick={() => setType("non_working")}>Non-working</button>
-            {canWork && <button type="button" role="radio" aria-checked={isWork} className={isWork ? "on work" : ""} onClick={() => setType("working")}>We're open</button>}
-          </div>
-        </div>
-        {!hteEvent && (
+        {hteEvent ? (
           <div className="ix-field">
-            <label>For interns</label>
-            <div className="cm-seg two" role="radiogroup" aria-label="For interns">
-              <button type="button" role="radio" aria-checked={scope === "no_ojt"} className={scope === "no_ojt" ? "on h" : ""} onClick={() => setScope("no_ojt")}>
-                No OJT<small>Time-ins closed for all interns</small></button>
-              <button type="button" role="radio" aria-checked={scope === "school_event"} className={scope === "school_event" ? "on school" : ""} onClick={() => setScope("school_event")}>
-                School event only<small>Shown; interns still time in</small></button>
+            <label>Type</label>
+            <div className="cm-seg" role="radiogroup" aria-label="Type">
+              <button type="button" role="radio" aria-checked={type === "holiday"} className={type === "holiday" ? "on h" : ""} onClick={() => setType("holiday")}>Holiday</button>
+              <button type="button" role="radio" aria-checked={type === "non_working"} className={type === "non_working" ? "on n" : ""} onClick={() => setType("non_working")}>Non-working</button>
+              {canWork && <button type="button" role="radio" aria-checked={isWork} className={isWork ? "on work" : ""} onClick={() => setType("working")}>We're open</button>}
+            </div>
+          </div>
+        ) : (
+          /* university day: one choice. Holiday and Non-working close time-ins for every intern (No OJT);
+             a School event is only shown, interns still time in. Saved as the same type + scope as before. */
+          <div className="ix-field">
+            <label>Type</label>
+            <div className="cm-seg three" role="radiogroup" aria-label="Type">
+              {[["holiday", "Holiday", "No OJT", "h"],
+                ["non_working", "Non-working", "No OJT (e.g. suspension)", "n"],
+                ["school", "School event", "Interns still time in", "school"]].map(([k, l, sub, cls]) => {
+                const on = k === "school" ? scope === "school_event" : scope !== "school_event" && type === k;
+                const pick = () => { if (k === "school") { setScope("school_event"); if (type === "working") setType("non_working"); } else { setScope("no_ojt"); setType(k); } };
+                return <button key={k} type="button" role="radio" aria-checked={on} className={on ? `on ${cls}` : ""} onClick={pick}>{l}<small>{sub}</small></button>;
+              })}
             </div>
           </div>
         )}
@@ -2124,6 +2132,10 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
 }
 
 const CM_CSS = `
+.ix-page .cm-seg.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ix-page .cm-seg.three button { height: auto !important; min-height: 52px !important; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 6px 8px !important; }
+.ix-page .cm-seg.three button small { white-space: normal; text-align: center; line-height: 1.25; }
+
 .ix-page .cm-cols { display: grid; grid-template-columns: minmax(0, 1fr) 330px; grid-template-rows: minmax(0, 1fr); gap: 14px; align-items: stretch; }
 .ix-page .ix-card.cm-cal, .ix-page .ix-card.cm-list { margin: 0 !important; padding: 0 !important; overflow: hidden; display: flex; flex-direction: column; }
 .ix-page .cm-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid #eef0f3; min-height: 56px; box-sizing: border-box; }
@@ -2925,6 +2937,45 @@ export const adminCss = `
 /* ───────────────────────── Kiosks (Accounts → Kiosks) ─────────────────────────
    Each kiosk has its own key. The key is shown once, as a setup link to open on the kiosk device.
    "CCIS" kiosks accept every intern; an HTE kiosk only accepts the interns placed at that HTE. */
+/* one kiosk's time ins and time outs on a day (today first; pick another date to look back) */
+function KioskHistory({ kiosk }) {
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const [date, setDate] = useState(todayStr);
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let off = false;
+    setData(null);
+    fetch(`${API}/admin/kiosks/${kiosk.id}/taps?date=${date}`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => { if (!off) setData(d && Array.isArray(d.taps) ? d : { taps: [] }); })
+      .catch(() => { if (!off) setData({ taps: [] }); });
+    return () => { off = true; };
+  }, [kiosk.id, date]);
+  const photo = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : STORAGE + p);
+  return (
+    <div className="ks-hist">
+      <div className="ks-hist-h">
+        <Icon name="clock" size={16} /><b>Time in and time out</b>
+        {data && <span className="ks-hist-n">{data.ins || 0} in · {data.outs || 0} out</span>}
+        <input type="date" className="ix-input ks-hist-date" value={date} max={todayStr} onChange={(e) => setDate(e.target.value || todayStr)} aria-label="Day" />
+      </div>
+      {!data ? <Spinner /> : data.taps.length === 0 ? (
+        <p className="ks-hist-empty">No taps at this kiosk {date === todayStr ? "today" : "on this day"}.</p>
+      ) : (
+        <ul className="ks-hist-list">
+          {data.taps.map((t) => (
+            <li key={t.key}>
+              <span className="ks-hist-av">{photo(t.photo) ? <img src={photo(t.photo)} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : null}<i>{String(t.name || "?").charAt(0)}</i></span>
+              <span className="ks-hist-who"><b>{t.name}</b><small>{t.student_id || ""}{t.offline ? " · saved offline" : ""}</small></span>
+              <span className={t.action === "CHECK_IN" ? "ks-hist-act in" : "ks-hist-act out"}>{t.action === "CHECK_IN" ? "Time in" : "Time out"}</span>
+              <time>{String(t.time || "").replace(/(\d{1,2}:\d\d):\d\d/, "$1")}</time>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function Kiosks({ interns = [] }) {
   const [data, setData] = useState(null);       // { kiosks, placements }
   const [msg, setMsg] = useState(null);
@@ -2934,7 +2985,26 @@ function Kiosks({ interns = [] }) {
   const [copied, setCopied] = useState(false);
   const [readerPick, setReaderPick] = useState("auto");   // which card reader the kiosk device uses
   const [adding, setAdding] = useState(false);    // false | true (the form) | "done" (the new kiosk's setup link)
-  const [alertsOpen, setAlertsOpen] = useState(false);
+  const loc = useLocation();
+  const navigate = useNavigate();
+  // a "Suspicious card tap" notification opens this page with ?alerts=1: show the card alerts right away
+  const [alertsOpen, setAlertsOpen] = useState(() => new URLSearchParams(window.location.search).get("alerts") === "1");
+  const [openAlerts, setOpenAlerts] = useState(0);
+  useEffect(() => {
+    if (new URLSearchParams(loc.search).get("alerts") === "1") setAlertsOpen(true);
+  }, [loc.search]);
+  // how many card alerts are still open (shown on the Card alerts button)
+  useEffect(() => {
+    const count = () => fetch(`${API}/card-flags`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json()).then((d) => setOpenAlerts((d?.flags || []).filter((f) => !f.resolved_at).length)).catch(() => {});
+    count();
+    return liveRefresh(count);
+  }, [alertsOpen]);
+  const closeAlerts = () => {
+    setAlertsOpen(false);
+    const q = new URLSearchParams(loc.search);
+    if (q.has("alerts")) { q.delete("alerts"); navigate({ search: q.toString() }, { replace: true }); }
+  };
 
   const load = () => fetch(`${API}/admin/kiosks`, { headers: { Accept: "application/json" } })
     .then((r) => r.json()).then((d) => setData(d && Array.isArray(d.kiosks) ? d : { kiosks: [], placements: [] }))
@@ -3044,6 +3114,7 @@ function Kiosks({ interns = [] }) {
         </div>
         {shown && shown.id === cur.id ? linkBox() : <p>Click <b>Show link</b> to see it again and copy it to the kiosk device.</p>}
       </div>
+      <KioskHistory kiosk={cur} />
     </>),
     footer: (<>
       <span className="rq2-result">{cur.placement ? `Only interns placed at ${cur.placement} can tap here.` : "Every intern can tap here."}</span>
@@ -3066,7 +3137,8 @@ function Kiosks({ interns = [] }) {
           searchText={(k) => `${k.name} ${k.placement || ""}`} openLabel={() => "Open"}
           toolbar={(
             <>
-              <button type="button" className="ix-b ghost ks-alertbtn" onClick={() => setAlertsOpen(true)}><Icon name="warn" size={15} /> Card alerts</button>
+              <button type="button" className={openAlerts ? "ix-b ghost ks-alertbtn has" : "ix-b ghost ks-alertbtn"} onClick={() => setAlertsOpen(true)}>
+                <Icon name="warn" size={15} /> Card alerts{openAlerts > 0 && <span className="ks-alertn">{openAlerts}</span>}</button>
               <button type="button" className="ix-b primary" onClick={() => { setAdding(true); setShown(null); }}><Icon name="plus" size={15} /> Add kiosk</button>
             </>
           )}
@@ -3110,7 +3182,7 @@ function Kiosks({ interns = [] }) {
         </Drawer>
       )}
       {alertsOpen && (
-        <Drawer inPage title="Card alerts" kicker="Kiosks" icon="warn" onClose={() => setAlertsOpen(false)}>
+        <Drawer inPage wide title="Card alerts" kicker="Kiosks" icon="warn" onClose={closeAlerts}>
           <div className="nfcr-ca"><CardAlerts /></div>
         </Drawer>
       )}
@@ -3142,6 +3214,25 @@ const KIOSK_CSS = `
   .ks3 { display: flex; flex-direction: column; gap: 12px; }
   .ks3 > .ix-msg, .ks3 > .ix-alert { margin: 0; }
   .ix-page .ks-alertbtn { color: #92400e !important; border-color: #f3c48b !important; background: #fffaf2 !important; }
+  .ks-hist { margin-top: 14px; border: 1px solid #eef0f3; border-radius: 14px; padding: 12px 14px; }
+  .ks-hist-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ks-hist-h svg { color: #e8582a; } .ks-hist-h b { font-size: 14px; }
+  .ks-hist-n { font-size: 12px; color: #6b7280; }
+  .ks-hist-date { margin-left: auto; height: 34px !important; width: auto !important; padding: 0 10px !important; font-size: 13px !important; }
+  .ks-hist-empty { margin: 10px 0 2px; font-size: 13px; color: #6b7280; }
+  .ks-hist-list { list-style: none; margin: 10px 0 0; padding: 0; max-height: 340px; overflow-y: auto; }
+  .ks-hist-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 64px; align-items: center; gap: 10px; padding: 8px 2px; border-top: 1px solid #f3f4f6; }
+  .ks-hist-list li:first-child { border-top: 0; }
+  .ks-hist-av { position: relative; width: 34px; height: 34px; border-radius: 50%; overflow: hidden; background: #fff1ea; color: #c2410c; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+  .ks-hist-av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+  .ks-hist-av i { font-style: normal; }
+  .ks-hist-who { min-width: 0; display: flex; flex-direction: column; }
+  .ks-hist-who b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ks-hist-who small { font-size: 11.5px; color: #9ca3af; }
+  .ks-hist-act { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 99px; }
+  .ks-hist-act.in { background: #e6f7ee; color: #15803d; } .ks-hist-act.out { background: #fff1ea; color: #c2410c; }
+  .ks-hist-list time { font-size: 13px; font-weight: 600; color: #374151; text-align: right; font-variant-numeric: tabular-nums; }
+  .ix-page .ks-alertbtn.has { color: #b91c1c !important; border-color: #fca5a5 !important; background: #fef2f2 !important; }
+  .ix-page .ks-alertn { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; background: #ef4444; color: #fff; font-size: 11.5px; font-weight: 700; display: inline-grid; place-items: center; margin-left: 2px; }
   .ix-page .ks-zero { color: #b45309; font-weight: 700; }
   .ix-page .ks-stat { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700; color: #94a3b8; }
   .ix-page .ks-stat i { width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; }

@@ -19,6 +19,7 @@ import { API } from "../config.js";
 import { fileHref, openFile, useFileLinkState } from "../files.js";
 import RequirementForms from "./RequirementForms.jsx";   // blank forms to download and print
 import { MyGrade } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
+import { Pager } from "../components/ReviewQueue.jsx";   // page numbers under a table
 import { ID_OFFICE, CardFace, CardBack, idCardCss, loadCardSettings } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
 
 
@@ -261,6 +262,8 @@ function MyRequests({ user, records }) {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [type, setType] = useState("all");
+  const [page, setPage] = useState(1);   // 10 rows a page, the same pager as the Approvals tables
+  useEffect(() => { setPage(1); }, [filter, type]);
   const [openKey, setOpenKey] = useState(null);
   const go = useNavigate();
 
@@ -369,6 +372,8 @@ function MyRequests({ user, records }) {
   const ofType = type === "all" ? rows : rows.filter((r) => r.kind === type);
   const count = (g) => ofType.filter((r) => groupOf(r) === g).length;
   const shown = filter === "all" ? ofType : ofType.filter((r) => groupOf(r) === filter);
+  const PER_PAGE = 10;
+  const pageRows = shown.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const open = rows.find((r) => r.key === openKey);
 
   // this month's numbers for the side card
@@ -409,10 +414,10 @@ function MyRequests({ user, records }) {
             <div className="rq-empty"><Icon name="inbox" size={22} /><b>{rows.length ? "Nothing here" : "No requests yet"}</b>
               <small>Online attendance, overtime, time corrections and excuses you file will show up here.</small></div>
           ) : (
-            <table>
+            <><div className="rq-tscroll"><table>
               <thead><tr><th>Request</th><th>Filed</th><th>Where it is</th><th>Status</th></tr></thead>
               <tbody>
-                {shown.map((r) => {
+                {pageRows.map((r) => {
                   const st = REQ_STATUS[r.status] || { label: r.status || "—", type: "none" };
                   const g = groupOf(r);
                   return (
@@ -432,7 +437,8 @@ function MyRequests({ user, records }) {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
+            <Pager page={page} total={shown.length} perPage={PER_PAGE} onPage={setPage} /></>
           )}
         </div>
 
@@ -1348,6 +1354,8 @@ const OFFSITE_REASONS = [
   "My card was lost or damaged",
   "Other (explained below)",
 ];
+// a lost or damaged card: the intern was at the office and the supervisor saw them, so "Tasks completed" is optional
+const CARD_LOST = "My card was lost or damaged";
 
 function SubmitOnline({ user }) {
   const [form, setForm] = useState({ date: "", description: "" });
@@ -1362,6 +1370,7 @@ function SubmitOnline({ user }) {
   const offsite = modalityOf(user) === "onsite";
   const [why, setWhy] = useState("");
   const dayLabel = offsite ? "Off-site day" : "Online workday";
+  const tasksOptional = offsite && why === CARD_LOST;
   const [evs, setEvs] = useState([]);
   const [evf, setEvf] = useState({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" });
   const [proof, setProof] = useState(null);
@@ -1434,11 +1443,10 @@ function SubmitOnline({ user }) {
     }
     if (offsite && !why) { setMsg({ type: "error", text: "Choose why you weren't at the office that day." }); setSub(false); return; }
     try {
-      // the reason goes at the start of the description, so the supervisor and coordinator see it when they review
-      const description = offsite ? `Reason: ${why}\n\n${form.description.trim()}` : form.description;
+      // the server puts the reason at the start of the description, so the supervisor and coordinator see it when they review
       const res = await fetch(`${API}/intern/submit-online`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id, ...form, description }),
+        body: JSON.stringify({ user_id: user.id, date: form.date, description: form.description.trim(), ...(offsite ? { reason: why } : {}) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
@@ -1481,9 +1489,9 @@ function SubmitOnline({ user }) {
                 </div>
               )}
               <div className="ix-field so-fill">
-                <label htmlFor="ix-desc">Tasks completed</label>
-                <textarea id="ix-desc" rows={6} value={form.description} required
-                  placeholder="Describe in detail what you worked on that day..."
+                <label htmlFor="ix-desc">Tasks completed{tasksOptional ? " (optional)" : ""}</label>
+                <textarea id="ix-desc" rows={6} value={form.description} required={!tasksOptional} maxLength={500}
+                  placeholder={tasksOptional ? "You may leave this blank if you worked at the office as usual." : "Describe in detail what you worked on that day..."}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
               </div>
               <small className="so-note">Your HTE supervisor confirms it first, then your OJT coordinator approves or rejects it. Approved days count as 8:00 AM – 5:00 PM.</small>
@@ -2318,10 +2326,16 @@ export const CS48_CSS = `
 .cs48 .cs-sig { border-top: 1px solid #000; text-align: center; font-size: 8.5px; margin: 0 4px; padding-top: 1px; }
 .cs48 .cs-ver { margin: 10px 0 24px; font-size: 11px; }
 .cs48 .cs-sup { text-align: center; font-weight: 700; font-size: 11px; margin-top: 4px; }
+.cs48 .cs-ver.has { margin-bottom: 0; }
+.cs48 .cs-vby { position: relative; height: 34px; display: flex; align-items: flex-end; justify-content: center; font-weight: 700; font-size: 10.5px; padding-bottom: 1px; }
+.cs48 .cs-vby img { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); max-height: 38px; max-width: 130px; object-fit: contain; }
+.cs48 .cs-vby span { position: relative; }
+.cs48 .cs-vnote { text-align: center; font-size: 8.5px; font-style: italic; color: #444; margin-top: 2px; }
 .cs48 .cs-supcap { text-align: center; font-style: italic; font-size: 10px; }
 
 /* on-screen only: two copies side by side */
-.cs48-pair { display: flex; gap: 16px; align-items: flex-start; margin-top: 10px; }
+/* the sheets sit on a light gray panel, like the Quarterly Report's page view */
+.cs48-pair { display: flex; gap: 16px; align-items: flex-start; margin-top: 10px; padding: 16px; background: #eef0f3; border: 1px solid #e5e7eb; border-radius: 14px; }
 .cs48-pair > .cs48-card { flex: 1; min-width: 0; padding: 16px 18px; background: var(--ix-surface, #fff); border-radius: 8px; box-shadow: 0 2px 14px rgba(0,0,0,.12); }
 @media (max-width: 1100px) {
   .cs48-pair { flex-direction: column; }
@@ -2337,7 +2351,10 @@ export const t12 = (iso) =>
 export const OFFICIAL_HOURS = { four: "8:00–12:00, 1:00–5:00", two: "8:00 AM–5:00 PM (lunch 12–1)" };
 
 // rows: { d, amIn, amOut, pmIn, pmOut } or { d, weekend: "SATURDAY" }
-export function dtrFormHtml({ name, office, periodLabel, officialHours = "", rows, totalHrs, undertimeMin = 0, tardyMin = 0 }) {
+// verifier = { name, position, signature (image), date }: set only when the HTE supervisor certified this period in
+// the system (and the hours did not change since). Then the "VERIFIED" line carries their signature and name;
+// otherwise it stays blank, to be signed by hand.
+export function dtrFormHtml({ name, office, periodLabel, officialHours = "", rows, totalHrs, undertimeMin = 0, tardyMin = 0, verifier = null }) {
   const hm = (m) => (m > 0 ? [Math.floor(m / 60), m % 60] : ["", ""]);
   const blank = '<tr><td class="d"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
   const body = rows.map((r) => r.weekend
@@ -2369,9 +2386,37 @@ export function dtrFormHtml({ name, office, periodLabel, officialHours = "", row
     <div class="cs-tot">Total hours rendered: <b>${totalHrs} hrs</b></div>
     <div class="cs-cert">I certify on my honor that the above is true and correct record of the hours of work performed, record of which was made daily at the time of arrival and departure from the office.</div>
     <div class="cs-sig">(Signature of Intern)</div>
-    <div class="cs-ver">VERIFIED as to the prescribed office hours:</div>
-    <div class="cs-sig">(Supervisor / OJT Coordinator)</div>
+    ${verifier ? `<div class="cs-ver has">VERIFIED as to the prescribed office hours:</div>
+    <div class="cs-vby">${verifier.signature ? `<img src="${verifier.signature}" alt="">` : ""}<span>${esc(String(verifier.name || "").toUpperCase())}</span></div>
+    <div class="cs-sig">${esc(verifier.position || "HTE Supervisor")}</div>
+    <div class="cs-vnote">Certified in the system on ${esc(verifier.date || "")}</div>`
+    : `<div class="cs-ver">VERIFIED as to the prescribed office hours:</div>
+    <div class="cs-sig">(Supervisor / OJT Coordinator)</div>`}
   </div>`;
+}
+
+/* The certification of one intern's DTR period, for the printed DTR: the supervisor's name, position, signature
+   and date, or null when the period is not certified (or the hours changed after it was). */
+export function useDtrCerts(internId) {
+  const [certs, setCerts] = useState([]);
+  useEffect(() => {
+    if (!internId) { setCerts([]); return undefined; }
+    const load = () => fetch(`${API}/dtr-certifications?user_id=${internId}`, { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : [])).then((d) => { if (Array.isArray(d)) setCerts(d); }).catch(() => {});
+    load();
+    return liveRefresh(load);
+  }, [internId]);
+  return certs;
+}
+export function verifierOf(certs, from, to, hours) {
+  if (!from || !to) return null;
+  const c = (certs || []).find((x) => String(x.period_from).slice(0, 10) === from && String(x.period_to).slice(0, 10) === to);
+  if (!c) return null;
+  if (hours != null && Math.abs(Number(c.hours) - Number(hours)) > 0.06) return null;   // out of date: sign by hand
+  return {
+    name: c.certified_by_name || "", position: c.certified_by_position || "", signature: c.certified_by_signature || null,
+    date: new Date(String(c.certified_at).replace(" ", "T")).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+  };
 }
 
 /* Builds the DTR rows for one intern and one period.
@@ -2535,11 +2580,21 @@ function MoaNotice({ user, go }) {
 
 /* ───────── DTR certification by the HTE supervisor (shown on every DTR page) ─────────
    intern = the intern; from/to = "YYYY-MM-DD"; canCertify = the signed-in user is a supervisor */
+// "Jul 1 – 31, 2026" / "Jun 16 – Jul 15, 2026"
+const fmtRange = (from, to) => {
+  const a = new Date(`${from}T00:00:00`), b = new Date(`${to}T00:00:00`);
+  const mo = (d) => d.toLocaleDateString("en-US", { month: "short" });
+  return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear()
+    ? `${mo(a)} ${a.getDate()} – ${b.getDate()}, ${b.getFullYear()}`
+    : `${mo(a)} ${a.getDate()} – ${mo(b)} ${b.getDate()}, ${b.getFullYear()}`;
+};
+
 export function CertifyBar({ intern, from, to, canCertify = false, hasDays = true, currentHours = null }) {
   const me = JSON.parse(sessionStorage.getItem("user") || "{}");
   const [certs, setCerts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [ask, setAsk] = useState(null);   // "certify" | "undo": the confirm window
 
   const load = () =>
     fetch(`${API}/dtr-certifications?user_id=${intern.id}`, { headers: { Accept: "application/json" } })
@@ -2567,8 +2622,8 @@ export function CertifyBar({ intern, from, to, canCertify = false, hasDays = tru
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || "Something went wrong.");
-      setMsg({ type: "success", text: data.message });
-      load();
+      setAsk(null);
+      load();   // the bar itself turns green (or back); no second message needed
     } catch (err) {
       setMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
     } finally {
@@ -2595,7 +2650,7 @@ export function CertifyBar({ intern, from, to, canCertify = false, hasDays = tru
           )}
           {canCertify && Number(cert.certified_by) === Number(me.id) && (
             <button type="button" className="ix-b ghost sm" disabled={busy}
-              onClick={() => window.confirm("Remove the certification of this DTR period?") && call("DELETE", `/supervisor/dtr-certifications/${cert.id}`)}>
+              onClick={() => { setMsg(null); setAsk("undo"); }}>
               Undo
             </button>
           )}
@@ -2610,15 +2665,49 @@ export function CertifyBar({ intern, from, to, canCertify = false, hasDays = tru
           </span>
           {canCertify && (
             <button type="button" className="ix-b primary sm" disabled={busy || !ended || !hasDays}
-              onClick={() => window.confirm(`Certify ${intern.name}'s DTR for this period as true and correct?`)
-                && call("POST", "/supervisor/dtr-certifications", { user_id: intern.id, from, to })}>
+              onClick={() => { setMsg(null); setAsk("certify"); }}>
               <Icon name="check" size={14} /> Certify DTR
             </button>
           )}
         </div>
       )}
-      {msg && <Msg msg={msg} />}
+      {msg && !ask && <Msg msg={msg} />}
+      {ask && (
+        <Modal title={ask === "certify" ? "Certify this DTR?" : "Undo the certification?"}
+          sub={`${intern.name} · ${fmtRange(from, to)}`} onClose={() => !busy && setAsk(null)}>
+          <div className="dtr-ask">
+            {ask === "certify" ? (<>
+              <div className="dtr-ask-sum">
+                <span><b>{fmtRange(from, to)}</b><small>Period</small></span>
+                {currentHours !== null && <span><b>{Number(currentHours).toFixed(1)}h</b><small>Total hours</small></span>}
+              </div>
+              <p>By certifying, you confirm that the time-ins and time-outs in this DTR are <b>true and correct</b>. The intern and the OJT coordinator are notified.</p>
+            </>) : (
+              <p>The DTR for this period goes back to <b>not certified</b>. You can certify it again after checking it.</p>
+            )}
+            {msg?.type === "error" && <Msg msg={msg} />}
+            <div className="dtr-ask-btns">
+              <button type="button" className="ix-b ghost" disabled={busy} onClick={() => setAsk(null)}>Cancel</button>
+              {ask === "certify" ? (
+                <button type="button" className="ix-b primary" disabled={busy}
+                  onClick={() => call("POST", "/supervisor/dtr-certifications", { user_id: intern.id, from, to })}>
+                  <Icon name="check" size={14} /> {busy ? "Certifying..." : "Certify DTR"}</button>
+              ) : (
+                <button type="button" className="ix-b primary" disabled={busy}
+                  onClick={() => call("DELETE", `/supervisor/dtr-certifications/${cert.id}`)}>
+                  {busy ? "Removing..." : "Undo certification"}</button>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
       <style>{`
+        .dtr-ask { display: grid; gap: 14px; }
+        .dtr-ask p { margin: 0; font-size: 14px; line-height: 1.55; color: #374151; }
+        .dtr-ask-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+        .dtr-ask-sum span { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: #f8f9fb; border: 1px solid #eef0f3; }
+        .dtr-ask-sum b { font-size: 15px; color: #111827; } .dtr-ask-sum small { font-size: 12px; color: #6b7280; }
+        .dtr-ask-btns { display: flex; justify-content: flex-end; gap: 8px; }
         .dtr-cert { margin: 0 0 14px; }
         .dtr-cert-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 10px;
           background: #fff7ed; color: #9a3412; font-size: 13.5px; }
@@ -2765,6 +2854,7 @@ function MyDtr({ user, records, loading, mode }) {
 
   const excusedDays = useExcused();
   const holidays = { ...excusedLabels(excusedDays), ...useHolidays() };
+  const certs = useDtrCerts(user?.id);   // the supervisor's certifications: signed on the printed DTR
 
   // everything below is for the DTR that was displayed (not the dropdowns being changed)
   let view = null;
@@ -2775,9 +2865,10 @@ function MyDtr({ user, records, loading, mode }) {
       buildDtr({ records, month, from: range.from, to: range.to, mode, holidays, portions: excusedDays.portions || {} });
     const monthName = MONTHS.find((m) => m.value === shown.mon)?.label || "";
     const periodLabel = `${monthName} ${range.from} - ${range.to}, ${shown.year}`;
+    const verifierFor = (h) => verifierOf(certs, `${month}-${String(range.from).padStart(2, "0")}`, `${month}-${String(range.to).padStart(2, "0")}`, h);
     const formHtml = dtrFormHtml({
       name: user.name, office: "Caraga State University - MAIN", periodLabel,
-      officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin,
+      officialHours: OFFICIAL_HOURS[mode], rows: formRows, totalHrs, tardyMin, undertimeMin, verifier: verifierFor(totalHrs),
     });
     view = { month, range, totalHrs, daysPresent, monthName, formHtml };
   }
@@ -3042,19 +3133,7 @@ function NfcApply({ user, records = [] }) {
   };
   const tapTime = (t) => new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
   const cardUser = { ...user, ...(me || {}) };
-  // the valid date, coordinator, signature and contact the admin saved (the server's copy: this browser has none)
-  const [settings, setCardSettings] = useState(loadCardSettings);
-  useEffect(() => {
-    let off = false;
-    fetch(`${API}/id-card-settings`, { headers: { Accept: "application/json" } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (off || !d?.settings) return;
-        setCardSettings((x) => ({ ...x, ...Object.fromEntries(Object.entries(d.settings).filter(([, v]) => v !== null && v !== undefined && v !== "")) }));
-      })
-      .catch(() => {});
-    return () => { off = true; };
-  }, []);
+  const settings = loadCardSettings();   // the valid date (end of the school year)
   // the card itself is shown only once it's released (claimed); before that, its journey
   const released = hasCard && !active;
   const reached = { none: 0, rejected: 1, pending: 1, approved: 2, printed: 3, linked: 4, issued: 5 }[stage] ?? 0;
@@ -3602,9 +3681,10 @@ export const cardUnify = `
 
 /* DTR paper sheets: flat, with a hairline */
 .ix-content .cs48-pair > .cs48-card {
-  border: 1px solid #f0f2f5;
-  border-radius: 8px;
-  box-shadow: none;
+  border: 0;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 2px 14px rgba(0,0,0,.14);
 }
 
 /* ═════ Hero: dark brown → orange gradient (all users) ═════ */
@@ -4236,7 +4316,8 @@ export const internCss = `
   .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content > * { flex: none; }
   .ix-page .ix-content > .rq-cols { flex: 1 1 0 !important; min-height: 0; align-items: stretch; }
-  .ix-page .rq-cols > .rq-table { display: flex; flex-direction: column; min-height: 0; overflow-y: auto !important; }
+  .ix-page .rq-cols > .rq-table { display: flex; flex-direction: column; min-height: 0; overflow: hidden !important; }
+  .ix-page .rq-table .rq-tscroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   .ix-page .rq-table thead th { position: sticky; top: 0; z-index: 1; }
   .ix-page .rq-cols > .rq-side { min-height: 0; overflow: hidden; }
   .ix-page .rq-side .ix-card.rq-box { padding: 12px 14px !important; }

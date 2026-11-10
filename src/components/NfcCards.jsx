@@ -6,7 +6,7 @@ import CardAlerts from "./CardAlerts.jsx";
 import logo from "../assets/logo.png";          // CCIS logo (right side of the ID)
 import csuLogo from "../assets/csu-logo.png";   // CSU seal (left side of the ID)
 import campus from "../assets/campus.jpg";      // faded background of the ID
-import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh, Inbox, OA_CSS, OaHistory, Drawer } from "./DashKit.jsx";
+import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh, Inbox, OA_CSS, OaHistory } from "./DashKit.jsx";
 import { API } from "../config.js";
 import { createHelperReader } from "../kioskReaders.js";
 import ReviewQueue from "./ReviewQueue.jsx";   // the same table + drawer layout as the Approvals pages
@@ -456,15 +456,13 @@ function History({ requests, loading }) {
 
 /* ───────────────────────── the card itself ─────────────────────────
    CR80 size (54mm x 85.6mm, portrait). The card UID is never printed: anyone who saw it could tap for this intern. */
-const CARD_KEY = "mytrack.idcard";
 const defaultValid = () => {                       // end of the school year: June 30
   const d = new Date(); const y = d.getMonth() >= 5 ? d.getFullYear() + 1 : d.getFullYear();
   return `${y}-06-30`;
 };
-export const loadCardSettings = () => {
-  try { return { valid: defaultValid(), coordinator: "", signature: "", contact: "", ...JSON.parse(localStorage.getItem(CARD_KEY) || "{}") }; }
-  catch { return { valid: defaultValid(), coordinator: "", signature: "", contact: "" }; }
-};
+// no "Card settings" page: the valid date is the end of the school year, and the coordinator's name,
+// signature and office contact are added in the printing app (e.g. Canva) with the CSV and photos
+export const loadCardSettings = () => ({ valid: defaultValid(), coordinator: "", signature: "", contact: "" });
 const longDate = (v) => {
   const d = new Date(v + (String(v).length === 10 ? "T00:00:00" : ""));
   return !v || isNaN(d) ? "—" : d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
@@ -631,56 +629,8 @@ export function CardRequests({ requests, interns, onChanged }) {
   const [uids, setUids] = useState({});                 // request id -> typed / scanned UID
   const [scanningId, setScanningId] = useState(null);
   const buffer = useRef("");
-  // valid date, coordinator name, signature and office contact (preview + CSV).
-  // Saved on the server, so every computer (and your partner's laptop) shows the same card;
-  // this browser keeps a copy so the preview shows right away.
-  const [settings, setSettings] = useState(loadCardSettings);
-  const [saveState, setSaveState] = useState("");   // "" | saving | saved | error
-  const saveTimer = useRef(null);
-  useEffect(() => {
-    fetch(`${API}/admin/settings/id-card`, { headers: { Accept: "application/json" } })
-      .then((r) => r.json())
-      .then((d) => {
-        if (!d?.settings) return;
-        setSettings((x) => {
-          const n = { ...x, ...Object.fromEntries(Object.entries(d.settings).filter(([, v]) => v !== null && v !== undefined)) };
-          if (!n.valid) n.valid = x.valid;
-          try { localStorage.setItem(CARD_KEY, JSON.stringify(n)); } catch { /* ignore */ }
-          return n;
-        });
-      })
-      .catch(() => {});
-    return () => clearTimeout(saveTimer.current);
-  }, []);
-  const saveToServer = (n) => {
-    clearTimeout(saveTimer.current);
-    setSaveState("saving");
-    saveTimer.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`${API}/admin/settings/id-card`, {
-          method: "PUT", headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ valid: n.valid || null, coordinator: n.coordinator || "", contact: n.contact || "", signature: n.signature || "" }),
-        });
-        setSaveState(res.ok ? "saved" : "error");
-      } catch { setSaveState("error"); }
-    }, 700);
-  };
-  const setS = (k, v) => setSettings((x) => {
-    const n = { ...x, [k]: v };
-    try { localStorage.setItem(CARD_KEY, JSON.stringify(n)); } catch { /* private window: keep it for this visit only */ }
-    saveToServer(n);
-    return n;
-  });
-  const [sigMsg, setSigMsg] = useState("");
-  const [showSettings, setShowSettings] = useState(false);   // the "Card settings" drawer
-  const pickSignature = (e) => {
-    const f = e.target.files?.[0]; e.target.value = "";
-    if (!f) return;
-    if (!f.type.startsWith("image/") || f.size > 600 * 1024) { setSigMsg("Use a PNG or JPG under 600 KB."); return; }
-    const r = new FileReader();
-    r.onload = () => { setSigMsg(""); setS("signature", r.result); };
-    r.readAsDataURL(f);
-  };
+  // what every card shows: the valid date (end of the school year); the rest is added in the printing app
+  const settings = loadCardSettings();
 
   // the NFC reader "types" the card UID and presses Enter
   useEffect(() => {
@@ -856,9 +806,6 @@ export function CardRequests({ requests, interns, onChanged }) {
             <Icon name="download" size={15} /> {busy === "photos" ? "Preparing..." : "Photos"}
           </button>
         )}
-        <button type="button" className="ix-b ghost" onClick={() => setShowSettings(true)} title="Valid date, coordinator, signature and office contact printed on every card">
-          <Icon name="settings" size={15} /> Card settings
-        </button>
       </>
     );
   };
@@ -944,46 +891,6 @@ export function CardRequests({ requests, interns, onChanged }) {
         searchText={(x) => `${x.u.name} ${x.u.email} ${x.u.student_id || ""} ${x.u.program || ""} ${x.u.placement || ""}`}
         toolbar={toolbar} bulk={bulk} drawer={drawer} openLabel={() => "View"} />
 
-      {/* what every card shows: saved on the server (the interns' card page and every computer use the same) */}
-      {showSettings && (
-        <Drawer inPage icon="settings" kicker="Card Requests" title="Card settings" onClose={() => setShowSettings(false)}
-          footer={(close) => (<>
-            <span className="cs-save">{saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : saveState === "error" ? "Couldn't save. Check the server." : "Changes save by themselves."}</span>
-            <button type="button" className="ix-b primary" onClick={close}>Done</button>
-          </>)}>
-          <div className="cs-form">
-            <div className="ix-field">
-              <label htmlFor="cs-valid">Valid until</label>
-              <input id="cs-valid" type="date" className="ix-input" value={settings.valid || ""} onChange={(e) => setS("valid", e.target.value)} />
-            </div>
-            <div className="ix-field">
-              <label htmlFor="cs-coord">OJT coordinator (name on the back)</label>
-              <input id="cs-coord" type="text" className="ix-input" maxLength={120} placeholder="Jhoanna Victoria S. Pitao, MSc" value={settings.coordinator || ""} onChange={(e) => setS("coordinator", e.target.value)} />
-            </div>
-            <div className="ix-field">
-              <label htmlFor="cs-contact">Office contact (back of the card)</label>
-              <input id="cs-contact" type="text" className="ix-input" maxLength={160} value={settings.contact || ""} onChange={(e) => setS("contact", e.target.value)} />
-            </div>
-            <div className="ix-field">
-              <label>Coordinator's signature</label>
-              <div className="cs-sig">
-                {settings.signature ? <img src={settings.signature} alt="Signature" /> : <span>No signature yet</span>}
-                <label className="ix-b ghost sm">Upload<input type="file" accept="image/png,image/jpeg" hidden onChange={pickSignature} /></label>
-                {settings.signature && <button type="button" className="ix-b ghost sm" onClick={() => setS("signature", "")}>Remove</button>}
-              </div>
-              <small className="cs-hint">{sigMsg || "A PNG with a clear background looks best. Under 600 KB."}</small>
-            </div>
-            <CardFan u={{ name: "Juan S. Dela Cruz", first_name: "Juan", last_name: "Dela Cruz", student_id: "221-00123", program: "BSIT 4" }} settings={settings} />
-          </div>
-        </Drawer>
-      )}
-      <style>{`.cs-form { display: flex; flex-direction: column; gap: 14px; min-height: 100%; }
-        .cs-form .idq-fan { min-height: 260px; }
-        .cs-sig { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .cs-sig img { height: 44px; max-width: 160px; object-fit: contain; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px; background: #fff; }
-        .cs-sig > span { font-size: 12.5px; color: #94a3b8; }
-        .cs-hint { font-size: 12px; color: #64748b; }
-        .cs-save { margin-right: auto; font-size: 12.5px; color: #64748b; }`}</style>
     </div>
   );
 }
