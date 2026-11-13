@@ -2656,6 +2656,12 @@ export function CertifyBar({ intern, from, to, canCertify = false, hasDays = tru
           )}
         </div>
       ) : (
+        !hasDays ? (
+        <div className="dtr-cert-row none">
+          <Icon name="info" size={18} />
+          <span>No days present in this period, so there is nothing to certify yet.</span>
+        </div>
+        ) : (
         <div className="dtr-cert-row">
           <Icon name="info" size={18} />
           <span>
@@ -2670,6 +2676,7 @@ export function CertifyBar({ intern, from, to, canCertify = false, hasDays = tru
             </button>
           )}
         </div>
+        )
       )}
       {msg && !ask && <Msg msg={msg} />}
       {ask && (
@@ -2712,6 +2719,7 @@ export function CertifyBar({ intern, from, to, canCertify = false, hasDays = tru
         .dtr-cert-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 10px;
           background: #fff7ed; color: #9a3412; font-size: 13.5px; }
         .dtr-cert-row.ok { background: #ecfdf5; color: #065f46; }
+        .dtr-cert-row.none { background: #f3f4f6; color: #4b5563; }
         .dtr-cert-changed { flex-basis: 100%; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #b45309; }
         .dtr-cert-row > span { flex: 1; min-width: 200px; }
         .dtr-cert .ix-msg { margin-top: 8px; }
@@ -2941,6 +2949,7 @@ function MyDtr({ user, records, loading, mode }) {
               intern={user}
               from={`${view.month}-${String(view.range.from).padStart(2, "0")}`}
               to={`${view.month}-${String(view.range.to).padStart(2, "0")}`}
+              hasDays={view.daysPresent > 0}
               currentHours={view.totalHrs}
             />
             {loading ? <Spinner /> : (

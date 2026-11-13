@@ -2015,6 +2015,15 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
   const [description, setDescription] = useState(ev ? ev.description || "" : workFrom ? `Our HTE works on ${workFrom.title}.` : "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  // HTE day: changing the type also changes the title / description the system filled in (never what was typed)
+  const AUTO_T = { working: "Office open as usual", non_working: "Office closed", holiday: "" };
+  const autoDesc = (t) => (t === "working" && workFrom ? `Our HTE works on ${workFrom.title}.` : "");
+  const pickHteType = (t) => {
+    const was = type;
+    setType(t);
+    if (!title.trim() || title === AUTO_T[was]) setTitle(AUTO_T[t]);
+    if (!description.trim() || description === autoDesc(was)) setDescription(autoDesc(t));
+  };
   const d = new Date(date + "T00:00:00");
   const dateTitle = isNaN(d) ? "New event" : d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
@@ -2086,9 +2095,9 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
           <div className="ix-field">
             <label>Type</label>
             <div className="cm-seg" role="radiogroup" aria-label="Type">
-              <button type="button" role="radio" aria-checked={type === "holiday"} className={type === "holiday" ? "on h" : ""} onClick={() => setType("holiday")}>Holiday</button>
-              <button type="button" role="radio" aria-checked={type === "non_working"} className={type === "non_working" ? "on n" : ""} onClick={() => setType("non_working")}>Non-working</button>
-              {canWork && <button type="button" role="radio" aria-checked={isWork} className={isWork ? "on work" : ""} onClick={() => setType("working")}>We're open</button>}
+              <button type="button" role="radio" aria-checked={type === "holiday"} className={type === "holiday" ? "on h" : ""} onClick={() => pickHteType("holiday")}>Holiday</button>
+              <button type="button" role="radio" aria-checked={type === "non_working"} className={type === "non_working" ? "on n" : ""} onClick={() => pickHteType("non_working")}>Non-working</button>
+              {canWork && <button type="button" role="radio" aria-checked={isWork} className={isWork ? "on work" : ""} onClick={() => pickHteType("working")}>We're open</button>}
             </div>
           </div>
         ) : (
