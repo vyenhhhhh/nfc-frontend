@@ -2,7 +2,7 @@
 // The OJT coordinator's workspace: reviews online attendance + MOVs, manages NFC cards,
 // monitors interns, and prints DTRs / consolidated reports.
 import { createPortal } from "react-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   navWithTabs,
@@ -580,14 +580,14 @@ export function AssignSupervisors({ interns, supervisors, records = [], online =
               </div>
               {adding && (
                 <div className="sv2-pick add">
-                  <select className="ix-select" value={addPick} onChange={(e) => setAddPick(e.target.value)} aria-label="Intern to add">
-                    <option value="">Choose an intern…</option>
-                    {others.map((i) => (
-                      <option key={i.id} value={String(i.id)}>
-                        {sameHte(i, cur) === true ? "✓ " : ""}{i.name}{i.placement ? ` — ${i.placement}` : ""}{i.supervisor_id ? ` (now: ${supById(i.supervisor_id)?.name || "another"})` : " (no supervisor)"}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchPick value={addPick} onChange={setAddPick} label="Intern to add"
+                    placeholder="Search or choose an intern (name, student ID or HTE)…"
+                    items={others.map((i) => ({
+                      value: String(i.id),
+                      label: `${sameHte(i, cur) === true ? "✓ " : ""}${i.name}`,
+                      sub: `${i.placement || "No HTE"}${i.supervisor_id ? ` · now: ${supById(i.supervisor_id)?.name || "another"}` : " · no supervisor"}`,
+                      find: `${i.name} ${i.student_id || ""} ${i.placement || ""}`,
+                    }))} />
                   <button type="button" className="ix-b primary sm" disabled={!addPick || busy !== null}
                     onClick={() => save(interns.find((i) => String(i.id) === addPick), String(cur.id))}>
                     {busy && String(busy) === addPick ? "Saving..." : "Assign"}
@@ -629,6 +629,88 @@ export function AssignSupervisors({ interns, supervisors, records = [], online =
   );
 }
 
+/* A dropdown you can type in: type part of a name, student ID or HTE to narrow the list, then click one
+   (or use ↑ ↓ and Enter). items = [{ value, label, sub, find }]; value = the chosen item's value ("" = none).
+   The box is the same search box as the other pages. The list floats above the page (like a normal dropdown),
+   so the card's border never cuts it off; it opens upward when there is no room below. */
+function SearchPick({ items, value, onChange, placeholder, label }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const [pos, setPos] = useState(null);
+  const box = useRef(null);
+  const pop = useRef(null);
+  const chosen = items.find((x) => x.value === value);
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = items.filter((x) => words.every((w) => `${x.label} ${x.sub || ""} ${x.find || ""}`.toLowerCase().includes(w)));
+
+  // where the floating list goes: under the box, or above it when the screen has no room below
+  const place = () => {
+    const r = box.current?.getBoundingClientRect();
+    if (!r) return;
+    const below = window.innerHeight - r.bottom - 12, above = r.top - 12;
+    const up = below < 220 && above > below;
+    setPos({ left: r.left, width: r.width, top: up ? null : r.bottom + 6, bottom: up ? window.innerHeight - r.top + 6 : null,
+      max: Math.max(160, Math.min(300, up ? above : below)) });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const off = (e) => {
+      if (box.current?.contains(e.target) || pop.current?.contains(e.target)) return;
+      setOpen(false); setQ("");
+    };
+    document.addEventListener("mousedown", off);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);   // the page panel scrolls too: keep the list under the box
+    return () => {
+      document.removeEventListener("mousedown", off);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
+  // the highlighted row stays in view while using ↑ ↓
+  useEffect(() => { pop.current?.querySelector("li.hi")?.scrollIntoView({ block: "nearest" }); }, [hi]);
+
+  const choose = (x) => { onChange(x.value); setQ(""); setOpen(false); };
+  const key = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHi((h) => Math.min(h + 1, list.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); if (open && list[hi]) choose(list[hi]); }
+    else if (e.key === "Escape") { setOpen(false); setQ(""); }
+  };
+
+  return (
+    <div className={`ix-search sp-box${open ? " open" : ""}`} ref={box} onClick={() => box.current?.querySelector("input")?.focus()}>
+      <Icon name="search" size={15} />
+      <input type="text" role="combobox" aria-expanded={open} aria-label={label}
+        placeholder={chosen ? "" : placeholder}
+        value={open ? q : chosen ? `${chosen.label} · ${chosen.sub || ""}` : ""}
+        onFocus={() => { setOpen(true); setHi(0); }}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); setHi(0); if (value) onChange(""); }}
+        onKeyDown={key} />
+      {(q || value) && (
+        <button type="button" className="sp-clear" aria-label="Clear" onMouseDown={(e) => { e.preventDefault(); setQ(""); onChange(""); }}>×</button>
+      )}
+      {open && pos && createPortal(
+        <ul className="sp-list" role="listbox" ref={pop}
+          style={{ left: pos.left, width: pos.width, top: pos.top ?? "auto", bottom: pos.bottom ?? "auto", maxHeight: pos.max }}>
+          {list.length === 0 ? <li className="sp-none">No intern matches "{q}"</li> : list.map((x, n) => (
+            <li key={x.value} role="option" aria-selected={x.value === value}
+              className={`${n === hi ? "hi" : ""}${x.value === value ? " on" : ""}`}
+              onMouseEnter={() => setHi(n)} onMouseDown={(e) => { e.preventDefault(); choose(x); }}>
+              <b>{x.label}</b>{x.sub && <small>{x.sub}</small>}
+            </li>
+          ))}
+        </ul>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 const SV2_CSS = `
 .sv2-warn-ic { flex: none; width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: #e9f8ef; color: #16a34a; }
 .sv2-warn-ic.hot { background: #fff4e5; color: #d97706; }
@@ -639,11 +721,19 @@ const SV2_CSS = `
 .sv3-alert b { font-size: 14px; color: #92400e; } .sv3-alert small { font-size: 12.5px; color: #a16207; }
 .sv3-bar { margin-bottom: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .sv3-bar .mon-search { flex: 1 1 320px; }
-.ix-page .sv3-cards { align-content: start; align-items: start; flex: none !important; }
+.ix-page .sv3-cards { align-content: start; align-items: stretch; flex: none !important; }
+/* every card in a row is as tall as the tallest one (e.g. one with an extra "different HTE" tag):
+   the photo, name and badge stay at the top, the numbers and the bar at the bottom */
+.ix-page .sv3-card { display: flex; flex-direction: column; }
+.ix-page .sv3-card .ix-ic-top { align-items: flex-start; margin-bottom: 14px; }
+.ix-page .sv3-card .ix-ic-stats { margin-top: auto !important; }
 .ix-page .sv3-card .ix-ic-id > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .imc-tag.sv3-moa.ok { background: #dcfce7; color: #15803d; } .imc-tag.sv3-moa.amber { background: #fff4e0; color: #b45309; }
 .imc-tag.sv3-moa.red { background: #fdeaea; color: #b91c1c; } .imc-tag.sv3-moa.none { background: #f1f5f9; color: #64748b; }
 .sv3-panel { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px !important; }
+/* one supervisor open: the interns card reaches the bottom of the page at any window size (also full screen) */
+.ix-page.lay2 .grp-body > .imc-detail:has(> .sv3-panel) { flex: 1 0 auto; display: flex; flex-direction: column; }
+.ix-page.lay2 .imc-detail > .sv3-panel:last-of-type { flex: 1 0 auto; }
 .sv3-warnhead { display: flex; align-items: center; gap: 14px; }
 .sv3-warnhead > div { display: flex; flex-direction: column; gap: 3px; } .sv3-warnhead b { font-size: 16px; color: #0f172a; } .sv3-warnhead small { font-size: 12.5px; color: #64748b; }
 .sv3-h { margin: 4px 0 -4px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #6b7280; }
@@ -688,6 +778,21 @@ const SV2_CSS = `
 .sv2-pick { display: flex; align-items: center; gap: 8px; padding: 0 6px 12px 54px; }
 .sv2-pick span { font-size: 12.5px; font-weight: 600; color: #475569; flex: none; }
 .sv2-pick .ix-select { flex: 1; min-width: 0; }
+/* the type-to-search intern picker: the same search box as the other pages, a floating list */
+.sv2-pick .sp-box { flex: 1; min-width: 0; cursor: text; }
+.sv2-pick .sp-box input { flex: 1; min-width: 0; }
+.sp-clear { flex: none; width: 22px; height: 22px; border: 0; border-radius: 50%; background: #f1f5f9; color: #64748b;
+  font-size: 15px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.sp-clear:hover { background: #fde4d8; color: #e8582a; }
+.sp-list { position: fixed; z-index: 1000; margin: 0; padding: 4px; list-style: none; overflow-y: auto;
+  background: #fff; border: 1px solid #e7e5e4; border-radius: 10px; box-shadow: 0 12px 32px rgba(15,23,42,.16);
+  font-family: inherit; scrollbar-width: thin; scrollbar-color: #e5d5cb transparent; }
+.sp-list li { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; border-radius: 7px; cursor: pointer; line-height: 1.35; }
+.sp-list li b { font-size: 13px; font-weight: 600; color: #1f2937; white-space: nowrap; }
+.sp-list li small { font-size: 12px; color: #78716c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-list li.hi { background: #fff4ec; }
+.sp-list li.on b { color: #e8582a; }
+.sp-list li.sp-none { cursor: default; color: #78716c; font-size: 12.5px; }
 .sv2-pick.add { padding: 0; }
 .sv2-empty { margin: 0; font-size: 13px; color: #94a3b8; }
 @media (max-width: 1200px) { .sv3-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

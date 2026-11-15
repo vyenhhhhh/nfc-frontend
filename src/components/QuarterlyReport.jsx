@@ -199,6 +199,8 @@ export default function QuarterlyReport({ user, supervisors = [], interns = [] }
       </div>
       <Msg msg={lmsg} />
       {!list ? <Spinner /> : (
+        /* the same bordered table card as the other pages (Add Accounts, Records) */
+        <div className="ix-card flush rec-card qr-table">
         <Table
           headers={["Quarter", "Status", "Last saved", ""]}
           empty="No quarterly reports yet. Click New quarterly report to start one."
@@ -216,6 +218,7 @@ export default function QuarterlyReport({ user, supervisors = [], interns = [] }
             ];
           })}
         />
+        </div>
       )}
       {adding && (
         <Modal title="New quarterly report" sub="Pick the quarter the report is for." onClose={() => setAdding(null)}>
@@ -1418,6 +1421,10 @@ ${content}
 }
 
 const QR_CSS = `
+/* the list of reports: the table card reaches the bottom of the page, like the other tables */
+.ix-page.lay2 .qr:has(> .qr-table) { display: flex; flex-direction: column; flex: 1 0 auto; }
+.ix-page.lay2 .qr > .qr-table { flex: 1 0 auto; margin: 0 !important; }
+.ix-page .qr-table .ix-table td { vertical-align: middle; }
 .qr-lacts { display: inline-flex; gap: 8px; justify-content: flex-end; width: 100%; }
 .qr-view { background: #eef0f3; border: 1px solid #e5e7eb; border-radius: 14px; padding: 14px 16px 4px; margin-top: 12px; overflow-x: auto; }
 .qr-view-n { text-align: center; font-size: 12px; font-weight: 600; color: #6b7280; margin-bottom: 8px; }

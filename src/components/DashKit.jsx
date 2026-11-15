@@ -3349,6 +3349,9 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
     document.body.appendChild(a); a.click(); a.remove();
   };
 
+  // a filter or the search clicked while one intern's profile is open: go back to the (filtered) list
+  const toList = () => { setShowDetail(false); setSelectedId(null); };
+
   return (
     <>
       <PageHeader title="Monitor Interns" sub="Real-time status of all interns." live />
@@ -3356,16 +3359,16 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
         <div className="mon-bar">
           <div className="ix-search mon-search">
             <Icon name="search" size={15} />
-            <input type="text" placeholder="Search name, ID or placement..." value={q} onChange={(e) => setQ(e.target.value)} />
+            <input type="text" placeholder="Search name, ID or placement..." value={q} onChange={(e) => { setQ(e.target.value); toList(); }} />
           </div>
           {!hideHte && (
-            <select className="ix-select mon-filter" value={hte} onChange={(e) => setHte(e.target.value)} aria-label="Filter by HTE">
+            <select className="ix-select mon-filter" value={hte} onChange={(e) => { setHte(e.target.value); toList(); }} aria-label="Filter by HTE">
               <option value="all">All HTEs</option>
               {htes.map((h) => <option key={h} value={h}>{h}</option>)}
             </select>
           )}
           {!hideArr && (
-            <select className="ix-select mon-filter" value={arr} onChange={(e) => setArr(e.target.value)} aria-label="Filter by modality or scope">
+            <select className="ix-select mon-filter" value={arr} onChange={(e) => { setArr(e.target.value); toList(); }} aria-label="Filter by modality or scope">
               <option value="all">All modalities</option>
               <optgroup label="Modality">
                 {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={`m:${k}`}>{l} ({rows.filter((x) => modalityOf(x.u) === k).length})</option>)}
@@ -3384,18 +3387,18 @@ export function InternMonitor({ interns, records, loading, onRefresh, recordsPat
         <div className="mon-bar2">
           <div className="so-tabs" role="tablist" aria-label="Filter by status">
             {[["all", "All", rows.length], ["in", "On duty", inCount], ["out", "Not in", rows.length - inCount], ["attn", "Needs attention", rows.filter((x) => x.flags.length).length]].map(([k, l, n]) => (
-              <button key={k} type="button" role="tab" aria-selected={status === k} className={status === k ? "on" : ""} onClick={() => setStatus(k)}>{l} · {n}</button>
+              <button key={k} type="button" role="tab" aria-selected={status === k} className={status === k ? "on" : ""} onClick={() => { setStatus(k); toList(); }}>{l} · {n}</button>
             ))}
           </div>
           <div className="so-tabs" role="tablist" aria-label="Filter by program">
             {[["all", "All programs"], ["BSIT", "BSIT"], ["BSCS", "BSCS"], ["BSIS", "BSIS"]].map(([k, l]) => (
-              <button key={k} type="button" role="tab" aria-selected={program === k} className={program === k ? "on" : ""} onClick={() => setProgram(k)}>
+              <button key={k} type="button" role="tab" aria-selected={program === k} className={program === k ? "on" : ""} onClick={() => { setProgram(k); toList(); }}>
                 {l}{k !== "all" ? ` · ${rows.filter((x) => programKey(x.u.program) === k).length}` : ""}</button>
             ))}
           </div>
           <div className="so-tabs mon-group" role="tablist" aria-label="Group interns">
             {[["none", "List"], ["hte", "By HTE"]].map(([k, l]) => (
-              <button key={k} type="button" role="tab" aria-selected={groupBy === k} className={groupBy === k ? "on" : ""} onClick={() => setGroupBy(k)}>{l}</button>
+              <button key={k} type="button" role="tab" aria-selected={groupBy === k} className={groupBy === k ? "on" : ""} onClick={() => { setGroupBy(k); toList(); }}>{l}</button>
             ))}
           </div>
         </div>
@@ -3716,10 +3719,12 @@ const AN_CSS = `
 .ix-page .an-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .ix-page .an-bar .an-search { margin-left: auto; }
 /* the list: one row per announcement */
-.ix-page .an-list2 { flex: none !important; background: #fff; border: 1px solid #e8ebf0; border-radius: 14px; overflow: hidden; }
+.ix-page .an-list2 { flex: 1 0 auto !important; background: #fff; border: 1px solid #e8ebf0; border-radius: 14px; overflow: hidden; }
 .ix-page .an-row { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto; gap: 18px; align-items: start; padding: 14px 18px; border-bottom: 1px solid #f1f3f6; }
 .ix-page .an-row:last-child { border-bottom: 0; }
+.ix-page .an-row:nth-child(even) { background: #fffdfb; }   /* every other row: the same tint as the tables */
 .ix-page .an-row:hover { background: #fcfcfd; }
+.ix-page .an-list2:has(> .an-empty2) { display: flex; flex-direction: column; justify-content: center; }
 .ix-page .an-when { display: flex; flex-direction: column; gap: 2px; padding-top: 1px; }
 .ix-page .an-when b { font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; }
 .ix-page .an-when small { font-size: 11.5px; color: #15803d; font-weight: 600; }
@@ -4671,6 +4676,12 @@ const FILL_CSS = `
   .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card) > :is(.ix-empty, .dtr-wait, .rq-empty) { flex: 1 0 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
   .ix-page.lay2 .ix-content .ix-card > .gr-wait { flex: 1 0 auto; display: flex; align-items: center; justify-content: center; }
   .ix-page.lay2 .ix-content .cm-items:has(> .cm-empty:only-child) { display: flex; flex-direction: column; justify-content: center; }
+  /* the same for every other "nothing here" or "locked" message that is the last thing in a tall card
+     (e.g. Submit MOV → Post-internship locked): it fills the rest of the card and sits in its middle,
+     while a header above it stays at the top */
+  .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card):has(> :is(.req-locked, [class*="empty"], [class$="-none"]):last-child) { display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card) > :is(.req-locked, [class*="empty"], [class$="-none"]):last-child { margin-top: auto !important; margin-bottom: auto !important; }
+  .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card) > .req-locked:last-child { width: 100%; }
 }
 `;
 
@@ -5401,11 +5412,15 @@ export const uiUnify = `
   /* ───── calmer colours: neutral greys for table headers, striped rows and info bars;
      orange is kept for buttons, active tabs, icons and status tags ───── */
   .ix-page .ix-content .ix-table thead th { background: #f8f9fb !important; color: #64748b !important; }
-  .ix-page .ix-content .ix-table tbody tr:nth-child(even) td { background: var(--ix-surface-2, #fbfbfc) !important; }
+  /* every other row: the same light warm tint as the other tables (HTEs, Progress); gray is kept for the header row */
+  .ix-page .ix-content .ix-table tbody tr:nth-child(even) td { background: #fffdfb !important; }
   .ix-page .ix-content .ix-section > header { background: var(--ix-surface-2, #fafbfc) !important; border-bottom-color: #eef0f3 !important; }
   .ix-page .ix-content :is(.ix-card, .ix-section, .db-card, .db-kpi) { border-color: #e9ebef !important; }
-  .ix-page .ix-content .dl-th { background: #f8f9fb !important; color: #64748b !important; }
-  .ix-page .ix-content .dl-item:nth-child(odd) > .dl-tr { background: var(--ix-surface-2, #fbfbfc) !important; }
+  /* the list tables (Requirement list, Due dates & reminders, Report requests): the same header row and
+     row tint as the other tables: gray header, normal capitals; every other row a light warm tint */
+  .ix-page .ix-content .dl-th { background: #f6f7f9 !important; color: #4b5563 !important; font-size: 12.5px !important; font-weight: 600 !important;
+    text-transform: none !important; letter-spacing: 0 !important; border-bottom: 1px solid #e3e6ea !important; }
+  .ix-page .ix-content .dl-item:nth-child(odd) > .dl-tr { background: #fffdfb !important; }
   .ix-page .ix-content .dl-item.open > .dl-tr { background: #fff6f1 !important; }
   .ix-page .ix-content .dl-table, .ix-page .ix-content .dl-tr { border-color: #eef0f3 !important; }
   .ix-page .ix-content .dl-who { background: var(--ix-surface-2, #fafbfc) !important; border-top-color: #e9ebef !important; }
@@ -5731,6 +5746,14 @@ export const uiUnify = `
     text-transform: none !important; letter-spacing: 0 !important; padding: 13px 16px !important; border-bottom: 1px solid #e3e6ea !important; }
   .ix-page.lay2 .ix-table tbody td { padding: 15px 16px !important; border-bottom: 1px solid #edf0f3 !important; font-size: 13px; }
   .ix-page.lay2 .ix-table tbody tr:hover td { background: #fafafb !important; }
+  /* the other list tables (Approvals, Requirements → Progress / grid, HTE list, an intern's requirement phases)
+     get the same gray header row as the tables above */
+  .ix-page.lay2 :is(.rq2-table, .ct-t, .ipa-tb) thead th { background: #f6f7f9 !important; border-bottom: 1px solid #e3e6ea !important; box-shadow: none !important; }
+  .ix-page.lay2 :is(.rq2-table, .ct-t:not(.ct-grid), .ipa-tb) thead th { color: #4b5563 !important; font-size: 12.5px !important;
+    font-weight: 600 !important; text-transform: none !important; letter-spacing: 0 !important; padding: 13px 16px !important; }
+  /* the table sits edge to edge in its card, like the other tables */
+  .ix-page.lay2 .ix-card.ct-card:has(> table) { padding: 0 !important; overflow: hidden; }
+  .ix-page.lay2 .ct-t:not(.ct-grid) tbody td:first-child, .ix-page.lay2 .ct-t:not(.ct-grid) thead th:first-child { padding-left: 18px !important; }
 
   /* phones and small tablets: the sidebar slides in over the page */
   @media (max-width: 900px) {

@@ -1000,6 +1000,8 @@ export function Accounts({ users, onRefresh, limited = false }) {
   const [pickRole, setPickRole] = useState(false);   // the "What kind of account?" window
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
+  const [accPage, setAccPage] = useState(1);   // the users table shows 10 a page
+  useEffect(() => { setAccPage(1); }, [search, roleFilter]);   // a new search or filter starts on page 1
   const [scanning, setScanning] = useState(false);
   const uidBuffer = useRef("");
 
@@ -1191,6 +1193,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
     setSavingEdit(true); setEditMsg(null);
     try {
       const clean = Object.fromEntries(Object.entries(editForm).map(([k, v]) => [k, String(v).trim()]));
+      if (limited) delete clean.uid;   // the coordinator can't link or unlink cards: the card is left as it is
 
       // 1) the details
       const res = await fetch(`${API}/admin/users/${editUser.id}`, {
@@ -1270,6 +1273,10 @@ export function Accounts({ users, onRefresh, limited = false }) {
   // the user shown on the right: the one clicked, or (wide screens) the only one left after a search.
   // Nothing opens by itself.
   const cur = vu || null;   // a table of everyone; clicking a user opens their details
+  const ACC_PER_PAGE = 10;
+  const accPages = Math.max(1, Math.ceil(shownUsers.length / ACC_PER_PAGE));
+  const accPg = Math.min(accPage, accPages);   // e.g. after deleting the last user of the last page
+  const pageUsers = shownUsers.slice((accPg - 1) * ACC_PER_PAGE, accPg * ACC_PER_PAGE);
 
   return (
     <>
@@ -1358,7 +1365,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
           <div className="ix-card flush rec-card acc-table">
             <Table
               headers={cur ? ["User", "Role"] : ["User", "Role", "Email", "ID", "Program / HTE", "Status", ""]}
-              rows={shownUsers.map((u) => cur ? [
+              rows={pageUsers.map((u) => cur ? [
                 <button type="button" className="acc-name" onClick={() => openView(u)}>
                   <Avatar name={u.name} photo={u.photo} size={28} /><strong>{u.name}</strong></button>,
                 <span className={`acc-role-tag ${u.role}`}>{ROLE_NAME[u.role] || u.role}</span>,
@@ -1374,6 +1381,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
               ])}
               empty={users.length ? "No users match your search." : "No users yet."}
             />
+            <Pager page={accPg} total={shownUsers.length} perPage={ACC_PER_PAGE} onPage={setAccPage} />
           </div>
           {cur && (
             <Drawer inPage key={cur.id} icon={editUser ? "pencil" : "user"} kicker={editUser ? "Edit account" : (ROLE_NAME[cur.role] || cur.role)}
@@ -1440,7 +1448,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
                               <span className="ix-photo-badge"><Icon name="camera" size={13} /></span>
                             </label>
                           }
-                          uidField={editIsIntern ? (
+                          uidField={editIsIntern && !limited ? (   /* the NFC card: the admin only (the coordinator doesn't see it) */
                             <>
                               <div className="ix-row-gap">
                                 <input className="uf-input" type="text" readOnly
@@ -3354,20 +3362,23 @@ function EndOfTerm({ users, records, onRefresh }) {
 
   const inRange = (r) => (!f.from || r.date >= f.from) && (!f.to || r.date <= f.to);
   const recsOf = (id) => records.filter((r) => String(r.user_id) === String(id) && inRange(r));
-  const rows = interns.map((u) => {
+  const all = interns.map((u) => {
     const recs = recsOf(u.id);
     const days = [...new Set(recs.map((r) => r.date))].sort();
     const hours = calcHours(recs);
     const required = requiredHoursFor(u.program, u.prior_hours);
     return { u, recs, days, hours, required, done: hours >= required, active: !u.deactivated_at };
-  }).filter(({ u, recs, done, active }) =>
-    (!f.program || programKey(u.program) === f.program)
-    && (!f.placement || (u.placement || "") === f.placement)
+  });
+  // the search, HTE and semester first; the two button rows (Show, Program) count from these
+  const base = all.filter(({ u, recs }) =>
+    (!f.placement || (u.placement || "") === f.placement)
     && (!f.semester || (u.semester || "") === f.semester)
     && (!q.trim() || `${u.name} ${u.student_id || ""} ${u.placement || ""}`.toLowerCase().includes(q.trim().toLowerCase()))
-    && (!(f.from || f.to) || recs.length > 0)
-    && (f.status === "all" || (f.status === "active" && active) || (f.status === "done" && active && done)
-        || (f.status === "notdone" && active && !done) || (f.status === "inactive" && !active)));
+    && (!(f.from || f.to) || recs.length > 0));
+  const statusOk = (st, { done, active }) => st === "all" || (st === "active" && active) || (st === "done" && active && done)
+    || (st === "notdone" && active && !done) || (st === "inactive" && !active);
+  const progOk = (pg, { u }) => !pg || programKey(u.program) === pg;
+  const rows = base.filter((x) => progOk(f.program, x) && statusOk(f.status, x));
 
   const programs = [...new Set(interns.map((u) => programKey(u.program)).filter(Boolean))].sort();
   const places = [...new Set(interns.map((u) => u.placement).filter(Boolean))].sort();
@@ -3430,22 +3441,36 @@ function EndOfTerm({ users, records, onRefresh }) {
   return (
     <div className="ix-card eot">
       <style>{EOT_CSS}</style>
-      <div className="eot-filters">
-        <div className="ix-search mon-search" style={{ gridColumn: "1 / -1", maxWidth: "none" }}>
+      {/* the same filter bar as Interns → All Interns: search and the long lists as dropdowns,
+          the short choices as one-click buttons with their counts */}
+      <div className="mon-bar eot-mbar">
+        <div className="ix-search mon-search">
           <Icon name="search" size={15} />
-          <input type="text" placeholder="Search an intern by name, student ID or HTE..." value={q} onChange={(e) => { setQ(e.target.value); setPicked(new Set()); }} />
+          <input type="text" placeholder="Search name, student ID or HTE..." value={q} onChange={(e) => { setQ(e.target.value); setPicked(new Set()); }} />
         </div>
-        <div className="ix-field"><label>Program</label>
-          <select className="ix-select" value={f.program} onChange={set("program")}><option value="">All programs</option>{programs.map((p) => <option key={p}>{p}</option>)}</select></div>
-        <div className="ix-field"><label>HTE / placement</label>
-          <select className="ix-select" value={f.placement} onChange={set("placement")}><option value="">All</option>{places.map((p) => <option key={p}>{p}</option>)}</select></div>
-        <div className="ix-field"><label>Semester</label>
-          <select className="ix-select" value={f.semester} onChange={set("semester")}><option value="">Any</option><option>1st Semester</option><option>2nd Semester</option></select></div>
-        <div className="ix-field"><label>Show</label>
-          <select className="ix-select" value={f.status} onChange={set("status")}>
-            <option value="active">Active accounts</option><option value="done">Active, hours completed</option>
-            <option value="notdone">Active, hours not completed</option><option value="inactive">Deactivated</option><option value="all">Everyone</option>
-          </select></div>
+        <select className="ix-select mon-filter" value={f.placement} onChange={set("placement")} aria-label="Filter by HTE">
+          <option value="">All HTEs</option>{places.map((p) => <option key={p}>{p}</option>)}
+        </select>
+        <select className="ix-select mon-filter" value={f.semester} onChange={set("semester")} aria-label="Filter by semester">
+          <option value="">All semesters</option><option>1st Semester</option><option>2nd Semester</option>
+        </select>
+        <span className="mon-chip on mon-count">{rows.length} shown</span>
+      </div>
+      <div className="mon-bar2 eot-mbar2">
+        <div className="so-tabs" role="tablist" aria-label="Show">
+          {[["active", "Active"], ["done", "Hours done"], ["notdone", "Not done"], ["inactive", "Deactivated"], ["all", "Everyone"]].map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={f.status === k} className={f.status === k ? "on" : ""}
+              onClick={() => set("status")({ target: { value: k } })}>
+              {l} · {base.filter((x) => progOk(f.program, x) && statusOk(k, x)).length}</button>
+          ))}
+        </div>
+        <div className="so-tabs" role="tablist" aria-label="Filter by program">
+          {[["", "All programs"], ...programs.map((p) => [p, p])].map(([k, l]) => (
+            <button key={k || "all"} type="button" role="tab" aria-selected={f.program === k} className={f.program === k ? "on" : ""}
+              onClick={() => set("program")({ target: { value: k } })}>
+              {l}{k ? ` · ${base.filter((x) => progOk(k, x) && statusOk(f.status, x)).length}` : ""}</button>
+          ))}
+        </div>
       </div>
       <Msg msg={msg} />
       <div className="eot-bar">
@@ -3510,6 +3535,8 @@ const EOT_CSS = `
   .eot-cf-act .ix-b { min-width: 110px; justify-content: center; }
   .ix-page .ix-content .eot { padding: 16px 18px !important; }
   .ix-page .eot-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .ix-page .eot .eot-mbar { margin-bottom: 10px; }
+  .ix-page .eot .eot-mbar2 { margin-bottom: 4px; flex-wrap: wrap; }
   @media (max-width: 1100px) { .ix-page .eot-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 640px) { .ix-page .eot-filters { grid-template-columns: 1fr 1fr; } }
   .ix-page .eot-hint { margin: 8px 0 10px; font-size: 11.5px; color: #94a3b8; }
@@ -3600,15 +3627,18 @@ function ActivityLog() {
   return (
     <div className="al-wrap">
       <style>{ACT_CSS}</style>
-      {/* who: the same segmented switch as the other pages · the search on the right */}
+      {/* the same order as the other pages (Card Requests, Kiosks, Requirements): the search first,
+          then who, as the segmented switch under it */}
+      <div className="al-bar">
+        <label className="al-search"><Icon name="search" size={14} />
+          <input type="search" placeholder="Search a name, an action or a detail" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} aria-label="Search the activity log" /></label>
+      </div>
       <div className="al-bar">
         <div className="so-tabs" role="tablist" aria-label="Filter by role">
           {ROLES.map(([k, l]) => (
             <button key={k} type="button" role="tab" aria-selected={role === k} className={role === k ? "on" : ""} onClick={() => { setRole(k); setPage(1); }}>{l}</button>
           ))}
         </div>
-        <label className="al-search"><Icon name="search" size={14} />
-          <input type="search" placeholder="Search a name, an action or a detail" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} aria-label="Search the activity log" /></label>
       </div>
       <div className="ix-card al-card">
         {!data ? <Spinner /> : (

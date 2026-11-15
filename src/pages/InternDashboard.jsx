@@ -2405,7 +2405,10 @@ export const CS48_CSS = `
 .cs48 .cs-sup { text-align: center; font-weight: 700; font-size: 11px; margin-top: 4px; }
 .cs48 .cs-ver.has { margin-bottom: 0; }
 .cs48 .cs-vby { position: relative; height: 34px; display: flex; align-items: flex-end; justify-content: center; font-weight: 700; font-size: 10.5px; padding-bottom: 1px; }
-.cs48 .cs-vby img { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); max-height: 38px; max-width: 130px; object-fit: contain; mix-blend-mode: multiply; }
+.cs48 .cs-vby img { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); max-height: 38px; max-width: 130px; object-fit: contain; mix-blend-mode: multiply;
+  /* a photo of a signature often has a gray or off-white paper background: turn that background white (it then
+     disappears on the white sheet) and keep the ink dark */
+  filter: grayscale(1) brightness(1.35) contrast(2.2); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .cs48 .cs-vby span { position: relative; }
 .cs48 .cs-vnote { text-align: center; font-size: 8.5px; font-style: italic; color: #444; margin-top: 2px; }
 .cs48 .cs-supcap { text-align: center; font-style: italic; font-size: 10px; }
@@ -2469,7 +2472,7 @@ export function dtrFormHtml({ name, office, periodLabel, officialHours = "", row
     <div class="cs-sig">(Signature of Intern)</div>
     ${verifier ? `<div class="cs-ver has">VERIFIED as to the prescribed office hours:</div>
     <div class="cs-vby">${verifier.signature ? `<img src="${verifier.signature}" alt="">` : ""}<span>${esc(String(verifier.name || "").toUpperCase())}</span></div>
-    <div class="cs-sig">${esc(verifier.position || "HTE Supervisor")}</div>
+    <div class="cs-sig">${esc(verifier.position ? `HTE Supervisor (${verifier.position})` : "HTE Supervisor")}</div>
     <div class="cs-vnote">Certified in the system on ${esc(verifier.date || "")}</div>`
     : `<div class="cs-ver">VERIFIED as to the prescribed office hours:</div>
     <div class="cs-sig">(Supervisor / OJT Coordinator)</div>`}

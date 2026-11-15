@@ -243,6 +243,21 @@ const RQ2_CSS = `
   .ix-page.lay2 .ix-main:has(.rq2-card > .rq2-empty) :is(.grp-body, .ix-content) > .rq2 { flex: 1 1 auto !important; }
   .rq2:has(> .rq2-card > .rq2-empty) > .rq2-card { flex: 1 1 auto; }
 }
+/* every page built on this list (Kiosks, Card Requests, Approvals...), with rows or not: the card reaches the
+   bottom of the page at any window size; the rows stay at the top and the page numbers at the bottom */
+@media (min-width: 761px) {
+  .ix-page.lay2 .ix-main:has(.rq2-card) { display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.rq2-card) > .ix-content { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.rq2-card) > .ix-content > * { flex: none; }
+  .ix-page.lay2 .ix-main:has(.rq2-card) .grp-body { flex: 1 1 auto !important; display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-main:has(.rq2-card) .grp-body > * { flex: none; }
+  /* the page's own wrapper around the list (e.g. Kiosks), then the list, then its card */
+  .ix-page.lay2 .ix-main:has(.rq2-card) :is(.grp-body, .ix-content) > :has(> .rq2) { flex: 1 1 auto !important; display: flex; flex-direction: column; }
+  .ix-page.lay2 .ix-main:has(.rq2-card) :is(.grp-body, .ix-content) > .rq2,
+  .ix-page.lay2 :has(> .rq2) > .rq2 { flex: 1 1 auto !important; }
+  .ix-page.lay2 .rq2 > .rq2-card { flex: 1 1 auto; }
+  .ix-page.lay2 .rq2-card > .rq2-pager { margin-top: auto; }
+}
 .rq2-scroll { overflow-x: auto; }
 .rq2-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* the header row stays on top with a solid white background (rows never show through it) */

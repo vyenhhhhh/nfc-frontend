@@ -884,7 +884,20 @@ export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
       <style>{nfcCss}</style>
       <style>{`.idq2 { display: flex; flex-direction: column; gap: 12px; }
         .idq2 > .ix-alert, .idq2 > .ix-msg { margin: 0; }
-        .ix-drawer .rq2-body .idq-fan { flex: 1 1 auto; min-height: 300px; }`}</style>
+        .ix-drawer .rq2-body .idq-fan { flex: 1 1 auto; min-height: 300px; }
+        /* every tab (To print, To link, To claim, Released): the table card reaches the bottom of the page at any
+           window size, and an empty tab's message sits in the middle of the card */
+        @media (min-width: 761px) {
+          .ix-page.lay2 .ix-main:has(.idq2 .rq2-card) { display: flex !important; flex-direction: column !important; }
+          .ix-page.lay2 .ix-main:has(.idq2 .rq2-card) > .ix-content { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+          .ix-page.lay2 .ix-main:has(.idq2 .rq2-card) > .ix-content > * { flex: none; }
+          .ix-page.lay2 .ix-main:has(.idq2 .rq2-card) .grp-body { flex: 1 1 auto !important; display: flex; flex-direction: column; }
+          .ix-page.lay2 .ix-main:has(.idq2 .rq2-card) .grp-body > * { flex: none; }
+          .ix-page.lay2 .ix-main:has(.idq2 .rq2-card) :is(.grp-body, .ix-content) > .idq2 { flex: 1 1 auto !important; }
+          .ix-page.lay2 .idq2 > .rq2 { flex: 1 1 auto !important; }
+          .ix-page.lay2 .idq2 > .rq2 > .rq2-card { flex: 1 1 auto; }
+          .ix-page.lay2 .idq2 .rq2-card > .rq2-pager { margin-top: auto; }   /* the page numbers stay at the bottom of the card */
+        }`}</style>
       <Msg msg={msg} />
       <ReviewQueue tabs={tabs} columns={columns} rowKey={(x) => x.u.id}
         searchText={(x) => `${x.u.name} ${x.u.email} ${x.u.student_id || ""} ${x.u.program || ""} ${x.u.placement || ""}`}
