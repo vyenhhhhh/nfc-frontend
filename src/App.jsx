@@ -364,7 +364,7 @@ export default function App() {
       signal(res.ok);
       // how long the tap took (open the browser console, F12, to see it: used for the 3-second test)
       const tDone = performance.now();
-      console.info(`[tap] ${uid}: server ${Math.round(tServer - t0)} ms · card write ${Math.round(tDone - tServer)} ms · total ${((tDone - t0) / 1000).toFixed(2)} s`);
+      console.info(`[tap] server ${Math.round(tServer - t0)} ms · card write ${Math.round(tDone - tServer)} ms · total ${((tDone - t0) / 1000).toFixed(2)} s`);
       await hold();
       // nothing was recorded, just tell the intern why:
       //   DUPLICATE_TAP = tapped again within 5 minutes
