@@ -641,7 +641,11 @@ html, body, #root { margin: 0; height: 100%; }
 /* on a wide screen the side panel covers the right part: the sharp photo fills only the space to its left
    (so the building sits in the middle of what people see), the soft copy fills the rest behind the panel */
 .kq-bg-soft { filter: blur(26px) brightness(.75); transform: scale(1.08); }
-@media (min-width: 1101px) { .kq-bg-main { right: 444px; width: auto; } }   /* 444 = the panel (420) + the page edge (24) */
+@media (min-width: 1101px) {
+  .kq-bg-main { right: 444px; width: auto; }   /* 444 = the panel (420) + the page edge (24) */
+  /* its right edge fades into the soft copy, so no straight line shows next to the panel */
+  .kq-bg-main { -webkit-mask-image: linear-gradient(to right, #000 78%, transparent 100%); mask-image: linear-gradient(to right, #000 78%, transparent 100%); }
+}
 .kq-shade { position: absolute; inset: 0; pointer-events: none; background:
   radial-gradient(circle at 62% 55%, rgba(242,115,58,.55), rgba(242,115,58,0) 38%),
   linear-gradient(105deg, rgba(26,11,5,.92) 0%, rgba(26,11,5,.70) 45%, rgba(150,52,20,.48) 100%),
