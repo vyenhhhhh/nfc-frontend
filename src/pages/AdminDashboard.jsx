@@ -1526,8 +1526,7 @@ function InternSearch({ interns, selected, onSelect }) {
 
   const sq = q.trim().toLowerCase();
   const matches = interns
-    .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(sq))
-    .slice(0, 8);
+    .filter((u) => `${u.name} ${u.email} ${u.student_id ?? ""}`.toLowerCase().includes(sq));   // every match: the list scrolls
 
   const pick = (u) => { onSelect(String(u.id)); setQ(""); setOpen(false); };
 
