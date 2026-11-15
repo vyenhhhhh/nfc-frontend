@@ -219,12 +219,22 @@ function TabTitle() {
   return null;
 }
 
+// The main address: the kiosk on a computer set up as a kiosk (opened once with its setup link from
+// Admin → Kiosks, which saves the kiosk key on that computer), the login page everywhere else.
+// (App.jsx reads a ?kiosk_key=… in the address and saves it before this runs.) /kiosk always opens the kiosk.
+function Home() {
+  let isKiosk = false;
+  try { isKiosk = !!localStorage.getItem("mytrack.kioskKey"); } catch { /* storage blocked */ }
+  return isKiosk ? <NFCTerminal /> : <Navigate to="/login" replace />;
+}
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <BrowserRouter>
       <TabTitle />
       <Routes>
-        <Route path="/"      element={<NFCTerminal />} />
+        <Route path="/"      element={<Home />} />
+        <Route path="/kiosk" element={<NFCTerminal />} />
         <Route path="/login" element={<Login />} />
 
         {internRoutes.map((p) => (
