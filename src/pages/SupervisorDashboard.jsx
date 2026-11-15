@@ -200,10 +200,10 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
       ]}
       left={(
         <>
-        {/* every intern (same rows as before: name, hours, %); many interns scroll inside the card */}
+        {/* every intern (name, hours, %): about 10 rows show, more interns scroll inside the card */}
         <Panel title="My interns" count={interns.length} link="Monitor" onLink={() => go("/supervisor/interns")} grow className="sv-all">
           <style>{`.ix-page .ix-content .dbx-card.sv-all { display: flex; flex-direction: column; min-height: 0; }
-            .ix-page .ix-content .dbx-card.sv-all > .sv-all-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: block; }
+            .ix-page .ix-content .dbx-card.sv-all > .sv-all-list { flex: 0 1 auto; min-height: 0; max-height: 698px; overflow-y: auto; overscroll-behavior: contain; display: block; }
             .ix-page .ix-content .dbx-card.sv-all > .sv-all-list > * { flex: none; }`}</style>
           {interns.length === 0 ? <DashEmpty title="No interns assigned yet" /> : (
             <div className="sv-all-list">
