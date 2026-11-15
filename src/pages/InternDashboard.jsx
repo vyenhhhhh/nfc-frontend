@@ -1917,6 +1917,30 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   const reportsApproved = reports.filter((r) => reportStatus(r.id) === "approved").length;
   const oldReports = movs.filter((x) => x.requirement === "weekly_report" && !x.report_id);   // sent before reports were added
 
+  // what needs the intern in each tab (the same things the sidebar count on Submit MOV adds up):
+  // requirements returned by the coordinator, and (During) reports asked for that aren't sent yet or were returned
+  const todoIn = (k) => {
+    const seen = new Set(); let n = 0;
+    movs.forEach((m) => {   // newest first: the first upload seen is the current one
+      if ((m.phase || "pre") !== k || m.report_id || !m.requirement || m.requirement === "others" || seen.has(m.requirement)) return;
+      seen.add(m.requirement);
+      if (m.status === "rejected") n++;
+    });
+    if (k === "during") n += reports.filter((r) => ["none", "rejected"].includes(reportStatus(r.id))).length;
+    return n;
+  };
+  const todo = { pre: todoIn("pre"), during: duringLocked ? 0 : todoIn("during"), post: unlocked ? todoIn("post") : 0 };
+  // on opening, go straight to the tab with something to do (once, so the intern can still move between tabs)
+  const [autoTab, setAutoTab] = useState(false);
+  useEffect(() => {
+    if (autoTab || loading) return;
+    setAutoTab(true);
+    if (todo[tab] > 0) return;
+    const next = ["pre", "during", "post"].find((k) => todo[k] > 0);
+    if (next) setTab(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, movs, reports]);
+
   // the full view of one requirement (opens from the right): upload, every file sent, remarks, remove
   const renderDetail = (r) => {
                 if (r.key === "__others") return (
@@ -2063,6 +2087,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
             <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "grp-tab active" : "grp-tab"}
               onClick={() => { setTab(k); setMsg(null); }}>
               <Icon name={locked ? "lock" : "folder"} size={14} /><span>{l}</span>
+              {todo[k] > 0 && <span className="grp-tab-n">{todo[k] > 99 ? "99+" : todo[k]}</span>}
             </button>
           ))}
         </div>
