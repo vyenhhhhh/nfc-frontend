@@ -410,8 +410,7 @@ export default function App() {
     <div className="kq-page">
       <style>{css}</style>
       {/* the photo twice: soft and blurred behind the side panel, sharp and centred in the space left of it */}
-      <img className="kq-bg kq-bg-soft" src={campus} alt="" aria-hidden="true" />
-      <img className="kq-bg kq-bg-main" src={campus} alt="" />
+      <img className="kq-bg" src={campus} alt="" />
       <div className="kq-shade" /><div className="kq-grain" />
 
       <div className="kq-wrap">
@@ -637,15 +636,9 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-page { --o: #f2733a; --o2: #e8582a; --peach: #ffb48f;
   position: fixed; inset: 0; overflow: hidden; background: #2a120a; color: #fff;
   font-family: 'Poppins', 'Segoe UI', system-ui, sans-serif; }
-.kq-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 35%; }
-/* on a wide screen the side panel covers the right part: the sharp photo fills only the space to its left
-   (so the building sits in the middle of what people see), the soft copy fills the rest behind the panel */
-.kq-bg-soft { filter: blur(26px) brightness(.75); transform: scale(1.08); }
-@media (min-width: 1101px) {
-  .kq-bg-main { right: 444px; width: auto; }   /* 444 = the panel (420) + the page edge (24) */
-  /* its right edge fades into the soft copy, so no straight line shows next to the panel */
-  .kq-bg-main { -webkit-mask-image: linear-gradient(to right, #000 78%, transparent 100%); mask-image: linear-gradient(to right, #000 78%, transparent 100%); }
-}
+/* the campus photo fills the whole screen; the top of the photo is mostly sky, so it is cut from the top
+   and the building sits in the middle of the screen (behind the panel on the right, too) */
+.kq-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 72%; }
 .kq-shade { position: absolute; inset: 0; pointer-events: none; background:
   radial-gradient(circle at 62% 55%, rgba(242,115,58,.55), rgba(242,115,58,0) 38%),
   linear-gradient(105deg, rgba(26,11,5,.92) 0%, rgba(26,11,5,.70) 45%, rgba(150,52,20,.48) 100%),
