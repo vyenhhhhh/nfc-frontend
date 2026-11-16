@@ -765,6 +765,9 @@ const CT_CSS = `
 /* the search is as wide as it needs (not the whole row); the filters and Export sit on the right */
 .ix-page .ct-bar > .ct-search { flex: 0 1 420px !important; max-width: 420px; min-width: 220px; }
 .ix-page .ct-bar > .ct-search + * { margin-left: auto; }
+/* a single filter sits right beside the search; Export alone goes to the right end */
+.ix-page .ct-bar > .ct-search + select.ix-select:has(+ .ix-exp:last-child) { margin-left: 0; }
+.ix-page .ct-bar > .ct-search + select.ix-select + .ix-exp:last-child { margin-left: auto; }
 @media (max-width: 760px) { .ix-page .ct-bar > .ct-search { flex: 1 1 100% !important; max-width: none; } .ix-page .ct-bar > .ct-search + * { margin-left: 0; } }
 .ct-exp { margin-left: auto; }
 .ct-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 4px 0 14px; }
