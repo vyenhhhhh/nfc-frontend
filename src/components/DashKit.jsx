@@ -4676,6 +4676,7 @@ const FILL_CSS = `
   /* My Profile (every role): the bottom cards reach the bottom of the panel */
   .ix-page.lay2 .ix-main > .ix-content > .pf-page { flex: 1 0 auto !important; }
   .ix-page.lay2 .ix-content .pf-page > :last-child { flex: 1 0 auto !important; }
+  .ix-page.lay2 .ix-content .pf-page > * { flex-shrink: 0 !important; }   /* in a short window the top card never gets squeezed */
   .ix-page.lay2 .ix-content .pf-page > .pf-grid:last-child { grid-template-rows: auto 1fr !important; }
   .ix-page.lay2 .ix-content .pf-page .pf-sec { display: flex; flex-direction: column; }
   .ix-page.lay2 .ix-content .pf-page .pf-sec > .ix-card { flex: 1 0 auto; }
