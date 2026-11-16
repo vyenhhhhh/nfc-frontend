@@ -2502,7 +2502,7 @@ export function dtrFormHtml({ name, office, periodLabel, officialHours = "", row
     <div class="cs-sig">${esc(verifier.position ? `HTE Supervisor (${verifier.position})` : "HTE Supervisor")}</div>
     <div class="cs-vnote">Certified in the system on ${esc(verifier.date || "")}</div>`
     : `<div class="cs-ver">VERIFIED as to the prescribed office hours:</div>
-    <div class="cs-sig">(Supervisor / OJT Coordinator)</div>`}
+    <div class="cs-sig">(HTE Supervisor)</div>`}
   </div>`;
 }
 
