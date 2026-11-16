@@ -1824,6 +1824,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   const [otherFile, setOtherFile] = useState(null);
   const [deadlines, setDeadlines] = useState({});   // { "pre:moa": "2026-11-05", ... }
   const [reports, setReports] = useState([]);       // reports the coordinator asked for (weekly / monthly report)
+  const [reportsReady, setReportsReady] = useState(false);   // the list above has loaded once
   const [openKey, setOpenKey] = useState(null);     // the requirement opened on the right
   const [showApproved, setShowApproved] = useState(false);
 
@@ -1836,7 +1837,8 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
       fetch(`${API}/reports`, { headers: { Accept: "application/json" } })
         .then((r) => r.json())
         .then((d) => { if (Array.isArray(d)) setReports(d); })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => setReportsReady(true));
     };
     fetchMovs(); loadDue();
     return liveRefresh(() => { fetchMovs(); loadDue(); });
@@ -1933,13 +1935,13 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
   // on opening, go straight to the tab with something to do (once, so the intern can still move between tabs)
   const [autoTab, setAutoTab] = useState(false);
   useEffect(() => {
-    if (autoTab || loading) return;
+    if (autoTab || loading || !reportsReady) return;
     setAutoTab(true);
     if (todo[tab] > 0) return;
     const next = ["pre", "during", "post"].find((k) => todo[k] > 0);
     if (next) setTab(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, movs, reports]);
+  }, [loading, movs, reports, reportsReady]);
 
   // the full view of one requirement (opens from the right): upload, every file sent, remarks, remove
   const renderDetail = (r) => {
@@ -3493,8 +3495,9 @@ const NC_CSS = `
 .ix-page .nc-info .nfc-go, .ix-page .nc-info .ix-b { align-self: flex-start; width: auto !important; }
 .ix-page .nc-send { align-self: flex-start; }
 .ix-page .nc-sec { margin-top: auto; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #6b7280; padding-top: 6px; }
-/* computers: the page is as tall as the window (set in the component); the card scales to its stage, the status box keeps its size, and the bottom row shares the rest evenly */
-@media (min-width: 1200px) and (min-height: 600px) {
+/* computers and iPads lying sideways (wider than 1000px): the page is as tall as the window (set in the component);
+   the card scales to its stage, the status box keeps its size, and the bottom row shares the rest evenly */
+@media (min-width: 1001px) and (min-height: 600px) {
   .ix-page .ix-main:has(.nc-page) { overflow: hidden !important; }
   .ix-page .nc-page { grid-template-columns: clamp(260px, 26vw, 400px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .ix-page .nc-col { min-height: 0; }
@@ -4554,6 +4557,13 @@ export const internCss = `
   .ix-page .rq-side .rq-box > b { margin-bottom: 6px !important; line-height: 1.3 !important; }
 }
 @media (max-width: 1100px) { .ix-page .rq-cols { grid-template-columns: 1fr; } .ix-page .rq-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } }
+/* iPad: the list card takes the extra height (its message in the middle); the three boxes stay under it at their own height */
+@media (min-width: 761px) and (max-width: 1100px) and (min-height: 600px) {
+  .ix-page .ix-content > .rq-cols { grid-template-rows: minmax(0, 1fr) auto; }
+  .ix-page .rq-cols > .rq-table { display: flex; flex-direction: column; min-height: 260px; align-self: stretch; }
+  .ix-page .rq-cols > .rq-table > .rq-empty { flex: 1 1 auto; justify-content: center; }
+  .ix-page .rq-cols > .rq-table > :last-child:not(.rq-tscroll):not(.rq-empty) { margin-top: auto; }
+}
 @media (max-width: 760px) {
   .ix-page .rq-table thead { display: none; }
   .ix-page .rq-table tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; padding: 12px 14px; border-bottom: 1px solid #f1f2f4; }
@@ -4650,11 +4660,11 @@ export const internCss = `
 @media (min-width: 761px) and (max-width: 1199px) {
   .ix-page .pf-grid { align-items: start; }
   .ix-page .pf-body { align-content: start; }
+}
+/* iPad standing up (761-1000px): My NFC Card is one column; its cards keep their own height */
+@media (min-width: 761px) and (max-width: 1000px) {
   .ix-page .nc-row { align-items: start; }
   .ix-page .nc-tlist { display: block; }
-}
-@media (min-width: 1001px) and (max-width: 1199px) {
-  .ix-page .nc-page { grid-template-columns: 280px minmax(0, 1fr); align-items: start; }
 }
 
 `;

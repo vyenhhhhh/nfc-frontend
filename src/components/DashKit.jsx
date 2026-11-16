@@ -4652,10 +4652,11 @@ ${segIn(" > button:disabled")} { opacity: .5; cursor: not-allowed; }
 .ix-page .dl-tabs { margin-bottom: 12px !important; }
 `;
 
-/* Computers: the last card (or tab content) of every page grows down to the bottom of the white panel,
-   so no page ends with a short card and empty space under it. Taller pages still scroll as before. */
+/* Computers and tablets (iPad): the last card (or tab content) of every page grows down to the bottom of the white
+   panel, so no page ends with a short card and empty space under it. Taller pages still scroll as before.
+   (Phones keep the plain stacked layout.) */
 const FILL_CSS = `
-@media (min-width: 1200px) and (min-height: 600px) {
+@media (min-width: 761px) and (min-height: 600px) {
   .ix-page.lay2 .ix-main { display: flex !important; flex-direction: column !important; }
   .ix-page.lay2 .ix-main > .ix-content { flex: 1 0 auto; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main > .ix-content > :nth-last-child(1 of :not(style, script, .ix-modal-wrap)) { flex-grow: 1; }
@@ -4682,6 +4683,10 @@ const FILL_CSS = `
   .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card):has(> :is(.req-locked, [class*="empty"], [class$="-none"]):last-child) { display: flex; flex-direction: column; }
   .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card) > :is(.req-locked, [class*="empty"], [class$="-none"]):last-child { margin-top: auto !important; margin-bottom: auto !important; }
   .ix-page.lay2 .ix-content :is(.ix-card, .dbx-card) > .req-locked:last-child { width: 100%; }
+}
+/* iPad: a long label in the number strip (e.g. "Kiosk / online log") wraps instead of being cut off */
+@media (min-width: 761px) and (max-width: 1199px) {
+  .ix-page .ix-stat-label { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; overflow-wrap: anywhere; }
 }
 `;
 
