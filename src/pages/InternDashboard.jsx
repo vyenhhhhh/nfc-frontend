@@ -1712,7 +1712,7 @@ const SO_CSS = `
   .ix-page .ix-content .so-cols > .ix-card { display: flex; flex-direction: column; min-height: 0; }
   .ix-page .ix-content .so-list .so-items { flex: 1 1 0; min-height: 0; max-height: none; overflow-y: auto; }
   .ix-page .ix-content .so-list > .ix-spin, .ix-page .ix-content .so-list > .so-empty { flex: 1; }
-  .ix-page .ix-content .so-list > .so-empty { justify-content: center; margin: 12px; border: 1.5px dashed #e5e7eb; border-radius: 12px; }
+  .ix-page .ix-content .so-list > .so-empty { justify-content: center; margin: 0; border: 0; }   /* the card already has a border: no second (dashed) one inside */
   /* the form gives or takes space through the tasks box, so its button always shows */
   .ix-page .ix-content .so-form .so-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }
   .ix-page .ix-content .so-form .so-body > * { flex-shrink: 0; }
