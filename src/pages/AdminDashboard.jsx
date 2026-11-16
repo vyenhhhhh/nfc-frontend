@@ -3152,7 +3152,7 @@ function Kiosks({ interns = [], onAlerts }) {
       <Msg msg={msg} />
       <div className="rq2-kv ks-kv">
         <div><small>HTE</small><b title={cur.placement || ""}>{cur.placement || "CCIS · every intern"}</b></div>
-        <div><small>Interns who can tap</small><b className={canTap(cur) ? "" : "ks-zero"}>{canTap(cur)}</b></div>
+        <div><small title="Interns who can tap at this kiosk">Can tap here</small><b className={canTap(cur) ? "" : "ks-zero"}>{canTap(cur)}</b></div>
         <div><small>Last used</small><b>{seen(cur.last_seen_at)}</b></div>
         <div><small>Added</small><b>{added(cur.created_at)}</b></div>
       </div>
