@@ -4505,7 +4505,10 @@ export const internCss = `
   .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content { flex: 1 0 auto !important; min-height: auto !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content > * { flex: none; }
   .ix-page .ix-content > .rq-cols { flex: 1 0 auto !important; align-items: stretch !important; }
-  .ix-page .rq-cols > .rq-side { align-self: start !important; }
+  /* the side column reaches the bottom too: "How approval works" takes the space left, its color key at the bottom */
+  .ix-page .ix-content .rq-cols > .rq-side { align-self: stretch !important; display: flex !important; flex-direction: column !important; }
+  .ix-page .ix-content .rq-cols > .rq-side > .rq-how-box { flex: 1 0 auto !important; display: flex !important; flex-direction: column !important; }
+  .ix-page .ix-content .rq-cols > .rq-side > .rq-how-box > .rq-legend { margin-top: auto !important; }
   .ix-page .rq-cols > .rq-table { overflow: hidden !important; display: flex !important; flex-direction: column; }
   .ix-page .rq-cols > .rq-table > .rq-empty { flex: 1 1 auto; justify-content: center; }
   .ix-page .rq-cols > .rq-table > .rq-tscroll { flex: none !important; }
