@@ -3163,7 +3163,7 @@ function NfcApply({ user, records = [] }) {
     const fit = () => {
       const pg = pageRef.current, box = boxRef.current;
       if (!pg || !box) return;
-      if (window.innerWidth <= 1000 || window.innerHeight < 600) { if (pg.style.height) pg.style.height = ""; setZoom(null); return; }
+      if (window.innerWidth <= 1000 || window.innerHeight < 420) { if (pg.style.height) pg.style.height = ""; setZoom(null); return; }
       const h = Math.max(470, Math.floor(window.innerHeight - pg.getBoundingClientRect().top - 34));
       if (pg.style.height !== h + "px") pg.style.height = h + "px";
       const r = box.getBoundingClientRect();
@@ -3499,6 +3499,10 @@ const NC_CSS = `
    the card scales to its stage, the status box keeps its size, and the bottom row shares the rest evenly */
 @media (min-width: 1001px) and (min-height: 600px) {
   .ix-page .ix-main:has(.nc-page) { overflow: hidden !important; }
+}
+/* the same layout in shorter windows too (a laptop with screen zoom, not full screen): the page keeps a minimum
+   height and the window scrolls if it is shorter, so the cards still line up with the card preview */
+@media (min-width: 1001px) and (min-height: 420px) {
   .ix-page .nc-page { grid-template-columns: clamp(260px, 26vw, 400px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .ix-page .nc-col { min-height: 0; }
   .ix-page .ix-card.nc-cardbox { background: #f7f1ec !important; border-color: transparent !important; overflow: hidden; min-height: 0; }
