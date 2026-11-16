@@ -21,6 +21,7 @@ export default function RequirementsManage({ onChanged }) {
   const [busy, setBusy] = useState(null);
   const [form, setForm] = useState(null);       // the pop-up: { mode: "add" | "edit", id?, label, hint, repeat, phase }
   const [askDel, setAskDel] = useState(null);
+  const [askForever, setAskForever] = useState(null);   // a removed requirement to delete for good
   const [formsOpen, setFormsOpen] = useState(false);
   const [setupErr, setSetupErr] = useState(null);
 
@@ -200,8 +201,14 @@ export default function RequirementsManage({ onChanged }) {
                 {removed.map((r) => (
                   <li key={r.id}>
                     <span><b>{r.label}</b><small>{r.sent ? `${r.sent} file${r.sent === 1 ? "" : "s"} kept` : "No files"}</small></span>
-                    <button type="button" className="ix-b ghost sm" disabled={busy === `p${r.id}`} onClick={() => call(`p${r.id}`, "PUT", `/coordinator/requirements/${r.id}`, { active: true }, `"${r.label}" put back.`)}>
-                      {busy === `p${r.id}` ? "…" : "Put back"}</button>
+                    <span className="rqm-acts">
+                      <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => call(`p${r.id}`, "PUT", `/coordinator/requirements/${r.id}`, { active: true }, `"${r.label}" put back.`)}>
+                        {busy === `p${r.id}` ? "…" : "Put back"}</button>
+                      {/* only one that no intern sent a file for: files stay with their requirement */}
+                      <button type="button" className="ix-b ghost sm rqm-del" disabled={!!busy || r.sent > 0}
+                        title={r.sent > 0 ? "Interns sent files for it, so it can't be deleted. Its files are kept." : "Delete it for good"}
+                        onClick={() => { setMsg(null); setAskForever(r); }}><Icon name="trash" size={13} /> Delete</button>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -234,6 +241,20 @@ export default function RequirementsManage({ onChanged }) {
                 {busy === "form" ? "Saving..." : form.mode === "add" ? "Add requirement" : "Save changes"}</button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {askForever && (
+        <Modal title="Delete this requirement?" sub={askForever.label} onClose={() => setAskForever(null)}>
+          <div className="rqm-form">
+            <p className="rqm-confirm">It is deleted for good, with its blank forms and due dates. It can't be put back.</p>
+            <div className="rqm-btns">
+              <button type="button" className="ix-b ghost" onClick={() => setAskForever(null)} disabled={busy === `f${askForever.id}`}>Keep it</button>
+              <button type="button" className="ix-b danger" disabled={busy === `f${askForever.id}`}
+                onClick={async () => { if (await call(`f${askForever.id}`, "DELETE", `/coordinator/requirements/${askForever.id}?forever=1`, null, `"${askForever.label}" deleted.`)) setAskForever(null); }}>
+                {busy === `f${askForever.id}` ? "Deleting..." : "Yes, delete"}</button>
+            </div>
+          </div>
         </Modal>
       )}
 
@@ -290,7 +311,7 @@ const CSS = `
 .rqm-removed summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #4b5563; }
 .rqm-removed ul { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .rqm-removed li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.rqm-removed li span { display: flex; flex-direction: column; } .rqm-removed li b { font-size: 13px; color: #6b7280; text-decoration: line-through; } .rqm-removed li small { font-size: 12px; color: #9ca3af; }
+.rqm-removed li span { display: flex; flex-direction: column; } .rqm-removed li .rqm-acts { flex-direction: row; align-items: center; } .rqm-removed li b { font-size: 13px; color: #6b7280; text-decoration: line-through; } .rqm-removed li small { font-size: 12px; color: #9ca3af; }
 /* the pop-ups: the same form layout as "New quarterly report" */
 .rqm-form { display: flex; flex-direction: column; gap: 14px; }
 .rqm-form .ix-input, .rqm-form .ix-select { width: 100%; box-sizing: border-box; }
