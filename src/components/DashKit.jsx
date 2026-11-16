@@ -4663,7 +4663,7 @@ ${segIn(" > button:disabled")} { opacity: .5; cursor: not-allowed; }
    panel, so no page ends with a short card and empty space under it. Taller pages still scroll as before.
    (Phones keep the plain stacked layout.) */
 const FILL_CSS = `
-@media (min-width: 761px) and (min-height: 600px) {
+@media (min-width: 761px) and (min-height: 420px) {
   .ix-page.lay2 .ix-main { display: flex !important; flex-direction: column !important; }
   .ix-page.lay2 .ix-main > .ix-content { flex: 1 0 auto; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main > .ix-content > :nth-last-child(1 of :not(style, script, .ix-modal-wrap)) { flex-grow: 1; }
