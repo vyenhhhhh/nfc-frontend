@@ -257,7 +257,8 @@ const statusBadge = (st) => <Badge label={(STATUS[st] || [st])[0]} type={(STATUS
 
 function Approvals({ overtime, corrections, online = [], events = [], onRefresh, interns = [], records = [] }) {
   // a notification can open a specific tab: /supervisor/approvals?tab=fix
-  const { search: qs } = useLocation();
+  const { search: qs, pathname } = useLocation();
+  const navigate = useNavigate();
   const asked = new URLSearchParams(qs).get("tab");
   const TABS = ["online", "overtime", "fix", "event", "projects"];
   const [tab, setTab] = useState(TABS.includes(asked) ? asked : "online");
@@ -335,7 +336,7 @@ function Approvals({ overtime, corrections, online = [], events = [], onRefresh,
           <button
             key={t.key} type="button" role="tab" aria-selected={tab === t.key}
             className={tab === t.key ? "grp-tab active" : "grp-tab"}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setTab(t.key); navigate(`${pathname}?tab=${t.key}`, { replace: true }); }}   // the sidebar highlights the same tab
           >
             <Icon name={t.icon} size={16} />
             <span>{t.label}</span>
