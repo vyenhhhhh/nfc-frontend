@@ -2573,7 +2573,7 @@ export function AdminProfile({ user }) {
       <style>{`@media (min-width: 1200px) { .ix-page .pf-page:has(.pf-sec-full) .pf-body { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 /* computers: the details row and Account security share the free height evenly (no huge blank in one card),
    the facts spread out inside their cards and the security part sits in the middle of its card */
-@media (min-width: 901px) and (min-height: 600px) {
+@media (min-width: 901px) and (min-height: 420px) {
   .ix-page.lay2 .ix-content .pf-page:has(.pf-sec-full) > .pf-grid { flex: 1 1 0 !important; min-height: min-content; grid-template-rows: minmax(min-content, 1fr) !important; }
   .ix-page.lay2 .ix-content .pf-page:has(.pf-sec-full) > .pf-sec-full { flex: 1 1 0 !important; min-height: min-content; display: flex; flex-direction: column; }
   .ix-page.lay2 .ix-content .pf-page:has(.pf-sec-full) > .pf-sec-full > .ix-card.sec-card { flex: 1 1 auto !important; height: auto !important; }
@@ -2592,7 +2592,7 @@ export function AdminProfile({ user }) {
         .ix-page .pf-input { width: 100%; height: 36px; padding: 0 10px; border: 1px solid #e3e5ea; border-radius: 9px; font: inherit; font-size: 13px; box-sizing: border-box; background: #fff; color: #111827; }
         .ix-page .pf-input:focus { outline: none; border-color: #e8582a; box-shadow: 0 0 0 3px rgba(232,88,42,.12); }
         /* this page has 3 cards: personal and work side by side, account security under them */
-        @media (min-width: 901px) and (min-height: 600px) {
+        @media (min-width: 901px) and (min-height: 420px) {
           .ix-page .pf-page:not(:has(.pf-sec-full)) .pf-grid { grid-template-rows: 1fr; }
           .ix-page .pf-page:has(.pf-sec-full) .pf-grid { grid-template-rows: 1fr; flex: 1 1 0; }
           .ix-page .pf-sec.pf-sec-full { flex: none; height: auto !important; }
@@ -2650,7 +2650,7 @@ const STAFF_PF_CSS = `
 .ix-page .pf-sec .sec-change { align-self: flex-start; }
 @media (max-width: 1100px) { .ix-page .pf-stats { gap: 18px; } }
 /* computers: the page fits the window; the four cards share the height left */
-@media (min-width: 901px) and (min-height: 600px) {
+@media (min-width: 901px) and (min-height: 420px) {
   .ix-page.lay2 .ix-main:has(.pf-page) { overflow-y: auto !important; display: flex !important; flex-direction: column !important; }
   .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
   .ix-page.lay2 .ix-main:has(.pf-page) > .ix-content > * { flex: none; }
