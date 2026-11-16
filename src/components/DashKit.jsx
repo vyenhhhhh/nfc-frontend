@@ -652,7 +652,7 @@ export function Avatar({ name, photo, status, size = 44 }) {
 }
 
 // a private image (a staff signature): shown once the server gives its short-lived link
-function PrivateImg({ path, alt }) {
+export function PrivateImg({ path, alt }) {
   const src = useFileLink(path);
   return src ? <img src={src} alt={alt} /> : <b>…</b>;
 }
@@ -2228,9 +2228,11 @@ export function UserDetails({ u, interns = [] }) {
               <h3>Position & signature</h3>
               <div className="uz-grid">
                 {v("Position / job title", u.position || "Not set", true)}
-                <div className="uz-f full"><small>Signature</small>
-                  <div className="sig-box">{u.signature ? <PrivateImg path={u.signature} alt="Signature" /> : <span>Not uploaded yet</span>}</div>
-                </div>
+                {u.role !== "admin" && (
+                  <div className="uz-f full"><small>Signature</small>
+                    <div className="sig-box">{u.signature ? <PrivateImg path={u.signature} alt="Signature" /> : <span>Not uploaded yet</span>}</div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2606,7 +2608,12 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
               <h3>Position & signature</h3>
               <div className="uz-grid">
                 {fld("Position / job title", text("position", { placeholder: "e.g. OJT Coordinator, CCIS" }), { full: true, opt: true })}
-                {onSig && fld("Signature", <SigPicker file={sigFile} onChange={onSig} current={sigCurrent} />, { full: true, plain: true, opt: true, hint: "Used on the DTR and reports. Use a clear photo of the signature on white paper." })}
+                {/* only signatures that are printed somewhere: the HTE supervisor's on the DTR they certify, the
+                    OJT coordinator's on the back of the interns' ID cards (the admin signs nothing) */}
+                {onSig && formRole !== "admin" && fld("Signature", <SigPicker file={sigFile} onChange={onSig} current={sigCurrent} />, { full: true, plain: true, opt: true,
+                  hint: formRole === "ojt_coordinator"
+                    ? "Printed on the back of the interns' ID cards. Use a clear photo of the signature on white paper."
+                    : "Printed on the DTR when the supervisor certifies it. Use a clear photo of the signature on white paper." })}
               </div>
             </div>
           )}

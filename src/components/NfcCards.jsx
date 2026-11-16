@@ -6,7 +6,7 @@ import CardAlerts from "./CardAlerts.jsx";
 import logo from "../assets/logo.png";          // CCIS logo (right side of the ID)
 import csuLogo from "../assets/csu-logo.png";   // CSU seal (left side of the ID)
 import campus from "../assets/campus.jpg";      // faded background of the ID
-import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh, Inbox, OA_CSS, OaHistory } from "./DashKit.jsx";
+import { Spinner, PageHeader, Badge, Table, Empty, Msg, Avatar, Icon, photoUrl, liveRefresh, Inbox, OA_CSS, OaHistory, PrivateImg } from "./DashKit.jsx";
 import { API } from "../config.js";
 import { createHelperReader } from "../kioskReaders.js";
 import ReviewQueue from "./ReviewQueue.jsx";   // the same table + drawer layout as the Approvals pages
@@ -460,9 +460,25 @@ const defaultValid = () => {                       // end of the school year: Ju
   const d = new Date(); const y = d.getMonth() >= 5 ? d.getFullYear() + 1 : d.getFullYear();
   return `${y}-06-30`;
 };
-// no "Card settings" page: the valid date is the end of the school year, and the coordinator's name,
-// signature and office contact are added in the printing app (e.g. Canva) with the CSV and photos
+// no "Card settings" page: the valid date is the end of the school year; the name and signature under the
+// card rules are the OJT coordinator's own (her account: Accounts → Edit → Signature), see useCardSigner
 export const loadCardSettings = () => ({ valid: defaultValid(), coordinator: "", signature: "", contact: "" });
+
+// the OJT coordinator who signs the back of the ID cards: { name, signature (private file path) }, asked once per page load
+let signerCache = null;
+export function useCardSigner() {
+  const [signer, setSigner] = useState(signerCache);
+  useEffect(() => {
+    if (signerCache) return;
+    let on = true;
+    fetch(`${API}/card-signer`, { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) { signerCache = d; if (on) setSigner(d); } })
+      .catch(() => {});
+    return () => { on = false; };
+  }, []);
+  return signer;
+}
 const longDate = (v) => {
   const d = new Date(v + (String(v).length === 10 ? "T00:00:00" : ""));
   return !v || isNaN(d) ? "—" : d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
@@ -532,6 +548,7 @@ export const CARD_RULES = [
   "Report a lost or damaged card to your OJT Coordinator right away.",
 ];
 export function CardBack({ u, settings = {} }) {
+  const signer = useCardSigner();
   return (
     <div className="idc idc-p idc-back">
       <div className="idb-bar" />
@@ -556,9 +573,11 @@ export function CardBack({ u, settings = {} }) {
       </div>
 
       <div className="idb-coord">
-        {settings.signature ? <img src={settings.signature} alt="" /> : <span className="idb-nosig" />}
+        {settings.signature ? <img src={settings.signature} alt="" />
+          : signer?.signature ? <PrivateImg path={signer.signature} alt="" />
+          : <span className="idb-nosig" />}
         <i />
-        <b>{settings.coordinator || "Jhoanna Victoria S. Pitao, MSc"}</b>
+        <b>{settings.coordinator || signer?.name || "Jhoanna Victoria S. Pitao, MSc"}</b>
         <small>OJT Coordinator</small>
       </div>
     </div>
@@ -970,6 +989,8 @@ export const idCardCss = `
   .idc .idb-coord { position: absolute; left: 0; right: 0; bottom: 2.6mm; display: flex; flex-direction: column; align-items: center; text-align: center; }
   .idc .idb-coord img { height: 6mm; max-width: 26mm; object-fit: contain; margin-bottom: -1.6mm; position: relative; z-index: 1; }
   .idc .idb-coord .idb-nosig { display: block; height: 4.4mm; }
+  .idc .idb-coord > b:first-child { display: block; height: 4.4mm; overflow: hidden; color: transparent; }   /* signature still loading */
+  .idc .idb-coord img { filter: grayscale(1) contrast(1.4); mix-blend-mode: multiply; }   /* a photo of a signature on white paper: no grey box */
   .idc .idb-coord i { display: block; width: 24mm; height: 0; border-top: .25mm solid #1b1f2a; }
   .idc .idb-coord b { margin-top: .7mm; font-size: 2.2mm !important; line-height: 3mm !important; font-weight: 700 !important; color: #1b1f2a; white-space: nowrap !important; }
   .idc .idb-coord small { font-size: 1.8mm !important; line-height: 2.5mm !important; color: #6b7280; }
