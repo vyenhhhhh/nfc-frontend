@@ -1966,6 +1966,10 @@ const coordCss = `
 .rp-modalbox .rp-confirm b { color: #111827; font-size: 14.5px; }
 .rp-two .rp-form.rp-side { margin: 0; min-height: 0; overflow-y: auto; background: #fff; border: 1px solid #e8ebf0; border-radius: 12px; padding: 16px 18px; gap: 14px; }
 .rp-two .rp-ft { margin: 0; font-size: 14px; font-weight: 600; color: #111827; }
+/* "New report" is the form's header band, in the same gray as the header row of the reports table beside it */
+.rp-two .rp-form.rp-side { padding-top: 0; }
+.rp-two .rp-form.rp-side > .rp-ft { margin: 0 -18px; padding: 0 18px; height: 48px; min-height: 48px; box-sizing: border-box; display: flex; align-items: center; flex: none;
+  background: #f8f9fb; border-bottom: 1px solid #eef0f3; border-radius: 12px 12px 0 0; color: #4b5563; font-size: 12.5px; font-weight: 600; }
 .rp-two .rp-field { gap: 6px; font-size: 12.5px; font-weight: 600; color: #374151; }
 .rp-two .rp-field.grow { min-width: 0; flex: 1 1 100%; }
 .rp-two .rp-row .rp-field { flex: 1 1 100%; }
