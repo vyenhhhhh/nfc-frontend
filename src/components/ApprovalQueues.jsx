@@ -505,8 +505,9 @@ export function ProjectQueue({ interns, records, onRefresh, role = "coordinator"
           { key: "mine", label: "With the coordinator", items: by("mine"), empty: ["Nothing here", "Projects you mark complete wait here for the OJT coordinator."] },
           { key: "done", label: "Confirmed", items: by("done"), empty: ["Nothing confirmed yet", "Projects the coordinator confirms show here."] },
         ] : [
-          { key: "mine", label: "Needs my review", items: by("mine"), hot: true, empty: ["All caught up", all.length ? "Projects the HTE supervisor marks as complete show here." : "No project-based interns. Set an intern's modality to Project-based on their profile."] },
+          // in the order of the flow: still working → marked complete by the supervisor (this user's turn) → confirmed
           { key: "progress", label: "In progress", items: by("progress"), empty: ["Nothing here", "Project-based interns still working on their project show here."] },
+          { key: "mine", label: "Needs my review", items: by("mine"), hot: true, empty: ["All caught up", all.length ? "Projects the HTE supervisor marks as complete show here." : "No project-based interns. Set an intern's modality to Project-based on their profile."] },
           { key: "done", label: "Confirmed", items: by("done"), empty: ["Nothing confirmed yet", "Projects you confirm show here."] },
         ]}
         rowKey={(x) => x.id}
