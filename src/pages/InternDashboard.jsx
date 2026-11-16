@@ -4498,12 +4498,18 @@ export const internCss = `
   .ix-page .rq-side > .rq-how-box .rq-legend { margin-top: auto; }
 }
 /* My Request on computers: the page scrolls like the other pages; the table shows up to 10 requests,
-   and the pager under it opens the next 10 (no scrollbar inside the table) */
+   and the pager under it opens the next 10 (no scrollbar inside the table). The list card reaches the
+   bottom of the page like the other pages, and "No requests yet" sits in the middle of it */
 @media (min-width: 1101px) {
-  .ix-page.lay2 .ix-main:has(.rq-cols) { overflow-y: auto !important; display: block !important; }
-  .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content { display: block !important; }
-  .ix-page .ix-content > .rq-cols { align-items: start !important; }
-  .ix-page .rq-cols > .rq-table { overflow: hidden !important; display: block !important; }
+  .ix-page.lay2 .ix-main:has(.rq-cols) { overflow-y: auto !important; display: flex !important; flex-direction: column !important; }
+  .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content { flex: 1 0 auto !important; min-height: auto !important; display: flex !important; flex-direction: column !important; align-self: stretch; width: 100%; box-sizing: border-box; }
+  .ix-page.lay2 .ix-main:has(.rq-cols) > .ix-content > * { flex: none; }
+  .ix-page .ix-content > .rq-cols { flex: 1 0 auto !important; align-items: stretch !important; }
+  .ix-page .rq-cols > .rq-side { align-self: start !important; }
+  .ix-page .rq-cols > .rq-table { overflow: hidden !important; display: flex !important; flex-direction: column; }
+  .ix-page .rq-cols > .rq-table > .rq-empty { flex: 1 1 auto; justify-content: center; }
+  .ix-page .rq-cols > .rq-table > .rq-tscroll { flex: none !important; }
+  .ix-page .rq-cols > .rq-table > :last-child:not(.rq-tscroll):not(.rq-empty) { margin-top: auto; }   /* page numbers at the bottom */
   .ix-page .rq-table .rq-tscroll { overflow: visible !important; max-height: none !important; }
   .ix-page .rq-table thead th { position: static !important; }
 }
