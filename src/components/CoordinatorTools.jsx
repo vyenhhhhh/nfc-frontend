@@ -10,6 +10,7 @@ import {
   Icon, Avatar, Badge, Msg, PageHeader, Drawer, OA_CSS, calcHours, programKey, requiredHoursFor, modalityOf, scopeOf, MODALITIES, SCOPES,
   PRE_REQUIREMENTS, DURING_REQUIREMENTS, POST_REQUIREMENTS, outputRequired, ojtComplete, reportFor, liveRefresh, HTE_CATEGORIES, confirmBox } from "./DashKit.jsx";
 import { API } from "../config.js";
+import { Pager } from "./ReviewQueue.jsx";   // the same page numbers as the other tables
 
 /* ── CSV export (opens in Excel / Google Sheets) ── */
 export function downloadCsv(filename, header, rows) {
@@ -488,6 +489,10 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
   const [openId, setOpenId] = useState(null);  // the intern whose checklist is open
   const navigate = useNavigate();
   useEffect(() => { setShow("all"); }, [phase]);
+  // 10 interns a page; any new search, filter or phase goes back to page 1
+  const PER_PAGE = 10;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [phase, q, prog, hte, show, view]);
   // the weekly / monthly reports the coordinator asked for: an intern's "Weekly / Monthly Report" follows them
   const [reports, setReports] = useState([]);
   useEffect(() => {
@@ -544,6 +549,9 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
     .filter((x) => show === "all" || (show === "missing" ? x.missing : show === "waiting" ? x.waiting : x.total > 0 && x.ok === x.total))
     .filter((x) => !sq || `${x.u.name} ${x.u.student_id || ""} ${x.u.placement || ""}`.toLowerCase().includes(sq))
     .sort((a, b) => (a.ok / (a.total || 1)) - (b.ok / (b.total || 1)) || String(a.u.name).localeCompare(String(b.u.name)));
+  const pages = Math.max(1, Math.ceil(shown.length / PER_PAGE));
+  const pg = Math.min(page, pages);
+  const paged = shown.slice((pg - 1) * PER_PAGE, pg * PER_PAGE);
   const review = (u) => reviewPath && navigate(reviewPath, { state: { movIntern: u.id } });
 
   const exportCsv = () => downloadCsv(`Requirements_${phase}_${today()}.csv`,
@@ -601,7 +609,7 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
           <table className="ct-t rt-list">
             <thead><tr><th>Intern</th><th>Progress</th>{reviewPath && <th className="c">Waiting for you</th>}<th className="c">Missing / returned</th><th /></tr></thead>
             <tbody>
-              {shown.map((x) => (
+              {paged.map((x) => (
                 <tr key={x.u.id} className="ct-click" onClick={() => setOpenId(x.u.id)}>
                   <td><span className="ct-who"><Avatar name={x.u.name} photo={x.u.photo} size={30} /><span><b>{x.u.name}</b><small>{[programKey(x.u.program), x.u.placement].filter(Boolean).join(" · ")}</small></span></span></td>
                   <td className="rt-prog">
@@ -615,6 +623,7 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
               ))}
             </tbody>
           </table>
+          <Pager page={pg} total={shown.length} perPage={PER_PAGE} onPage={setPage} />
         </div>
       ) : (
         /* 3b · the grid: every requirement as a column (the marks are explained above it) */
@@ -636,7 +645,7 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
                 </tr>
               </thead>
               <tbody>
-                {shown.map((x) => (
+                {paged.map((x) => (
                   <tr key={x.u.id} className="ct-click" onClick={() => setOpenId(x.u.id)}>
                     <td className="ct-stick"><span className="ct-who"><Avatar name={x.u.name} photo={x.u.photo} size={26} /><span><b>{x.u.name}</b><small>{[programKey(x.u.program), x.u.placement].filter(Boolean).join(" · ")}</small></span></span></td>
                     {x.cells.map((c, i) => (
@@ -654,6 +663,7 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
               </tbody>
             </table>
             </div>
+            <Pager page={pg} total={shown.length} perPage={PER_PAGE} onPage={setPage} />
           </div>
         </>
       )}
