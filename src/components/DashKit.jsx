@@ -103,6 +103,11 @@ export const MODALITY_HINT = {
   project: "Works on a project: done when the project is complete (supervisor marks it, coordinator confirms it)",
 };
 export const modalityOf = (u) => (MODALITIES[u?.modality] ? u.modality : "onsite");
+// a project-based intern keeps a flexible schedule (never late, no undertime on the DTR) unless their HTE makes
+// its project-based interns follow 8:00–5:00 (hte_fixed_schedule: from the supervisor's account, sent with the intern)
+const on = (v) => v === true || v === 1 || v === "1" || v === "true";
+export const flexibleSchedule = (u) => modalityOf(u) === "project" && !on(u?.hte_fixed_schedule);
+export const fixedScheduleOn = on;
 // Is the OJT done? Project-based: when the project is confirmed complete (supervisor marks it, coordinator confirms it),
 // even before the required hours. Everyone else: when the rendered hours reach the required hours.
 export const ojtComplete = (u, hours) => (modalityOf(u) === "project"
@@ -2509,6 +2514,12 @@ export function UserForm({ f, set, mode, isIntern, header, title, sub, uidField,
                     {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </select>
                 ), { opt: true, hint: "Every intern placed at this HTE gets it automatically (except interns given their own)." })}
+                {(f.hte_modality === "project" || fixedScheduleOn(f.project_fixed_schedule)) && fld("Schedule of project-based interns", (
+                  <select className="uf-input" value={fixedScheduleOn(f.project_fixed_schedule) ? "1" : "0"} onChange={set("project_fixed_schedule")}>
+                    <option value="0">Flexible (never late, no undertime)</option>
+                    <option value="1">8:00 AM – 5:00 PM (late after 8:00 AM)</option>
+                  </select>
+                ), { hint: "Whether this HTE makes its project-based interns follow the regular office hours." })}
                 {fld("System output presentation", (
                   <select className="uf-input" value={outputRequired(f) ? "1" : "0"} onChange={set("output_required")}>
                     <option value="1">Required by this HTE</option>

@@ -6,7 +6,7 @@ import Shell, {
   navWithTabs,
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker, Inbox,
   InternMonitor, AccountSecurity, UserDetails, UserForm, RolePickModal, outputRequired, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
-  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, confirmBox, copyText } from "../components/DashKit.jsx";
+  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, confirmBox, copyText, flexibleSchedule, fixedScheduleOn } from "../components/DashKit.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
@@ -981,7 +981,7 @@ const BLANK_FORM = {
   student_id: "", contact_number: "", address: "",
   placement: "", semester: "1st Semester", program: "BSIT - 4",
   uid: "", work_mode: "onsite", tracking_type: "hours", modality: "hte", scope: "local", hte_modality: "", hte_category: "", dtr_mode: "two", supervisor_id: "", photo: null,
-  output_required: "1", prior_hours: "",
+  output_required: "1", project_fixed_schedule: "0", prior_hours: "",
   emergency_contact_name: "", emergency_contact_relation: "",
   emergency_contact_number: "", emergency_contact_address: "",
 };
@@ -1161,6 +1161,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
       hte_address: u.hte_address || "",
       moa_valid_until: u.moa_valid_until ? String(u.moa_valid_until).slice(0, 10) : "",
       output_required: outputRequired(u) ? "1" : "0",
+      project_fixed_schedule: fixedScheduleOn(u.project_fixed_schedule) ? "1" : "0",
       prior_hours: Number(u.prior_hours) ? String(Number(u.prior_hours)) : "",
     });
     setEditPhoto(null);
@@ -1626,7 +1627,7 @@ export function DTR({ interns, records, canCertify = false }) {
     const month = `${shown.year}-${shown.mon}`;
     const range = periodsOf(shown.year, shown.mon).find((p) => p.key === shown.period);
     const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } =
-      buildDtr({ records: records.filter((r) => r.user_id === intern.id), month, from: range.from, to: range.to, mode, holidays, portions: excusedDays.portions || {} });
+      buildDtr({ records: records.filter((r) => r.user_id === intern.id), month, from: range.from, to: range.to, mode, holidays, portions: excusedDays.portions || {}, noTardy: flexibleSchedule(intern) });
     const monthName = MONTHS.find((m) => m.value === shown.mon)?.label || "";
     const formHtml = dtrFormHtml({
       name: intern.name, office: "Caraga State University - MAIN", periodLabel: `${monthName} ${range.from} - ${range.to}, ${shown.year}`,

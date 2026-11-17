@@ -92,7 +92,9 @@ export default function InternDashboard() {
   const [program, setProgram] = useState(user.program || "");
   const [dtrMode, setDtrMode] = useState(dtrModeOf(user));
   const [prior, setPrior] = useState(Number(user.prior_hours) || 0);   // hours from an earlier term
-  const [, setProjectDone] = useState(!!user.project_confirmed_at);   // re-renders once /me says the project is confirmed
+  const [, setProjectDone] = useState(!!user.project_confirmed_at);
+  // project-based with a flexible schedule (their HTE doesn't make them follow 8–5): no tardiness or undertime on the DTR
+  const [flexible, setFlexible] = useState(modalityOf(user) === "project");   // re-renders once /me says the project is confirmed
 
   // the login response has no program / DTR type, so read them from the account
   useEffect(() => {
@@ -109,6 +111,7 @@ export default function InternDashboard() {
           sessionStorage.setItem("user", JSON.stringify({ ...cur, modality: acct.modality ?? cur.modality, project_confirmed_at: acct.project_confirmed_at ?? null }));
         } catch { /* keep the session as it is */ }
         setProjectDone(!!acct.project_confirmed_at);
+        setFlexible(!!acct.flexible_schedule);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -212,7 +215,7 @@ export default function InternDashboard() {
         <Attendance user={user} records={records} loading={loading} required={required} program={program} onRefresh={fetchRecords} />
       )}
       {path === "/intern/dtr" && (
-        <MyDtr user={user} records={records} loading={loading} mode={dtrMode} />
+        <MyDtr user={user} records={records} loading={loading} mode={dtrMode} noTardy={flexible} />
       )}
       {path === "/intern/online" && <SubmitOnline user={user} />}
       {path === "/intern/movs" && <SubmitMov user={user} unlocked={ojtComplete({ ...user, program, prior_hours: prior }, totalHours)} totalHours={totalHours} required={required} />}
@@ -2885,7 +2888,9 @@ export function useExcused(forId = null) {
 export const excusedLabels = (map) =>
   Object.fromEntries(Object.entries(map).filter(([d]) => !["am", "pm"].includes(map.portions?.[d])).map(([d, n]) => [d, `EXCUSED: ${n}`]));
 
-export function buildDtr({ records, month, from, to, mode, holidays = {}, portions = {} }) {
+/* noTardy: project-based interns don't follow the 8-to-5 schedule (OJT coordinator), so their DTR
+   shows the real tap times but never counts tardiness or undertime */
+export function buildDtr({ records, month, from, to, mode, holidays = {}, portions = {}, noTardy = false }) {
   const S = SCHEDULE;
   const mins = (h) => Math.max(Math.floor(h * 60 + 1e-6), 0);   // hours → whole minutes, never negative
   const inRange = records.filter((r) => {
@@ -2938,6 +2943,7 @@ export function buildDtr({ records, month, from, to, mode, holidays = {}, portio
         pmOut: pm?.out ? t12(pm.out) : "",
       };
     }
+    if (noTardy) { late = 0; early = 0; }
     tardyMin += late;
     undertimeMin += early;
     return { ...row, ut: late + early };
@@ -2946,7 +2952,7 @@ export function buildDtr({ records, month, from, to, mode, holidays = {}, portio
   return { formRows, totalHrs, daysPresent: Object.keys(byDate).length, tardyMin, undertimeMin };
 }
 
-function MyDtr({ user, records, loading, mode }) {
+function MyDtr({ user, records, loading, mode, noTardy = false }) {
   // Month and year start on the current month; the period starts blank.
   // Nothing is shown until the user picks a period and clicks "Display DTR".
   const nowManila = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
@@ -2987,7 +2993,7 @@ function MyDtr({ user, records, loading, mode }) {
     const month = `${shown.year}-${shown.mon}`;
     const range = periodsOf(shown.year, shown.mon).find((p) => p.key === shown.period);
     const { formRows, totalHrs, daysPresent, tardyMin, undertimeMin } =
-      buildDtr({ records, month, from: range.from, to: range.to, mode, holidays, portions: excusedDays.portions || {} });
+      buildDtr({ records, month, from: range.from, to: range.to, mode, holidays, portions: excusedDays.portions || {}, noTardy });
     const monthName = MONTHS.find((m) => m.value === shown.mon)?.label || "";
     const periodLabel = `${monthName} ${range.from} - ${range.to}, ${shown.year}`;
     const verifierFor = (h) => verifierOf(certs, `${month}-${String(range.from).padStart(2, "0")}`, `${month}-${String(range.to).padStart(2, "0")}`, h);
