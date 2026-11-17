@@ -46,7 +46,7 @@ const Who = ({ name, photo, sub }) => (
 );
 // the steps of one item: [label, state] where state is done | now | bad | skip | ""
 const Steps = ({ list }) => (
-  <ol className="oa-steps">
+  <ol className="oa-steps aq-steps" style={{ gridTemplateColumns: `repeat(${list.length}, minmax(0, 1fr))` }}>
     {list.map(([t, s], i) => (
       <li key={i} className={s}>
         <i>{s === "done" ? <Icon name="check" size={11} /> : s === "bad" ? <Icon name="x" size={11} /> : s === "skip" ? "–" : i + 1}</i>
@@ -553,6 +553,10 @@ export function ProjectQueue({ interns, records, onRefresh, role = "coordinator"
 }
 
 const AQ_CSS = `
+/* step labels wrap to a second line instead of being cut ("You mark it c…") */
+.oa-steps.aq-steps { align-items: start; }
+.oa-steps.aq-steps li { align-items: flex-start; }
+.oa-steps.aq-steps li span { white-space: normal; overflow: visible; text-overflow: clip; padding-top: 3px; overflow-wrap: anywhere; }
 .aq-facts { flex: none; display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 14px; border: 1px solid #eef0f4; border-radius: 12px; background: #fafbfc; }
 .aq-facts span { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .aq-facts small { font-size: 12px; color: #64748b; } .aq-facts b { font-size: 13.5px; color: #0f172a; font-weight: 600; }
