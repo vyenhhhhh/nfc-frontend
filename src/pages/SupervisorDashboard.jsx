@@ -469,7 +469,7 @@ function FixQueue({ waiting = [], reviewed = [], onReview }) {
               <div className="aq-facts-lite"><span><small>Time between</small> <b>{span(c)}</b></span><span><small>{mine(c) ? "Sent" : "Reviewed"}</small> <b>{fxWhen(mine(c) ? c.created_at : (c.reviewed_at || c.updated_at))}</b></span></div>
               <div className="oa-tasks"><span>Reason</span><p>{c.reason || "—"}</p></div>
               {c.proof_path && (
-                <div className="oa-tasks"><span>Proof</span><p><a className="ix-link" href={fileHref(c.proof_path)} onClick={(e) => openFile(c.proof_path, e)} target="_blank" rel="noopener noreferrer">
+                <div className="oa-tasks oa-proof"><span>Proof</span><p><a className="ix-link" href={fileHref(c.proof_path)} onClick={(e) => openFile(c.proof_path, e)} target="_blank" rel="noopener noreferrer">
                   <Icon name="file" size={13} /> {c.proof_name || "View proof"}</a></p></div>
               )}
               <p className="fx-final">Your decision is final: an approved correction is applied to the intern's attendance right away.</p>
@@ -517,7 +517,11 @@ const FX_CSS = `
 .aq-facts-lite { flex: none; display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 14px; border: 1px solid #eef0f4; border-radius: 12px; background: #fafbfc; font-size: 13.5px; }
 .aq-facts-lite small { font-size: 12px; color: #64748b; } .aq-facts-lite b { color: #0f172a; font-weight: 600; }
 .fx-final { margin: 0; font-size: 12.5px; color: #6b7280; }
-.ix-drawer .oa-tasks { max-height: none; }
+.ix-drawer .oa-tasks { border: 1px solid #eef0f4; border-radius: 10px; padding: 10px 14px; flex: none; min-height: 58px; max-height: none; box-sizing: border-box; }
+.ix-drawer .oa-tasks.oa-proof { min-height: 0; }
+.ix-drawer .oa-tasks > span { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; }
+.ix-drawer .oa-tasks p { margin: 0; font-size: 14px; line-height: 1.55; color: #1e293b; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ix-drawer .oa-tasks a { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; }
 .fx-side { border: 1px solid #eef0f4; background: #fafbfc; border-radius: 12px; padding: 9px 12px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .fx-side.ask { border-color: #bbe5c8; background: #f3fbf6; }
 .fx-lbl { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; }
