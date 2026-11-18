@@ -1543,7 +1543,8 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
               {v("Semester", u.semester)}
               {v("Modality", MODALITIES[modalityOf(u)])}
               {v("Scope", SCOPES[scopeOf(u)])}
-              {v("Time record (DTR)", dtrModeOf(u) === "four" ? "4 taps (AM/PM)" : "2 taps (in and out)")}
+              {/* the intern's own HTE supervisor can change it here; everyone else just sees it */}
+              {v("Time record (DTR)", <DtrModeField u={u} />)}
               {v("Required hours", `${required} hours`)}
               {v("College", u.college || "CCIS")}
               {v("First day", firstDate ? fmtDate(firstDate) : "No records yet")}
