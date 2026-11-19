@@ -485,7 +485,7 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
   const [prog, setProg] = useState("all");
   const [hte, setHte] = useState("all");
   const [show, setShow] = useState("all");     // all | missing | waiting | complete
-  const [view, setView] = useState("list");    // list (easy to read) | grid (every requirement at once)
+  const [view, setView] = useState("list");    // list (easy to read) | grid (every requirement at once) | program (one row per program)
   const [openId, setOpenId] = useState(null);  // the intern whose checklist is open
   const navigate = useNavigate();
   useEffect(() => { setShow("all"); }, [phase]);
@@ -559,6 +559,47 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
     shown.map((x) => [x.u.name, x.u.student_id || "", programKey(x.u.program) || x.u.program || "", x.u.placement || "",
       ...x.cells.map((c) => (c.n ? `${CELL[c.st][2]} (${c.n})` : CELL[c.st][2])), `${x.ok}/${x.total}`]));
 
+  // ── by program: how far each program (BSIT, BSCS, BSIS) is, over all three phases ──
+  // a phase counts for an intern only when something is required of them in it
+  // (post-internship opens after the hours or the project are done; during waits until a report is asked)
+  const progStats = (() => {
+    const blank = (key) => ({ key, n: 0, done: 0, ok: 0, need: 0, wait: 0, miss: 0,
+      ph: Object.fromEntries(PH.map(([k]) => [k, { complete: 0, of: 0, ok: 0, need: 0 }])) });
+    const groups = new Map(PROGS.map((p) => [p, blank(p)]));
+    const all = blank("Total");
+    interns
+      .filter((u) => hte === "all" || String(u.placement || "").trim() === hte)
+      .forEach((u) => {
+        const key = programKey(u.program) || "Other";
+        if (!groups.has(key)) groups.set(key, blank(key));
+        const done = doneOf(u);
+        [groups.get(key), all].forEach((g) => { g.n += 1; if (done) g.done += 1; });
+        PH.forEach(([k, , reqs]) => {
+          const cells = reqs.map((r) => statusOf(u, r, done, k));
+          const need = cells.filter((c) => !SKIP.includes(c.st));
+          const ok = need.filter((c) => c.st === "approved").length;
+          const wait = cells.filter((c) => c.st === "pending").length;
+          const miss = cells.filter((c) => c.st === "missing" || c.st === "rejected").length;
+          [groups.get(key), all].forEach((g) => {
+            const ph = g.ph[k];
+            ph.ok += ok; ph.need += need.length;
+            if (need.length) { ph.of += 1; if (ok === need.length) ph.complete += 1; }
+            g.ok += ok; g.need += need.length; g.wait += wait; g.miss += miss;
+          });
+        });
+      });
+    return { rows: [...groups.values()], all };
+  })();
+  const pct = (ok, need) => (need ? Math.round((ok / need) * 100) : 0);
+  const phaseEmpty = { pre: "No requirement yet", during: "No report asked yet", post: "Opens after the hours are done" };
+  const exportProgCsv = () => downloadCsv(`Compliance_by_program_${today()}.csv`,
+    ["Program", "Interns", ...PH.flatMap(([, l]) => [`${l}: interns complete`, `${l}: items approved`]), "Hours or project done", "Waiting for review", "Missing or returned", "Overall compliance"],
+    [...progStats.rows, progStats.all].map((g) => [g.key, g.n,
+      ...PH.flatMap(([k]) => [`${g.ph[k].complete} of ${g.ph[k].of}`, `${g.ph[k].ok} of ${g.ph[k].need} (${pct(g.ph[k].ok, g.ph[k].need)}%)`]),
+      `${g.done} of ${g.n}`, g.wait, g.miss, `${pct(g.ok, g.need)}%`]));
+  // click a program: its interns in the list view
+  const openProgram = (p) => { if (PROGS.includes(p)) setProg(p); setView("list"); };
+
   const open = openId != null ? interns.find((u) => u.id === openId) : null;
 
   return (
@@ -567,6 +608,7 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
       <style>{RT_CSS}</style>
       {/* 1 · find interns */}
       <div className="ct-bar">
+        {view !== "program" && <>
         <div className="ix-search ct-search"><Icon name="search" size={15} />
           <input type="text" placeholder="Search name, ID or HTE..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <select className="ix-select" value={show} onChange={(e) => setShow(e.target.value)} aria-label="Show">
@@ -579,6 +621,7 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
           <option value="all">All programs</option>
           {PROGS.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
+        </>}
         <select className="ix-select" value={hte} onChange={(e) => setHte(e.target.value)} aria-label="HTE">
           <option value="all">All HTEs</option>
           {htes.map((h) => <option key={h} value={h}>{h}</option>)}
@@ -586,12 +629,15 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
         <div className="rt-view" role="tablist" aria-label="View">
           <button type="button" className={view === "list" ? "on" : ""} aria-selected={view === "list"} onClick={() => setView("list")}><Icon name="list" size={14} /> List</button>
           <button type="button" className={view === "grid" ? "on" : ""} aria-selected={view === "grid"} onClick={() => setView("grid")}><Icon name="dashboard" size={14} /> Grid</button>
+          <button type="button" className={view === "program" ? "on" : ""} aria-selected={view === "program"} onClick={() => setView("program")}><Icon name="chart" size={14} /> By program</button>
         </div>
-        <button type="button" className="ix-b ghost sm ix-exp" onClick={exportCsv} disabled={!shown.length}><Icon name="download" size={14} /> Export</button>
+        {view === "program"
+          ? <button type="button" className="ix-b ghost sm ix-exp" onClick={exportProgCsv} disabled={!progStats.all.n}><Icon name="download" size={14} /> Export</button>
+          : <button type="button" className="ix-b ghost sm ix-exp" onClick={exportCsv} disabled={!shown.length}><Icon name="download" size={14} /> Export</button>}
       </div>
 
       {/* 2 · the phase (under the search), and the list of requirements behind it */}
-      <div className="rt-head">
+      {view !== "program" && <div className="rt-head">
         <div className="rt-tabs" role="tablist" aria-label="Phase">
           {PH.map(([k, l, reqs]) => (
             <button key={k} type="button" role="tab" aria-selected={phase === k} className={phase === k ? "on" : ""} onClick={() => setPhase(k)}>
@@ -599,9 +645,66 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
           ))}
         </div>
         {/* only the OJT coordinator changes the list of requirements (the admin sees a read-only overview) */}
-      </div>
+      </div>}
 
-      {shown.length === 0 ? (
+      {view === "program" ? (
+        /* 3c · one row per program: how far each program is in every phase */
+        progStats.all.n === 0 ? (
+          <div className="ix-card ct-card"><div className="ct-empty"><Icon name="folder" size={22} /><b>{interns.length ? "No intern matches" : "No interns yet"}</b><small>{interns.length ? "Try another HTE." : ""}</small></div></div>
+        ) : (
+          <div className="ix-card ct-card">
+            <div className="ct-scroll">
+            <table className="ct-t rt-list rt-progt">
+              <thead><tr>
+                <th>Program</th><th className="c">Interns</th>
+                {PH.map(([k, l]) => <th key={k}>{l}</th>)}
+                <th className="c">Hours done</th>
+                {reviewPath && <th className="c">Waiting for you</th>}
+                <th className="c">Missing / returned</th>
+                <th className="c">Compliance</th>
+              </tr></thead>
+              <tbody>
+                {progStats.rows.map((g) => (
+                  <tr key={g.key} className={g.n ? "ct-click" : ""} onClick={g.n ? () => openProgram(g.key) : undefined} title={g.n ? `Open the ${g.key} interns` : undefined}>
+                    <td><b>{g.key}</b></td>
+                    <td className="c">{g.n}</td>
+                    {PH.map(([k]) => {
+                      const ph = g.ph[k];
+                      return (
+                        <td key={k} className="rt-prog">
+                          {ph.of ? <>
+                            <span className="rt-bar"><i className={ph.complete === ph.of ? "full" : ""} style={{ width: `${pct(ph.ok, ph.need)}%` }} /></span>
+                            <small>{ph.complete} of {ph.of} complete · {pct(ph.ok, ph.need)}% approved</small>
+                          </> : <small className="rt-dash">{g.n ? phaseEmpty[k] : "–"}</small>}
+                        </td>
+                      );
+                    })}
+                    <td className="c">{g.n ? `${g.done} of ${g.n}` : <span className="rt-dash">–</span>}</td>
+                    {reviewPath && <td className="c">{g.wait ? <span className="rt-pill wait">{g.wait}</span> : <span className="rt-dash">–</span>}</td>}
+                    <td className="c">{g.miss ? <span className="rt-pill bad">{g.miss}</span> : <span className="rt-dash">–</span>}</td>
+                    <td className="c">{g.need ? <b className={g.ok === g.need ? "ct-okn" : ""}>{pct(g.ok, g.need)}%</b> : <span className="rt-dash">–</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr>
+                <td><b>Total</b></td>
+                <td className="c"><b>{progStats.all.n}</b></td>
+                {PH.map(([k]) => {
+                  const ph = progStats.all.ph[k];
+                  return <td key={k}>{ph.of ? <small>{ph.complete} of {ph.of} complete · {pct(ph.ok, ph.need)}% approved</small> : <span className="rt-dash">–</span>}</td>;
+                })}
+                <td className="c">{progStats.all.done} of {progStats.all.n}</td>
+                {reviewPath && <td className="c">{progStats.all.wait || <span className="rt-dash">–</span>}</td>}
+                <td className="c">{progStats.all.miss || <span className="rt-dash">–</span>}</td>
+                <td className="c"><b>{pct(progStats.all.ok, progStats.all.need)}%</b></td>
+              </tr></tfoot>
+            </table>
+            </div>
+            <p className="rt-note">Complete = every required item of that phase is approved. Compliance = approved items out of all required items in the three phases. Click a program to see its interns.</p>
+          </div>
+        )
+      ) : shown.length === 0 ? (
+
         <div className="ix-card ct-card"><div className="ct-empty"><Icon name="folder" size={22} /><b>{rows.length ? "No intern matches" : "No interns yet"}</b><small>{rows.length ? "Try another filter." : ""}</small></div></div>
       ) : view === "list" ? (
         /* 3a · one row per intern: how far they are, in words */
@@ -719,6 +822,12 @@ const RT_CSS = `
 .rt-pill.wait { background: #fef3c7; color: #b45309; } .rt-pill.bad { background: #fee2e2; color: #b91c1c; }
 .rt-dash { color: #c4c8d0; }
 .rt-key { justify-content: flex-start; margin: 0 0 10px; }
+/* by program */
+.rt-progt th, .rt-progt td { white-space: nowrap; }
+.rt-progt .rt-prog { min-width: 170px; }
+.rt-progt .rt-bar { max-width: 200px; }
+.rt-progt small.rt-dash { font-size: 12px; color: #9ca3af; }
+.rt-note { margin: 0; padding: 10px 14px; border-top: 1px solid #f1f3f6; font-size: 12px; color: #6b7280; }
 /* the intern's checklist (drawer) */
 .rt-sec { margin-bottom: 16px; }
 .rt-sec h4 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #c2410c; }
