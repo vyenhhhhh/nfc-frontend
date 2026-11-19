@@ -531,20 +531,20 @@ function QuarterSummary({ user, supervisors = [], interns: allInterns = [], movs
             {/* 2 · Table 1 */}
             <section className="ix-card qs-card">
               <h4>Deployment by program <small>Table 1</small></h4>
-              <table className="qs-t">
+              <div className="qs-scroll"><table className="qs-t">
                 <thead><tr><th>Program</th><th className="c">Enrolled</th><th className="c">Deployed</th><th className="c">Rate</th><th className="c">Required hours</th></tr></thead>
                 <tbody>{s.t.t1.map((r) => <tr key={r.p}><td><b>{r.p}</b></td><td className="c">{r.enrolled}</td><td className="c">{r.deployed}</td><td className="c">{fmtPct(pctOf(r.deployed, r.enrolled))}</td><td className="c">{r.hours || "—"}</td></tr>)}</tbody>
                 <tfoot><tr><td><b>Total</b></td><td className="c"><b>{s.enrolled}</b></td><td className="c"><b>{s.dep.length}</b></td><td className="c"><b>{fmtPct(pctOf(s.dep.length, s.enrolled))}</b></td><td /></tr></tfoot>
-              </table>
+              </table></div>
             </section>
 
             {/* 3 · modality */}
             <section className="ix-card qs-card">
               <h4>Interns by modality <small>from Table 4</small></h4>
-              <table className="qs-t">
+              <div className="qs-scroll"><table className="qs-t">
                 <thead><tr><th>Modality</th>{P.map((p) => <th key={p} className="c">{p}</th>)}<th className="c">Total</th></tr></thead>
                 <tbody>{s.mods.map((m) => <tr key={m.m}><td>{m.m}</td>{P.map((p) => <td key={p} className="c">{m.per[p] || <span className="qs-dash">–</span>}</td>)}<td className="c"><b>{m.n}</b></td></tr>)}</tbody>
-              </table>
+              </table></div>
             </section>
           </div>
 
@@ -576,10 +576,10 @@ function QuarterSummary({ user, supervisors = [], interns: allInterns = [], movs
             <section className="ix-card qs-card">
               <h4>HTE supervisors</h4>
               {s.supRows.length === 0 ? <p className="qs-mut">No supervisor is assigned to this quarter's interns.</p> : (
-                <table className="qs-t">
+                <div className="qs-scroll"><table className="qs-t">
                   <thead><tr><th>Supervisor</th><th>HTE</th><th className="c">Interns</th><th className="c">Appraisals</th></tr></thead>
                   <tbody>{s.supRows.map((r) => <tr key={r.id}><td><b>{r.name}</b></td><td>{r.hte || "—"}</td><td className="c">{r.n}</td><td className="c">{r.rated} of {r.n}</td></tr>)}</tbody>
-                </table>
+                </table></div>
               )}
               {s.noSup.length > 0 && <p className="qs-foot qs-bad">{s.noSup.length} deployed intern{s.noSup.length === 1 ? " has" : "s have"} no HTE supervisor: {s.noSup.map((i) => i.name).join(", ")}</p>}
             </section>
@@ -1783,7 +1783,7 @@ const QS_CSS = `
 .qs-st { display: inline-flex; align-items: center; gap: 8px; } .qs-st small { font-size: 12px; color: #6b7280; }
 .qs-none { display: inline-block; padding: 3px 10px; border-radius: 99px; background: #f3f4f6; color: #6b7280; font-size: 12px; font-weight: 700; }
 .qs-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
-.qs-tile { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 14px; border: 1px solid #eceff3; background: #fff; min-width: 0; }
+.qs-tile { position: relative; display: flex; height: 100%; box-sizing: border-box; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 14px; border: 1px solid #eceff3; background: #fff; min-width: 0; }
 .qs-ic { width: 30px; height: 30px; border-radius: 9px; display: inline-grid; place-items: center; background: #fff1ea; color: #e8582a; margin-bottom: 4px; }
 .qs-tile small { font-size: 12px; font-weight: 600; color: #6b7280; }
 .qs-tile b { font-size: 24px; line-height: 1.2; color: #1f2937; }
@@ -1791,9 +1791,13 @@ const QS_CSS = `
 .qs-tile.warn .qs-ic { background: #fef3c7; color: #b45309; } .qs-tile.warn b { color: #b45309; }
 .qs-tile.good .qs-ic { background: #dcfce7; color: #15803d; }
 .qs-note { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px; background: #fffbeb; border: 1px solid #fde68a; font-size: 13px; color: #92400e; }
-.qs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+/* cards in one row are the same height, so their bottom borders line up */
+.qs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
 .qs-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.ix-page .ix-content .ix-card.qs-card { padding: 16px 18px !important; height: auto !important; min-height: 0 !important; display: block !important; }
+.ix-page .ix-content .ix-card.qs-card { padding: 16px 18px !important; height: auto !important; min-height: 0 !important; display: flex !important; flex-direction: column; min-width: 0; margin: 0 !important; }
+.ix-page .ix-content .qs-grid > .ix-card.qs-card { height: 100% !important; }
+.qs-card > .qs-open, .qs-card > .qs-empty { margin-top: auto; }
+.qs-card .qs-foot:last-child { margin-top: auto; padding-top: 10px; }
 .qs-card h4 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 10px; font-size: 14px; font-weight: 700; color: #1f2937; }
 .qs-card h4 small { font-size: 11.5px; font-weight: 600; color: #9ca3af; }
 .qs-scroll { overflow-x: auto; }
@@ -1821,8 +1825,15 @@ const QS_CSS = `
 .qs-parts i { flex: none; width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 800; background: #f3f4f6; color: #9ca3af; }
 .qs-parts li.ok i { background: #dcfce7; color: #15803d; } .qs-parts li.part i { background: #fef3c7; color: #b45309; }
 .qs-empty { display: grid; gap: 10px; justify-items: start; }
-@media (max-width: 1200px) { .qs-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .qs-grid.three { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 860px) { .qs-grid, .qs-grid.three { grid-template-columns: 1fr; } .qs-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.qs-t th, .qs-t td { white-space: nowrap; }
+.qs-t td:first-child { white-space: normal; min-width: 120px; }
+/* the third card goes under the first two (full width) when three no longer fit */
+@media (max-width: 1280px) { .qs-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .qs-grid.three { grid-template-columns: 1fr 1fr; } .qs-grid.three > :last-child { grid-column: 1 / -1; } }
+@media (max-width: 1024px) { .qs-grid { grid-template-columns: 1fr; } .ix-page .ix-content .qs-grid > .ix-card.qs-card { height: auto !important; } }
+@media (max-width: 760px) { .qs-grid.three { grid-template-columns: 1fr; } .qs-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .qs-tile { padding: 12px; } .qs-tile b { font-size: 20px; }
+  .qs-head, .qs-pick, .qs-acts { width: 100%; } .qs-pick .ix-select { flex: 1 1 140px; } .qs-acts > * { flex: 1; justify-content: center; }
+  .qs-qo li { padding: 9px 10px; } .qs-dl { grid-template-columns: 1fr; gap: 2px 0; } .qs-dl dd { margin-bottom: 8px; } }
 `;
 
 const QR_CSS = `
