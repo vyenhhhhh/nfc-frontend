@@ -4,7 +4,8 @@
 // Table 1 (enrolled / deployed per program) and Table 4 (interns per HTE) are counted by the system;
 // everything else is typed here, saved per quarter, and printed (or saved as PDF) in the college's layout.
 import { Fragment, useState, useEffect, useMemo, useRef } from "react";
-import { Icon, Msg, Spinner, programKey, esc, HTE_CATEGORIES, Drawer, Table, Badge, Modal, confirmBox } from "./DashKit.jsx";
+import { Icon, Msg, Spinner, programKey, esc, HTE_CATEGORIES, Drawer, Table, Badge, Modal, confirmBox, PRE_REQUIREMENTS, ojtComplete } from "./DashKit.jsx";
+import { downloadCsv } from "./CoordinatorTools.jsx";
 import { API } from "../config.js";
 import csuLogo from "../assets/csu-logo.png";
 import bpLogo from "../assets/bagong-pilipinas.png";     // Bagong Pilipinas, beside the CSU logo on the cover
@@ -161,8 +162,84 @@ const suggestQuarter = () => {
 const qTitle = (y, q) => `${Q_WORD[q - 1]} quarter ${y}`;
 const when = (t) => (t ? new Date(String(t).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
 
+
+/* Table 1 (per program: enrolled, deployed, hours) and Table 4 (per program → per HTE), counted from the quarter's
+   records (srv = GET /coordinator/quarterly-report) and the saved report d. Used by the report and by the Summary. */
+function countTables(srv, d, supervisors = []) {
+  const list = srv?.interns || [];
+  const hours = srv?.program_hours || {};
+  const key = (p) => programKey(p) || "Other";
+  // Table 1: per program, enrolled (all intern accounts) and deployed (had attendance this quarter)
+  const progs = [...new Set([...PROGRAM_ORDER.filter((p) => (srv?.enrolled || []).some((e) => key(e.program) === p) || list.some((i) => key(i.program) === p)),
+    ...(srv?.enrolled || []).map((e) => key(e.program)), ...list.map((i) => key(i.program))])];
+  const t1 = progs.map((p) => {
+    const auto = (srv?.enrolled || []).filter((e) => key(e.program) === p).length;
+    const typed = d.enrolled?.[p];
+    return {
+      p, name: PROGRAM_NAME[p] || p,
+      deployed: list.filter((i) => key(i.program) === p).length,
+      enrolled: typed !== undefined && typed !== "" ? Number(typed) : auto,
+      autoEnrolled: auto,
+      hours: hours[p] ?? "",
+    };
+  });
+  // Table 4: per program → per HTE
+  const placed = list.filter((i) => (i.placement || "").trim());
+  const t4 = progs.map((p) => {
+    const mine = placed.filter((i) => key(i.program) === p);
+    const byHte = new Map();
+    mine.forEach((i) => { const h = i.placement.trim(); if (!byHte.has(h)) byHte.set(h, []); byHte.get(h).push(i); });
+    const rows = [...byHte.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([h, arr]) => {
+      // the coordinator's modality per intern (On-site / Hybrid / Virtual); older data falls back to the work mode
+      const LBL = { onsite: "On-site", hybrid: "Hybrid", virtual: "Virtual", project: "Project-based" };
+      const mods = [...new Set(arr.map((i) => LBL[i.modality] || (i.work_mode === "offsite" ? "Virtual" : "On-site")))];
+      const autoMod = MODALITIES.filter((m) => mods.includes(m)).join(", ");
+      // a CSU / CCIS office is an academic / university office unless the coordinator picked something else
+      const uni = /^(CSU|CCIS|Caraga State University)\b/i.test(h);
+      // what Partner HTEs knows about this HTE (category and modality set on its supervisor account)
+      const hk = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+      const sup = supervisors.filter((s) => hk(s.placement) === hk(h));
+      const setCat = sup.map((s) => s.hte_category).find(Boolean);
+      const setMod = LBL[sup.map((s) => s.hte_modality).find((m) => LBL[m])];
+      return { hte: h, n: arr.length, cat: d.hte_cat?.[h] || setCat || (uni ? "Educational Institution" : ""), mod: d.hte_mod?.[h] || setMod || autoMod };
+    });
+    return { p, rows };
+  }).filter((g) => g.rows.length);
+  const htes = [...new Set(placed.map((i) => i.placement.trim()))];
+  return { total: list.length, unplaced: list.length - placed.length, t1, t4, htes };
+}
+
+// how far each part of the report is: ok | part | none (the same rules the report's own checklist uses)
+function partStatus(d, t) {
+  const filled = (v) => String(v || "").trim() !== "";
+  const any = (arr, f) => (arr || []).some(f);
+  const checked = (k) => !!d.checked?.[k];
+  return {
+    s1: filled(d.objectives) && filled(d.profile) && filled(d.quality) ? (d.structure ? "ok" : "part") : "part",
+    s2a: !t.t1.length ? "none" : checked("s2a") ? "ok" : "part",
+    s2b: any(d.new_hte, (r) => filled(r.name)) || any(d.renewed, (r) => filled(r.name)) || any(d.engagements, (a) => filled(a.title)) ? "ok" : "none",
+    s2c: !t.t4.length ? "none" : t.t4.every((g) => g.rows.every((r) => r.cat)) && checked("s2c") && filled(d.orientation) ? "ok" : "part",
+    s2d: filled(d.monitoring) ? "ok" : "none",
+    s2e: any(d.activities, (a) => filled(a.title)) ? "ok" : "none",
+    s3: any(d.best, (b) => filled(b.title)) ? "ok" : "none",
+    s4: any(d.challenges, (c) => filled(c.challenge)) ? (d.challenges.every((c) => !filled(c.challenge) || filled(c.solution)) ? "ok" : "part") : "none",
+    s5: any(d.plans, (g) => filled(g.title)) ? "ok" : "none",
+    sign: filled(d.prepared?.name) && filled(d.noted?.name) ? "ok" : filled(d.prepared?.name) || filled(d.noted?.name) ? "part" : "none",
+  };
+}
+
+// the saved report (any layout) on top of a blank one
+const mergeSaved = (user, y, q, saved) => {
+  const base = blank(user, y, q);
+  if (!saved) return base;
+  return saved.v === 2 ? { ...base, ...saved }
+    : { ...base, ...Object.fromEntries(Object.entries(fromOld(saved)).filter(([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && !v.length))) };
+};
+
 /* Coordinator → Reports → Quarterly Report: the list of reports first (Draft / Ready), then one report's form */
-export default function QuarterlyReport({ user, supervisors = [], interns = [] }) {
+export default function QuarterlyReport({ user, supervisors = [], interns = [], movs = [] }) {
+  // Summary (one quarter at a glance) or the list of full reports
+  const [mode, setMode] = useState("summary");
   // ?q=2026-3 (from the reminder) opens that quarter's report straight away
   const [open, setOpen] = useState(() => {
     const m = /^(\d{4})-([1-4])$/.exec(new URLSearchParams(window.location.search).get("q") || "");
@@ -190,9 +267,26 @@ export default function QuarterlyReport({ user, supervisors = [], interns = [] }
     view={open[2] === "view"} onMode={(m) => setOpen([open[0], open[1], m])} onBack={back} />;
 
   const exists = (y, q) => (list || []).some((r) => r.year === y && r.quarter === q);
+  const switcher = (
+    <div className="qs-mode" role="tablist" aria-label="Show">
+      <button type="button" role="tab" aria-selected={mode === "summary"} className={mode === "summary" ? "on" : ""} onClick={() => setMode("summary")}><Icon name="chart" size={14} /> Summary</button>
+      <button type="button" role="tab" aria-selected={mode === "list"} className={mode === "list" ? "on" : ""} onClick={() => setMode("list")}><Icon name="file" size={14} /> Full reports</button>
+    </div>
+  );
+  if (mode === "summary") return (
+    <div className="qr">
+      <style>{QR_CSS}</style>
+      <style>{QS_CSS}</style>
+      {switcher}
+      <QuarterSummary user={user} supervisors={supervisors} interns={interns} movs={movs}
+        onOpen={(y, q, m) => go(y, q, m)} onStart={(y, q) => go(y, q)} />
+    </div>
+  );
   return (
     <div className="qr">
       <style>{QR_CSS}</style>
+      <style>{QS_CSS}</style>
+      {switcher}
       <div className="qr-listhead">
         <p>One report for each quarter. View a report to see it as it prints, or Edit it to check, write and sign it.</p>
         <button type="button" className="ix-b primary" onClick={() => setAdding(suggestQuarter())}><Icon name="plus" size={14} /> New quarterly report</button>
@@ -239,6 +333,321 @@ export default function QuarterlyReport({ user, supervisors = [], interns = [] }
             </div>
           </div>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ───────────── Summary: one quarter at a glance (no report needs to be made or saved) ─────────────
+   Everything the full report counts, plus what the system knows about the HTEs, the supervisors, the MOAs,
+   the requirements, the hours and the appraisals, for the quarter that is picked. */
+const QS_PARTS = { ok: ["✓", "Done"], part: ["•", "Started"], none: ["–", "Not yet"] };
+const dayOf = (v) => String(v || "").slice(0, 10);
+const pctOf = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : null);
+const fmtPct = (v) => (v == null ? "—" : `${v % 1 ? v.toFixed(1) : v}%`);
+const fmtDay = (v) => (v ? new Date(dayOf(v) + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
+const hkey = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+
+function QuarterSummary({ user, supervisors = [], interns: allInterns = [], movs = [], onOpen, onStart }) {
+  const [y, setY] = useState(nowYear);
+  const [q, setQ] = useState(nowQuarter);
+  // the picked quarter's records; kept with the quarter they belong to, so a new pick shows the spinner until it loads
+  const [res, setRes] = useState(null);           // { k: "2026-4", srv, err }
+  const k = `${y}-${q}`;
+  const srv = res?.k === k ? res.srv : null;
+  const err = res?.k === k ? res.err : null;
+  const [grades, setGrades] = useState([]);
+  const [feed, setFeed] = useState({ cal: [], ann: [] });
+
+  useEffect(() => {
+    let live = true;
+    fetch(`${API}/coordinator/quarterly-report?year=${y}&quarter=${q}`, { headers: { Accept: "application/json" } })
+      .then((r) => r.json().then((j) => { if (!r.ok) throw new Error(j.message || "Couldn't load the quarter."); return j; }))
+      .then((j) => { if (live) setRes({ k: `${y}-${q}`, srv: j, err: null }); })
+      .catch((e) => { if (live) setRes({ k: `${y}-${q}`, srv: { interns: [], enrolled: [], period: null }, err: { type: "error", text: e instanceof TypeError ? "Couldn't reach the server." : e.message } }); });
+    return () => { live = false; };
+  }, [y, q]);
+  useEffect(() => {
+    const get = (u) => fetch(`${API}${u}`, { headers: { Accept: "application/json" } }).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+    Promise.all([get("/grades"), get("/calendar"), get("/announcements")]).then(([g, c, a]) => {
+      setGrades(Array.isArray(g?.interns) ? g.interns : []);
+      setFeed({ cal: (Array.isArray(c) ? c : c?.events || []).filter((e) => !e.hte_key), ann: Array.isArray(a) ? a : [] });
+    });
+  }, []);
+
+  const s = useMemo(() => {
+    if (!srv) return null;
+    const saved = srv.data || null;
+    const d = mergeSaved(user, y, q, saved || {});
+    const t = countTables(srv, d, supervisors);
+    const byId = new Map(allInterns.map((u) => [String(u.id), u]));
+    const gradeOf = new Map(grades.map((g) => [String(g.id), g]));
+    // the interns deployed this quarter, with what the dashboard knows about them (supervisor, modality, project)
+    const dep = (srv.interns || []).map((i) => ({ ...(byId.get(String(i.id)) || {}), ...i, supervisor_id: byId.get(String(i.id))?.supervisor_id ?? null }));
+    const progs = t.t1.map((r) => r.p);
+    const key = (p) => programKey(p) || "Other";
+    const today2 = today;
+
+    // HTEs (with interns this quarter): category, supervisors, MOA
+    const supsAt = (h) => supervisors.filter((x) => hkey(x.placement) === hkey(h));
+    const moaOf = (h) => {
+      const v = supsAt(h).map((x) => dayOf(x.moa_valid_until)).filter(Boolean).sort().pop() || "";
+      if (!v) return { v, k: "none", txt: "No MOA date" };
+      const days = Math.floor((new Date(v + "T00:00:00") - new Date(today2 + "T00:00:00")) / 86400000);
+      return days < 0 ? { v, k: "expired", txt: "Expired" } : days <= 60 ? { v, k: "soon", txt: `${days} day${days === 1 ? "" : "s"} left` } : { v, k: "valid", txt: "Valid" };
+    };
+    const catOf = new Map(); t.t4.forEach((g) => g.rows.forEach((r) => { if (r.cat && !catOf.has(r.hte)) catOf.set(r.hte, r.cat); }));
+    const hteRows = t.htes.map((h) => {
+      const mine = dep.filter((i) => String(i.placement || "").trim() === h);
+      const supIds = [...new Set(mine.map((i) => i.supervisor_id).filter(Boolean).map(String))];
+      const names = supIds.map((id) => supervisors.find((x) => String(x.id) === id)?.name).filter(Boolean);
+      return { hte: h, cat: catOf.get(h) || "", sups: names.length ? names : supsAt(h).map((x) => x.name), moa: moaOf(h),
+        per: Object.fromEntries(progs.map((p) => [p, mine.filter((i) => key(i.program) === p).length])), n: mine.length };
+    }).sort((a, b) => b.n - a.n || a.hte.localeCompare(b.hte));
+    const cats = {}; hteRows.forEach((r) => { const c = r.cat || "No category"; cats[c] = (cats[c] || 0) + 1; });
+
+    // modality per program
+    const LBL = { onsite: "On-site", hybrid: "Hybrid", virtual: "Virtual", project: "Project-based" };
+    const modOf = (i) => LBL[i.modality] || (i.work_mode === "offsite" ? "Virtual" : "On-site");
+    const mods = MODALITIES.map((m) => ({ m, per: Object.fromEntries(progs.map((p) => [p, dep.filter((i) => key(i.program) === p && modOf(i) === m).length])),
+      n: dep.filter((i) => modOf(i) === m).length }));
+
+    // HTE supervisors of this quarter's interns
+    const supRows = [...new Set(dep.map((i) => i.supervisor_id).filter(Boolean).map(String))].map((id) => {
+      const sup = supervisors.find((x) => String(x.id) === id);
+      const mine = dep.filter((i) => String(i.supervisor_id) === id);
+      return { id, name: sup?.name || "Unknown", hte: sup?.placement || "", n: mine.length,
+        rated: mine.filter((i) => gradeOf.get(String(i.id))?.appraisal).length };
+    }).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+    const noSup = dep.filter((i) => !i.supervisor_id);
+
+    // quality objectives (from the report's Section 1)
+    const enrolled = t.t1.reduce((a, r) => a + (Number(r.enrolled) || 0), 0);
+    const latest = new Map();
+    [...movs].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).forEach((m) => {
+      const k = `${m.user_id}:${m.phase || "pre"}:${m.requirement}`; if (!latest.has(k)) latest.set(k, m.status);
+    });
+    const preDone = dep.filter((i) => PRE_REQUIREMENTS.length && PRE_REQUIREMENTS.every((r) => latest.get(`${i.id}:pre:${r.key}`) === "approved")).length;
+    const hrsDone = dep.filter((i) => ojtComplete(i, gradeOf.get(String(i.id))?.hours ?? 0)).length;
+    const scored = dep.map((i) => gradeOf.get(String(i.id))?.appraisal?.score).filter((v) => v != null);
+    const sat = scored.filter((v) => Number(v) >= 75).length;
+    const moaOk = hteRows.filter((r) => r.moa.k === "valid" || r.moa.k === "soon").length;
+    const goal = (label, a, b, target, unit = "interns") => {
+      const v = pctOf(a, b);
+      return { label, a, b, v, target, unit, met: v == null ? null : v >= target };
+    };
+    const qo = [
+      goal("Deployment of enrolled interns", dep.length, enrolled, 95),
+      goal("HTEs with a valid MOA", moaOk, hteRows.length, 100, "HTEs"),
+      goal("Pre-internship requirements all approved", preDone, dep.length, 100),
+      goal("Completed the required hours or project (so far)", hrsDone, dep.length, 95),
+      goal("Satisfactory rating (≥75%) from the HTE supervisor", sat, scored.length, 85, "rated interns"),
+    ];
+
+    // the quarter's activities
+    const inQ = (v) => { const x = dayOf(v); return srv.period && x >= srv.period.from && x <= srv.period.to; };
+    const events = feed.cal.filter((e) => e.scope === "school_event" && inQ(e.date));
+    const anns = feed.ann.filter((a) => inQ(a.created_at));
+    const named = (arr, f) => (arr || []).map(f).map((x) => String(x || "").trim()).filter(Boolean);
+    const part = {
+      newMoa: named(d.new_hte, (r) => r.name), renewed: named(d.renewed, (r) => r.name), engage: named(d.engagements, (r) => r.title),
+      acts: named(d.activities, (r) => r.title), best: named(d.best, (r) => r.title), chal: named(d.challenges, (r) => r.challenge), plans: named(d.plans, (r) => r.title),
+    };
+    const status = saved ? partStatus(d, t) : null;
+    const done = status ? SECTIONS.filter((x) => status[x.key] === "ok").length : 0;
+    return { saved, t, dep, enrolled, hteRows, cats, mods, supRows, noSup, qo, events, anns, part, status, done, progs,
+      moaBad: hteRows.filter((r) => r.moa.k !== "valid").length };
+  }, [srv, grades, feed, supervisors, allInterns, movs, user, y, q]);
+
+  const exportCsv = () => {
+    if (!s) return;
+    const P = s.progs, rows = [];
+    const blank = () => rows.push([]);
+    rows.push([`Quarter Summary: ${qTitle(y, q)} (${Q_MONTHS[q - 1]})`]); blank();
+    rows.push(["Deployed", s.dep.length], ["Enrolled", s.enrolled], ["HTEs", s.hteRows.length], ["HTE supervisors", s.supRows.length],
+      ["HTEs with an MOA to check", s.moaBad], ["Deployed interns without a supervisor", s.noSup.length]); blank();
+    rows.push(["Deployment by program"], ["Program", "Enrolled", "Deployed", "Deployment rate", "Required hours"]);
+    s.t.t1.forEach((r) => rows.push([r.p, r.enrolled, r.deployed, fmtPct(pctOf(r.deployed, r.enrolled)), r.hours]));
+    rows.push(["Total", s.enrolled, s.dep.length, fmtPct(pctOf(s.dep.length, s.enrolled)), ""]); blank();
+    rows.push(["Interns by modality"], ["Modality", ...P, "Total"]);
+    s.mods.forEach((m) => rows.push([m.m, ...P.map((p) => m.per[p]), m.n])); blank();
+    rows.push(["HTEs"], ["HTE", "Category", "Supervisor(s)", "MOA valid until", "MOA status", ...P, "Total"]);
+    s.hteRows.forEach((r) => rows.push([r.hte, r.cat, r.sups.join("; "), r.moa.v, r.moa.txt, ...P.map((p) => r.per[p]), r.n])); blank();
+    rows.push(["HTE supervisors"], ["Supervisor", "HTE", "Interns", "Appraisals submitted"]);
+    s.supRows.forEach((r) => rows.push([r.name, r.hte, r.n, r.rated])); blank();
+    rows.push(["Quality objectives"], ["Objective", "Result", "Rate", "Target", "Met?"]);
+    s.qo.forEach((o) => rows.push([o.label, `${o.a} of ${o.b} ${o.unit}`, fmtPct(o.v), `${o.target}%`, o.met == null ? "No data" : o.met ? "Yes" : "No"])); blank();
+    rows.push(["Partnerships (from the saved report)"], ["New MOAs", s.part.newMoa.join("; ")], ["Renewed MOAs", s.part.renewed.join("; ")], ["Engagement activities", s.part.engage.join("; ")]); blank();
+    rows.push(["Activities"], ["School events", s.events.map((e) => e.title).join("; ")], ["Announcements", s.anns.length],
+      ["Highlights", s.part.acts.join("; ")], ["Best practices", s.part.best.join("; ")], ["Challenges", s.part.chal.join("; ")], ["Plans", s.part.plans.join("; ")]); blank();
+    rows.push(["Report status", s.saved ? `${s.done} of ${SECTIONS.length} parts done` : "Not started"]);
+    if (s.status) SECTIONS.forEach((x) => rows.push([`${x.n ? `${x.group ? `${x.group}.` : ""}${x.n} ` : ""}${x.label}`, QS_PARTS[s.status[x.key]][1]]));
+    downloadCsv(`Quarter_summary_${y}_Q${q}.csv`, rows[0], rows.slice(1));
+  };
+
+  const P = s?.progs || [];
+  const tile = (icon, label, value, sub, tone = "") => (
+    <div className={`qs-tile ${tone}`}><span className="qs-ic"><Icon name={icon} size={17} /></span><small>{label}</small><b>{value}</b>{sub && <em>{sub}</em>}</div>
+  );
+  const ready = s?.saved && s.done >= SECTIONS.length;
+
+  return (
+    <div className="qs">
+      <div className="qs-head">
+        <div className="qs-pick">
+          <select className="ix-select" value={y} onChange={(e) => setY(Number(e.target.value))} aria-label="Year">
+            {Array.from({ length: 6 }, (_, i) => nowYear - 4 + i).map((v) => <option key={v}>{v}</option>)}
+          </select>
+          <select className="ix-select" value={q} onChange={(e) => setQ(Number(e.target.value))} aria-label="Quarter">
+            {[1, 2, 3, 4].map((v) => <option key={v} value={v}>{Q_WORD[v - 1]} quarter ({Q_MONTHS[v - 1]})</option>)}
+          </select>
+          {s && (s.saved
+            ? <span className="qs-st">{ready ? <Badge label="Report ready" type="approved" /> : <Badge label="Report draft" type="pending" />}<small>{s.done} of {SECTIONS.length} parts done</small></span>
+            : <span className="qs-st"><span className="qs-none">No report yet</span></span>)}
+        </div>
+        <div className="qs-acts">
+          {s && (s.saved
+            ? <button type="button" className="ix-b ghost sm" onClick={() => onOpen(y, q, "view")}><Icon name="eye" size={14} /> Open full report</button>
+            : <button type="button" className="ix-b ghost sm" onClick={() => onStart(y, q)}><Icon name="plus" size={14} /> Start the report</button>)}
+          <button type="button" className="ix-b ghost sm" onClick={exportCsv} disabled={!s}><Icon name="download" size={14} /> Export</button>
+        </div>
+      </div>
+      <Msg msg={err} />
+      {!s ? <Spinner /> : (
+        <>
+          {/* 1 · key numbers */}
+          <div className="qs-tiles">
+            {tile("users", "Deployed", s.dep.length, `${Q_MONTHS[q - 1]}`)}
+            {tile("list", "Enrolled", s.enrolled, s.enrolled ? `${fmtPct(pctOf(s.dep.length, s.enrolled))} deployed` : "")}
+            {tile("globe", "HTEs", s.hteRows.length, Object.keys(s.cats).length ? `${Object.keys(s.cats).length} categor${Object.keys(s.cats).length === 1 ? "y" : "ies"}` : "")}
+            {tile("briefcase", "HTE supervisors", s.supRows.length, "of this quarter's interns")}
+            {tile("file", "MOAs to check", s.moaBad, s.moaBad ? "expired, expiring or no date" : "all valid", s.moaBad ? "warn" : "good")}
+            {tile("warn", "No supervisor", s.noSup.length, s.noSup.length ? "deployed interns" : "everyone has one", s.noSup.length ? "warn" : "good")}
+          </div>
+
+          {s.dep.length === 0 && <div className="qs-note"><Icon name="info" size={14} /> No intern has attendance in this quarter yet, so most numbers are zero. Pick another quarter.</div>}
+
+          <div className="qs-grid">
+            {/* 2 · Table 1 */}
+            <section className="ix-card qs-card">
+              <h4>Deployment by program <small>Table 1</small></h4>
+              <table className="qs-t">
+                <thead><tr><th>Program</th><th className="c">Enrolled</th><th className="c">Deployed</th><th className="c">Rate</th><th className="c">Required hours</th></tr></thead>
+                <tbody>{s.t.t1.map((r) => <tr key={r.p}><td><b>{r.p}</b></td><td className="c">{r.enrolled}</td><td className="c">{r.deployed}</td><td className="c">{fmtPct(pctOf(r.deployed, r.enrolled))}</td><td className="c">{r.hours || "—"}</td></tr>)}</tbody>
+                <tfoot><tr><td><b>Total</b></td><td className="c"><b>{s.enrolled}</b></td><td className="c"><b>{s.dep.length}</b></td><td className="c"><b>{fmtPct(pctOf(s.dep.length, s.enrolled))}</b></td><td /></tr></tfoot>
+              </table>
+            </section>
+
+            {/* 3 · modality */}
+            <section className="ix-card qs-card">
+              <h4>Interns by modality <small>from Table 4</small></h4>
+              <table className="qs-t">
+                <thead><tr><th>Modality</th>{P.map((p) => <th key={p} className="c">{p}</th>)}<th className="c">Total</th></tr></thead>
+                <tbody>{s.mods.map((m) => <tr key={m.m}><td>{m.m}</td>{P.map((p) => <td key={p} className="c">{m.per[p] || <span className="qs-dash">–</span>}</td>)}<td className="c"><b>{m.n}</b></td></tr>)}</tbody>
+              </table>
+            </section>
+          </div>
+
+          {/* 4 · HTEs */}
+          <section className="ix-card qs-card">
+            <h4>Host Training Establishments <small>Table 4 and Partner HTEs</small></h4>
+            {s.hteRows.length === 0 ? <p className="qs-mut">No intern was placed at an HTE this quarter.</p> : (
+              <div className="qs-scroll">
+                <table className="qs-t">
+                  <thead><tr><th>HTE</th><th>Category</th><th>Supervisor(s)</th><th>MOA valid until</th>{P.map((p) => <th key={p} className="c">{p}</th>)}<th className="c">Total</th></tr></thead>
+                  <tbody>{s.hteRows.map((r) => (
+                    <tr key={r.hte}>
+                      <td><b>{r.hte}</b></td>
+                      <td>{r.cat || <span className="qs-mut">Not set</span>}</td>
+                      <td>{r.sups.length ? r.sups.join(", ") : <span className="qs-bad">None</span>}</td>
+                      <td><span className={`qs-moa ${r.moa.k}`}>{r.moa.v ? fmtDay(r.moa.v) : "—"}<small>{r.moa.txt}</small></span></td>
+                      {P.map((p) => <td key={p} className="c">{r.per[p] || <span className="qs-dash">–</span>}</td>)}
+                      <td className="c"><b>{r.n}</b></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+            {Object.keys(s.cats).length > 0 && <p className="qs-foot">By category: {Object.entries(s.cats).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} ${n}`).join(" · ")}</p>}
+          </section>
+
+          <div className="qs-grid">
+            {/* 5 · supervisors */}
+            <section className="ix-card qs-card">
+              <h4>HTE supervisors</h4>
+              {s.supRows.length === 0 ? <p className="qs-mut">No supervisor is assigned to this quarter's interns.</p> : (
+                <table className="qs-t">
+                  <thead><tr><th>Supervisor</th><th>HTE</th><th className="c">Interns</th><th className="c">Appraisals</th></tr></thead>
+                  <tbody>{s.supRows.map((r) => <tr key={r.id}><td><b>{r.name}</b></td><td>{r.hte || "—"}</td><td className="c">{r.n}</td><td className="c">{r.rated} of {r.n}</td></tr>)}</tbody>
+                </table>
+              )}
+              {s.noSup.length > 0 && <p className="qs-foot qs-bad">{s.noSup.length} deployed intern{s.noSup.length === 1 ? " has" : "s have"} no HTE supervisor: {s.noSup.map((i) => i.name).join(", ")}</p>}
+            </section>
+
+            {/* 7 · quality objectives */}
+            <section className="ix-card qs-card">
+              <h4>Quality objectives <small>Section 1 of the report</small></h4>
+              <ul className="qs-qo">
+                {s.qo.map((o) => (
+                  <li key={o.label}>
+                    <span className="qs-qo-t"><b>{o.label}</b><small>{o.b ? `${o.a} of ${o.b} ${o.unit}` : "No data yet"} · target {o.target}%</small></span>
+                    <span className={`qs-qo-v ${o.met == null ? "na" : o.met ? "ok" : "bad"}`}>{fmtPct(o.v)}<small>{o.met == null ? "No data" : o.met ? "Met" : "Not met"}</small></span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
+
+          <div className="qs-grid three">
+            {/* 6 · partnerships */}
+            <section className="ix-card qs-card">
+              <h4>Partnerships <small>Tables 2 and 3</small></h4>
+              {!s.saved ? <p className="qs-mut">Shows once this quarter's report is saved.</p> : (
+                <dl className="qs-dl">
+                  <dt>New MOAs</dt><dd><b>{s.part.newMoa.length}</b>{s.part.newMoa.length > 0 && <small>{s.part.newMoa.join(", ")}</small>}</dd>
+                  <dt>Renewed MOAs</dt><dd><b>{s.part.renewed.length}</b>{s.part.renewed.length > 0 && <small>{s.part.renewed.join(", ")}</small>}</dd>
+                  <dt>Engagements</dt><dd><b>{s.part.engage.length}</b>{s.part.engage.length > 0 && <small>{s.part.engage.join(", ")}</small>}</dd>
+                </dl>
+              )}
+            </section>
+
+            {/* 8 · activities */}
+            <section className="ix-card qs-card">
+              <h4>The quarter's activities</h4>
+              <dl className="qs-dl">
+                <dt>School events</dt><dd><b>{s.events.length}</b>{s.events.length > 0 && <small>{s.events.map((e) => e.title).join(", ")}</small>}</dd>
+                <dt>Announcements</dt><dd><b>{s.anns.length}</b></dd>
+                {s.saved && <>
+                  <dt>Highlights</dt><dd><b>{s.part.acts.length}</b></dd>
+                  <dt>Best practices</dt><dd><b>{s.part.best.length}</b></dd>
+                  <dt>Challenges</dt><dd><b>{s.part.chal.length}</b></dd>
+                  <dt>Plans</dt><dd><b>{s.part.plans.length}</b></dd>
+                </>}
+              </dl>
+            </section>
+
+            {/* 9 · report status */}
+            <section className="ix-card qs-card">
+              <h4>Report status</h4>
+              {!s.saved ? (
+                <div className="qs-empty"><p className="qs-mut">There is no report for this quarter yet.</p>
+                  <button type="button" className="ix-b primary sm" onClick={() => onStart(y, q)}><Icon name="plus" size={14} /> Start the report</button></div>
+              ) : (
+                <>
+                  <ul className="qs-parts">
+                    {SECTIONS.map((x) => (
+                      <li key={x.key} className={s.status[x.key]}>
+                        <i>{QS_PARTS[s.status[x.key]][0]}</i>
+                        <span>{x.n ? `${x.group ? `${x.group}.` : ""}${x.n} ` : ""}{x.label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button type="button" className="ix-b ghost sm qs-open" onClick={() => onOpen(y, q, "edit")}><Icon name="pencil" size={14} /> Continue the report</button>
+                </>
+              )}
+            </section>
+          </div>
+        </>
       )}
     </div>
   );
@@ -352,11 +761,7 @@ function ReportForm({ user, supervisors = [], interns: allInterns = [], year, qu
       const j = await res.json();
       if (!res.ok) throw new Error(j.message || "Couldn't load the report.");
       setSrv(j);
-      const saved = j.data || {};
-      const base = blank(user, y, q);
-      const merged = saved.v === 2 ? { ...base, ...saved }
-        : { ...base, ...Object.fromEntries(Object.entries(fromOld(saved)).filter(([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && !v.length))) };
-      setD(merged);
+      setD(mergeSaved(user, y, q, j.data || {}));
       setDirty(false);
     } catch (err) {
       setSrv({ interns: [], enrolled: [], period: null, error: true });
@@ -377,51 +782,10 @@ function ReportForm({ user, supervisors = [], interns: allInterns = [], year, qu
   const addRow = (k, row) => set(k, [...d[k], row]);
   const delRow = (k, i) => set(k, d[k].filter((_, j) => j !== i));
 
-  // ── the numbers the system counts ──
-  const t = useMemo(() => {
-    const list = srv?.interns || [];
-    const hours = srv?.program_hours || {};
-    const key = (p) => programKey(p) || "Other";
-    // Table 1: per program, enrolled (all intern accounts) and deployed (had attendance this quarter)
-    const progs = [...new Set([...PROGRAM_ORDER.filter((p) => (srv?.enrolled || []).some((e) => key(e.program) === p) || list.some((i) => key(i.program) === p)),
-      ...(srv?.enrolled || []).map((e) => key(e.program)), ...list.map((i) => key(i.program))])];
-    const t1 = progs.map((p) => {
-      const auto = (srv?.enrolled || []).filter((e) => key(e.program) === p).length;
-      const typed = d.enrolled?.[p];
-      return {
-        p, name: PROGRAM_NAME[p] || p,
-        deployed: list.filter((i) => key(i.program) === p).length,
-        enrolled: typed !== undefined && typed !== "" ? Number(typed) : auto,
-        autoEnrolled: auto,
-        hours: hours[p] ?? "",
-      };
-    });
-    // Table 4: per program → per HTE
-    const placed = list.filter((i) => (i.placement || "").trim());
-    const t4 = progs.map((p) => {
-      const mine = placed.filter((i) => key(i.program) === p);
-      const byHte = new Map();
-      mine.forEach((i) => { const h = i.placement.trim(); if (!byHte.has(h)) byHte.set(h, []); byHte.get(h).push(i); });
-      const rows = [...byHte.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([h, arr]) => {
-        // the coordinator's modality per intern (On-site / Hybrid / Virtual); older data falls back to the work mode
-        const LBL = { onsite: "On-site", hybrid: "Hybrid", virtual: "Virtual", project: "Project-based" };
-        const mods = [...new Set(arr.map((i) => LBL[i.modality] || (i.work_mode === "offsite" ? "Virtual" : "On-site")))];
-        const autoMod = MODALITIES.filter((m) => mods.includes(m)).join(", ");
-        // a CSU / CCIS office is an academic / university office unless the coordinator picked something else
-        const uni = /^(CSU|CCIS|Caraga State University)\b/i.test(h);
-        // what Partner HTEs knows about this HTE (category and modality set on its supervisor account)
-        const hk = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
-        const sup = supervisors.filter((s) => hk(s.placement) === hk(h));
-        const setCat = sup.map((s) => s.hte_category).find(Boolean);
-        const setMod = LBL[sup.map((s) => s.hte_modality).find((m) => LBL[m])];
-        return { hte: h, n: arr.length, cat: d.hte_cat?.[h] || setCat || (uni ? "Educational Institution" : ""), mod: d.hte_mod?.[h] || setMod || autoMod };
-      });
-      return { p, rows };
-    }).filter((g) => g.rows.length);
-    const htes = [...new Set(placed.map((i) => i.placement.trim()))];
-    return { total: list.length, unplaced: list.length - placed.length, t1, t4, htes };
+  // ── the numbers the system counts (Table 1 and Table 4) ──
+  const t = useMemo(() => countTables(srv, d, supervisors),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srv, d.enrolled, d.hte_cat, d.hte_mod, supervisors]);
+    [srv, d.enrolled, d.hte_cat, d.hte_mod, supervisors]);
 
   const save = async () => {
     setBusy("save"); setMsg(null);
@@ -507,21 +871,10 @@ function ReportForm({ user, supervisors = [], interns: allInterns = [], year, qu
     const m = document.querySelector(".ix-main"); if (m) m.scrollTo({ top: 0, behavior: "smooth" });
   };
   const filled = (v) => String(v || "").trim() !== "";
-  const any = (arr, f) => (arr || []).some(f);
   const checked = (k) => !!d.checked?.[k];
   const check = (k, v = true) => set("checked", { ...(d.checked || {}), [k]: v });
-  const status = {
-    s1: filled(d.objectives) && filled(d.profile) && filled(d.quality) ? (d.structure ? "ok" : "part") : "part",
-    s2a: !t.t1.length ? "none" : checked("s2a") ? "ok" : "part",
-    s2b: any(d.new_hte, (r) => filled(r.name)) || any(d.renewed, (r) => filled(r.name)) || any(d.engagements, (a) => filled(a.title)) ? "ok" : "none",
-    s2c: !t.t4.length ? "none" : t.t4.every((g) => g.rows.every((r) => r.cat)) && checked("s2c") && filled(d.orientation) ? "ok" : "part",
-    s2d: filled(d.monitoring) ? "ok" : "none",
-    s2e: any(d.activities, (a) => filled(a.title)) ? "ok" : "none",
-    s3: any(d.best, (b) => filled(b.title)) ? "ok" : "none",
-    s4: any(d.challenges, (c) => filled(c.challenge)) ? (d.challenges.every((c) => !filled(c.challenge) || filled(c.solution)) ? "ok" : "part") : "none",
-    s5: any(d.plans, (g) => filled(g.title)) ? "ok" : "none",
-    sign: filled(d.prepared?.name) && filled(d.noted?.name) ? "ok" : filled(d.prepared?.name) || filled(d.noted?.name) ? "part" : "none",
-  };
+  const status = partStatus(d, t);
+
   const doneN = SECTIONS.filter((x) => status[x.key] === "ok").length;
   // the list's Draft / Ready comes from the count saved with the report: when a saved report's count is
   // missing or out of date (saved before this was kept), save it again quietly so the list shows the truth
@@ -1419,6 +1772,58 @@ function wordHtml({ year, quarter, qName, content: raw, logo, bp, iso }) {
 ${content}
 </div></body></html>`;
 }
+
+const QS_CSS = `
+.qs-mode { display: inline-flex; align-self: flex-start; gap: 4px; padding: 3px; background: #f3f4f6; border: 1px solid #e8ebf0; border-radius: 10px; margin-bottom: 12px; }
+.qs-mode button { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: #4b5563; cursor: pointer; }
+.qs-mode button.on { background: #fff; color: #c2410c; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
+.qs { display: flex; flex-direction: column; gap: 14px; }
+.qs-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.qs-pick, .qs-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.qs-st { display: inline-flex; align-items: center; gap: 8px; } .qs-st small { font-size: 12px; color: #6b7280; }
+.qs-none { display: inline-block; padding: 3px 10px; border-radius: 99px; background: #f3f4f6; color: #6b7280; font-size: 12px; font-weight: 700; }
+.qs-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.qs-tile { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 14px; border: 1px solid #eceff3; background: #fff; min-width: 0; }
+.qs-ic { width: 30px; height: 30px; border-radius: 9px; display: inline-grid; place-items: center; background: #fff1ea; color: #e8582a; margin-bottom: 4px; }
+.qs-tile small { font-size: 12px; font-weight: 600; color: #6b7280; }
+.qs-tile b { font-size: 24px; line-height: 1.2; color: #1f2937; }
+.qs-tile em { font-style: normal; font-size: 11.5px; color: #9ca3af; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qs-tile.warn .qs-ic { background: #fef3c7; color: #b45309; } .qs-tile.warn b { color: #b45309; }
+.qs-tile.good .qs-ic { background: #dcfce7; color: #15803d; }
+.qs-note { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px; background: #fffbeb; border: 1px solid #fde68a; font-size: 13px; color: #92400e; }
+.qs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.qs-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ix-page .ix-content .ix-card.qs-card { padding: 16px 18px !important; height: auto !important; min-height: 0 !important; display: block !important; }
+.qs-card h4 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 10px; font-size: 14px; font-weight: 700; color: #1f2937; }
+.qs-card h4 small { font-size: 11.5px; font-weight: 600; color: #9ca3af; }
+.qs-scroll { overflow-x: auto; }
+.qs-t { width: 100%; border-collapse: collapse; font-size: 13px; }
+.qs-t th { text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: #6b7280; background: #fafbfc; padding: 9px 10px; border-bottom: 1px solid #eceff3; white-space: nowrap; }
+.qs-t td { padding: 9px 10px; border-bottom: 1px solid #f1f3f6; vertical-align: middle; }
+.qs-t tbody tr:last-child td { border-bottom: 0; }
+.qs-t tfoot td { background: #fafbfc; border-top: 1px solid #eceff3; }
+.qs-t .c { text-align: center; }
+.qs-dash { color: #c4c8d0; }
+.qs-mut { color: #6b7280; font-size: 13px; margin: 0; } .qs-bad { color: #b91c1c; }
+.qs-foot { margin: 10px 0 0; font-size: 12.5px; color: #4b5563; }
+.qs-moa { display: inline-flex; flex-direction: column; font-weight: 600; } .qs-moa small { font-size: 11px; font-weight: 600; }
+.qs-moa.valid small { color: #15803d; } .qs-moa.soon small { color: #b45309; } .qs-moa.expired small, .qs-moa.none small { color: #b91c1c; }
+.qs-qo { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.qs-qo li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 1px solid #f1f3f6; border-radius: 12px; }
+.qs-qo-t { display: flex; flex-direction: column; min-width: 0; } .qs-qo-t b { font-size: 13px; color: #1f2937; } .qs-qo-t small { font-size: 12px; color: #6b7280; }
+.qs-qo-v { flex: none; display: inline-flex; flex-direction: column; align-items: flex-end; font-size: 16px; font-weight: 800; }
+.qs-qo-v small { font-size: 11px; font-weight: 700; }
+.qs-qo-v.ok { color: #15803d; } .qs-qo-v.bad { color: #b91c1c; } .qs-qo-v.na { color: #9ca3af; }
+.qs-dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 0; font-size: 13px; }
+.qs-dl dt { color: #6b7280; } .qs-dl dd { margin: 0; display: flex; flex-direction: column; } .qs-dl dd small { font-size: 12px; color: #4b5563; }
+.qs-parts { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 5px; font-size: 12.5px; }
+.qs-parts li { display: flex; align-items: center; gap: 8px; color: #374151; }
+.qs-parts i { flex: none; width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 800; background: #f3f4f6; color: #9ca3af; }
+.qs-parts li.ok i { background: #dcfce7; color: #15803d; } .qs-parts li.part i { background: #fef3c7; color: #b45309; }
+.qs-empty { display: grid; gap: 10px; justify-items: start; }
+@media (max-width: 1200px) { .qs-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .qs-grid.three { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 860px) { .qs-grid, .qs-grid.three { grid-template-columns: 1fr; } .qs-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+`;
 
 const QR_CSS = `
 /* the list of reports: the table card reaches the bottom of the page, like the other tables */

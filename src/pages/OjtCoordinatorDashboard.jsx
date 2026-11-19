@@ -242,7 +242,7 @@ export default function OjtCoordinatorDashboard() {
           {tab.key === "supervisors" && <AssignSupervisors interns={interns} supervisors={supervisors} records={records} online={pending} overtime={overtime} onRefresh={fetchAll} />}
           {/* Reports */}
           {tab.key === "dtr" && <DTR interns={interns} records={records} />}
-          {tab.key === "quarterly" && <QuarterlyReport user={user} supervisors={supervisors} interns={interns} />}
+          {tab.key === "quarterly" && <QuarterlyReport user={user} supervisors={supervisors} interns={interns} movs={movs} />}
         </GroupPage>
       )}
 
