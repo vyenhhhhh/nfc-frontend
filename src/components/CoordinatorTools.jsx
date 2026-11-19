@@ -626,26 +626,30 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
           <option value="all">All HTEs</option>
           {htes.map((h) => <option key={h} value={h}>{h}</option>)}
         </select>
-        <div className="rt-view" role="tablist" aria-label="View">
-          <button type="button" className={view === "list" ? "on" : ""} aria-selected={view === "list"} onClick={() => setView("list")}><Icon name="list" size={14} /> List</button>
-          <button type="button" className={view === "grid" ? "on" : ""} aria-selected={view === "grid"} onClick={() => setView("grid")}><Icon name="dashboard" size={14} /> Grid</button>
-          <button type="button" className={view === "program" ? "on" : ""} aria-selected={view === "program"} onClick={() => setView("program")}><Icon name="chart" size={14} /> By program</button>
-        </div>
-        {view === "program"
-          ? <button type="button" className="ix-b ghost sm ix-exp" onClick={exportProgCsv} disabled={!progStats.all.n}><Icon name="download" size={14} /> Export</button>
-          : <button type="button" className="ix-b ghost sm ix-exp" onClick={exportCsv} disabled={!shown.length}><Icon name="download" size={14} /> Export</button>}
       </div>
 
-      {/* 2 · the phase (under the search), and the list of requirements behind it */}
-      {view !== "program" && <div className="rt-head">
-        <div className="rt-tabs" role="tablist" aria-label="Phase">
-          {PH.map(([k, l, reqs]) => (
-            <button key={k} type="button" role="tab" aria-selected={phase === k} className={phase === k ? "on" : ""} onClick={() => setPhase(k)}>
-              {l} <span className="rt-n">{reqs.length}</span></button>
-          ))}
+      {/* 2 · the phase on the left; the view (List, Grid, By program) and Export on the right, on one row */}
+      <div className="rt-head">
+        {view !== "program" ? (
+          <div className="rt-tabs" role="tablist" aria-label="Phase">
+            {PH.map(([k, l, reqs]) => (
+              <button key={k} type="button" role="tab" aria-selected={phase === k} className={phase === k ? "on" : ""} onClick={() => setPhase(k)}>
+                {l} <span className="rt-n">{reqs.length}</span></button>
+            ))}
+          </div>
+        ) : <span className="rt-title">Compliance of each program in all three phases</span>}
+        <div className="rt-right">
+          <div className="rt-view" role="tablist" aria-label="View">
+            <button type="button" className={view === "list" ? "on" : ""} aria-selected={view === "list"} onClick={() => setView("list")}><Icon name="list" size={14} /> List</button>
+            <button type="button" className={view === "grid" ? "on" : ""} aria-selected={view === "grid"} onClick={() => setView("grid")}><Icon name="dashboard" size={14} /> Grid</button>
+            <button type="button" className={view === "program" ? "on" : ""} aria-selected={view === "program"} onClick={() => setView("program")}><Icon name="chart" size={14} /> By program</button>
+          </div>
+          {view === "program"
+            ? <button type="button" className="ix-b ghost sm rt-exp" onClick={exportProgCsv} disabled={!progStats.all.n}><Icon name="download" size={14} /> Export</button>
+            : <button type="button" className="ix-b ghost sm rt-exp" onClick={exportCsv} disabled={!shown.length}><Icon name="download" size={14} /> Export</button>}
         </div>
         {/* only the OJT coordinator changes the list of requirements (the admin sees a read-only overview) */}
-      </div>}
+      </div>
 
       {view === "program" ? (
         /* 3c · one row per program: how far each program is in every phase */
@@ -809,7 +813,9 @@ const RT_CSS = `
 .rt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: -2px 0 14px; }
 .rt-tabs, .rt-view { display: inline-flex; gap: 4px; padding: 3px; background: #f3f4f6; border: 1px solid #e8ebf0; border-radius: 10px; flex-wrap: wrap; }
 .rt-tabs button, .rt-view button { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: #4b5563; cursor: pointer; white-space: nowrap; }
-.rt-view button { height: 30px; font-size: 12.5px; }
+.rt-right { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+.rt-title { font-size: 13.5px; font-weight: 600; color: #4b5563; }
+.ix-page .rt-head .rt-exp { height: 42px; margin: 0; }
 .rt-tabs button.on, .rt-view button.on { background: #fff; color: #c2410c; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
 .rt-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #e5e7eb; color: #475569; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
 .rt-list td { padding: 10px 14px; }
