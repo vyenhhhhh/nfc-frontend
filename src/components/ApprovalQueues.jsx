@@ -9,7 +9,7 @@
 // The supervisor's own pages still use the older list + details layout.
 import { useEffect, useState } from "react";
 import ReviewQueue from "./ReviewQueue.jsx";
-import { Avatar, Badge, Icon, Msg, Spinner, OA_CSS, fmtMinutes, liveRefresh, modalityOf, calcHours, requiredHoursFor, programKey } from "./DashKit.jsx";
+import { Avatar, Badge, Icon, Msg, Spinner, OA_CSS, fmtMinutes, liveRefresh, modalityOf, calcHours, requiredHoursFor, programKey, confirmBox } from "./DashKit.jsx";
 import { useFileLinkState } from "../files.js";
 import { API } from "../config.js";
 
@@ -134,13 +134,9 @@ export function OnlineQueue({ mine = [], withSup = [], done = [], onReview, role
 
   return (
     <ReviewQueue
-      tabs={sup ? [
+      tabs={[
         { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No online days waiting for you to confirm." : "No online days waiting for your decision."] },
         { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Days you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
-        { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Days that were approved or rejected show here."] },
-      ] : [
-        { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Days you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
-        { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No online days waiting for you to confirm." : "No online days waiting for your decision."] },
         { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Days that were approved or rejected show here."] },
       ]}
       rowKey={(o) => o.id}
@@ -224,13 +220,9 @@ export function OvertimeQueue({ mine = [], withSup = [], done = [], all = [], ca
 
   return (
     <ReviewQueue
-      tabs={sup ? [
+      tabs={[
         { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", "No overtime waiting for your decision."] },
         { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Overtime you approved waits here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
-        { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Overtime that was approved or rejected shows here."] },
-      ] : [
-        { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Overtime you approved waits here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
-        { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", "No overtime waiting for your decision."] },
         { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Overtime that was approved or rejected shows here."] },
       ]}
       rowKey={(o) => o.id}
@@ -343,13 +335,9 @@ export function ExcusedQueue({ role = "coordinator" }) {
     <>
       <Msg msg={msg} />
       <ReviewQueue
-        tabs={sup ? [
+        tabs={[
           { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No excused absences waiting for you to confirm." : "No excused absences waiting for your decision."] },
           { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Requests you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
-          { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Requests you approve or reject show here."] },
-        ] : [
-          { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Requests you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
-          { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No excused absences waiting for you to confirm." : "No excused absences waiting for your decision."] },
           { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Requests you approve or reject show here."] },
         ]}
         rowKey={(r) => r.id}
@@ -515,8 +503,8 @@ export function ProjectQueue({ interns, records, onRefresh, role = "coordinator"
           { key: "mine", label: "With the coordinator", items: by("mine"), empty: ["Nothing here", "Projects you mark complete wait here for the OJT coordinator."] },
           { key: "done", label: "Confirmed", items: by("done"), empty: ["Nothing confirmed yet", "Projects the coordinator confirms show here."] },
         ] : [
-          { key: "progress", label: "In progress", items: by("progress"), empty: ["Nothing here", "Project-based interns still working on their project show here."] },
           { key: "mine", label: "Needs my review", items: by("mine"), hot: true, empty: ["All caught up", all.length ? "Projects the HTE supervisor marks as complete show here." : "No project-based interns. Set an intern's modality to Project-based on their profile."] },
+          { key: "progress", label: "In progress", items: by("progress"), empty: ["Nothing here", "Project-based interns still working on their project show here."] },
           { key: "done", label: "Confirmed", items: by("done"), empty: ["Nothing confirmed yet", "Projects you confirm show here."] },
         ]}
         rowKey={(x) => x.id}
@@ -543,7 +531,7 @@ export function ProjectQueue({ interns, records, onRefresh, role = "coordinator"
           footer: sup ? (
             x.st === "progress"
               ? <><span className="rq2-result">Mark it only when all the tasks you gave are done.</span>
-                  <button type="button" className="ix-b ok" disabled={!!busy} onClick={() => { if (window.confirm(`Mark ${x.u.name}'s project as complete? Do this only when all the tasks you gave are done.`)) call(x, "POST", "mark", `${x.u.name}'s project is marked as complete. The OJT coordinator will confirm it.`); }}>{busy ? "..." : "Mark project complete"}</button></>
+                  <button type="button" className="ix-b ok" disabled={!!busy} onClick={async () => { if ((await confirmBox({ title: "Mark the project as complete?", message: `Mark ${x.u.name}'s project as complete? Do this only when all the tasks you gave are done.`, ok: "Yes, mark complete" }))) call(x, "POST", "mark", `${x.u.name}'s project is marked as complete. The OJT coordinator will confirm it.`); }}>{busy ? "..." : "Mark project complete"}</button></>
               : x.st === "mine"
                 ? <><Result icon="clock">Marked complete {stamp(x.s.marked_at)}. Waiting for the OJT coordinator.</Result>
                     <button type="button" className="ix-b ghost" disabled={!!busy} onClick={() => call(x, "DELETE", "mark", "The project is no longer marked as complete.")}>{busy ? "..." : "Undo"}</button></>

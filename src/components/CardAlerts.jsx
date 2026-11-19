@@ -1,6 +1,6 @@
 //CardAlerts.jsx
 import { useState, useEffect } from "react";
-import { Icon, Spinner, Badge, Table, Msg } from "./DashKit.jsx";
+import { Icon, Spinner, Badge, Table, Msg, confirmBox } from "./DashKit.jsx";
 import { API } from "../config.js";
 
 /* Copied / tampered card alerts. Every tap on an ACR122U kiosk checks the card's one-time code
@@ -16,7 +16,8 @@ export default function CardAlerts() {
   useEffect(() => { load(); const iv = setInterval(load, 30000); return () => clearInterval(iv); }, []);
 
   const resolve = async (f, action) => {
-    if (action === "reset" && !window.confirm(`Reset ${f.intern_name || "this"} card? Do this only after checking the intern has the real card with them. The card gets a new code on its next tap at an ACR122U kiosk.`)) return;
+    if (action === "reset" && !(await confirmBox({ title: "Reset this card?", message: `Reset ${f.intern_name || "this"} card? Do this only with the intern's real card in front of you, and have them tap it at the kiosk right away: the first card tapped after a reset gets the new code. If you think the card was copied, give a replacement card instead.`, ok: "Yes, reset" }))) return;
+    if (action === "dismiss" && f.nfc_card_id && !(await confirmBox({ title: "Dismiss this alert?", message: `The card is unlocked and works again with the code it has now. Dismiss only if you are sure it was a false alarm.`, ok: "Yes, dismiss" }))) return;
     setBusy(f.id + action); setMsg(null);
     try {
       const res = await fetch(`${API}/card-flags/${f.id}/resolve`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ action }) });
@@ -49,7 +50,7 @@ export default function CardAlerts() {
       <p className="ca-hint">
         {data && data.ready === false
           ? "Run the latest migration on the server to turn this on."
-          : "ACR122U kiosks write a new one-time code on the card at every tap. A copied card has an old code, so it is refused and shows up here."}
+          : "ACR122U kiosks write a new one-time code on the card at every tap. A copied card has an old code, so it is refused and shows up here. The card is then locked (the real card and any copy) until you reset it, dismiss the alert, or release a replacement card."}
       </p>
       <Msg msg={msg} />
       {!data ? <Spinner /> : (
@@ -59,10 +60,11 @@ export default function CardAlerts() {
             headers={["Intern", "What happened", ""]}
             empty={showDone ? "No card alerts yet." : "No open card alerts."}
             rows={flags.map((f) => [
-              f.intern_name ? <span><b>{f.intern_name}</b>{f.student_id ? <small className="ca-sub">{f.student_id}</small> : null}</span> : <span>UID {f.uid}</span>,
+              <span>{f.intern_name ? <><b>{f.intern_name}</b>{f.student_id ? <small className="ca-sub">{f.student_id}</small> : null}</> : <>UID {f.uid}</>}
+                {!f.resolved_at && f.nfc_card_id && <span className="ca-lock"><Badge label="Card locked" type="rejected" /></span>}</span>,
               <span title={f.details || ""}>{REASON[f.reason] || f.reason}
                 <small className="ca-sub">{when(f.created_at)} · {f.kiosk || "kiosk not named"} · card UID {f.uid}</small></span>,
-              f.resolved_at ? <Badge label={f.resolution === "reset" ? "Card reset" : "Dismissed"} type="approved" /> : (
+              f.resolved_at ? <Badge label={f.resolution === "reset" ? "Card reset" : f.resolution === "replaced" ? "Card replaced" : "Dismissed"} type="approved" /> : (
                 <span className="ca-acts">
                   <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => resolve(f, "dismiss")}>Dismiss</button>
                   {f.nfc_card_id && <button type="button" className="ix-b primary sm" disabled={!!busy} onClick={() => resolve(f, "reset")}>Reset card</button>}
@@ -100,5 +102,6 @@ const CA_CSS = `
   .ca-sec { margin-left: auto; font-size: 11.5px; font-weight: 600; color: #15803d; background: #e6f7ee; padding: 2px 10px; border-radius: 99px; white-space: nowrap; }
   .ca-hint { display: block; margin: 0 0 16px; padding-bottom: 16px; border-bottom: 1px solid #eef0f3; font-size: 12px; line-height: 1.55; color: #8b919b; }
   .ca-sub { display: block; font-size: 11px; color: #94a3b8; }
+  .ca-lock { display: block; margin-top: 6px; }
   .ca-acts { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 `;

@@ -8,10 +8,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Icon, Avatar, Badge, Msg, PageHeader, Drawer, OA_CSS, calcHours, programKey, requiredHoursFor, modalityOf, scopeOf, MODALITIES, SCOPES,
-  PRE_REQUIREMENTS, DURING_REQUIREMENTS, POST_REQUIREMENTS, outputRequired, ojtComplete, reportFor, liveRefresh, HTE_CATEGORIES,
-} from "./DashKit.jsx";
+  PRE_REQUIREMENTS, DURING_REQUIREMENTS, POST_REQUIREMENTS, outputRequired, ojtComplete, reportFor, liveRefresh, HTE_CATEGORIES, confirmBox } from "./DashKit.jsx";
 import { API } from "../config.js";
-import RequirementsManage from "./RequirementsManage.jsx";
 
 /* ── CSV export (opens in Excel / Google Sheets) ── */
 export function downloadCsv(filename, header, rows) {
@@ -156,7 +154,7 @@ export function ProjectsBoard({ interns, records, onRefresh, role = "coordinator
                 {sup ? (
                   <>
                     {cur.st === "progress" && <button type="button" className="ix-b ok" disabled={!!busy}
-                      onClick={() => { if (window.confirm(`Mark ${cur.u.name}'s project as complete? Do this only when all the tasks you gave are done.`)) call(cur, "POST", "mark", `${cur.u.name}'s project is marked as complete. The OJT coordinator will confirm it.`); }}>
+                      onClick={async () => { if ((await confirmBox({ title: "Mark the project as complete?", message: `Mark ${cur.u.name}'s project as complete? Do this only when all the tasks you gave are done.`, ok: "Yes, mark complete" }))) call(cur, "POST", "mark", `${cur.u.name}'s project is marked as complete. The OJT coordinator will confirm it.`); }}>
                       {busy ? "..." : "Mark project complete"}</button>}
                     {cur.st === "waiting" && <button type="button" className="ix-b ghost" disabled={!!busy} onClick={() => call(cur, "DELETE", "mark", "The project is no longer marked as complete.")}>{busy ? "..." : "Undo"}</button>}
                     {cur.st === "done" && <span className="ct-mut">Confirmed by the OJT coordinator.</span>}
@@ -264,18 +262,18 @@ export function HteBoard({ supervisors, interns, onRefresh, monitorPath = "/coor
           <div className="ct-empty"><Icon name="briefcase" size={22} /><b>{all.length ? "No HTE matches" : "No HTEs yet"}</b>
             <small>{all.length ? "Try another filter." : "HTEs appear when an HTE supervisor account or an intern placement is added."}</small></div>
         ) : (
-          <table className="ct-t ct-cards">
+          <table className="ct-t">
             <thead><tr><th>HTE</th><th>Category</th><th className="c">Students deployed</th><th>Internship modality</th><th>HTE supervisor</th><th>MOA valid until</th></tr></thead>
             <tbody>
               {shown.map((r) => (
                 <tr key={r.key} className="ct-click" onClick={() => setOpenKey(r.key)} title="Open this HTE's information">
-                  <td data-label="HTE"><b className="ct-sm">{r.name}</b>{r.address && <small className="ct-mut">{r.address}</small>}</td>
-                  <td data-label="Category">{r.category || <span className="ct-mut">Not set</span>}</td>
-                  <td data-label="Students deployed" className="c"><b>{r.interns.length}</b></td>
-                  <td data-label="Modality">{r.hteMod ? <><span className="ct-chip">{MODALITIES[r.hteMod]}</span>{r.own.length > 0 && <small className="ct-mut">{r.own.length} with their own</small>}</>
+                  <td><b className="ct-sm">{r.name}</b>{r.address && <small className="ct-mut">{r.address}</small>}</td>
+                  <td>{r.category || <span className="ct-mut">Not set</span>}</td>
+                  <td className="c"><b>{r.interns.length}</b></td>
+                  <td>{r.hteMod ? <><span className="ct-chip">{MODALITIES[r.hteMod]}</span>{r.own.length > 0 && <small className="ct-mut">{r.own.length} with their own</small>}</>
                     : <span className="ct-mut">{r.mods.length ? `Not set · interns: ${r.mods.join(", ")}` : "Not set"}</span>}</td>
-                  <td data-label="HTE supervisor">{r.sups.length ? r.sups.join(", ") : <span className="ct-mut">No supervisor account</span>}</td>
-                  <td data-label="MOA valid until"><Badge label={r.until ? `${fmtDate(r.until)} · ${MOA_ST[r.st][0]}` : "No date"} type={MOA_ST[r.st][1]} /></td>
+                  <td>{r.sups.length ? r.sups.join(", ") : <span className="ct-mut">No supervisor account</span>}</td>
+                  <td><Badge label={r.until ? `${fmtDate(r.until)} · ${MOA_ST[r.st][0]}` : "No date"} type={MOA_ST[r.st][1]} /></td>
                 </tr>
               ))}
             </tbody>
@@ -479,7 +477,8 @@ const WORD = { approved: "Approved", pending: "Waiting for review", rejected: "R
 
 // reviewPath: where "Review their files" goes (the coordinator's MOV Submissions); null hides it
 // (the admin sees the statuses only and cannot open the coordinator's pages)
-export function RequirementsTracker({ interns, movs, records, reviewPath = "/coordinator/approvals?tab=movs" }) {
+// (the list itself is changed in Requirements → Requirement list)
+export function RequirementsTracker({ interns, movs, records, reviewPath = "/coordinator/requirements?tab=movs" }) {
   const [phase, setPhase] = useState("pre");
   const [q, setQ] = useState("");
   const [prog, setProg] = useState("all");
@@ -487,8 +486,6 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
   const [show, setShow] = useState("all");     // all | missing | waiting | complete
   const [view, setView] = useState("list");    // list (easy to read) | grid (every requirement at once)
   const [openId, setOpenId] = useState(null);  // the intern whose checklist is open
-  const [manage, setManage] = useState(false);
-  const [, setVer] = useState(0);              // re-draw after the coordinator changes the list
   const navigate = useNavigate();
   useEffect(() => { setShow("all"); }, [phase]);
   // the weekly / monthly reports the coordinator asked for: an intern's "Weekly / Monthly Report" follows them
@@ -594,7 +591,6 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
           ))}
         </div>
         {/* only the OJT coordinator changes the list of requirements (the admin sees a read-only overview) */}
-        {reviewPath && <button type="button" className="ix-b primary sm" onClick={() => setManage(true)}><Icon name="pencil" size={14} /> Manage requirements</button>}
       </div>
 
       {shown.length === 0 ? (
@@ -608,13 +604,13 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
               {shown.map((x) => (
                 <tr key={x.u.id} className="ct-click" onClick={() => setOpenId(x.u.id)}>
                   <td><span className="ct-who"><Avatar name={x.u.name} photo={x.u.photo} size={30} /><span><b>{x.u.name}</b><small>{[programKey(x.u.program), x.u.placement].filter(Boolean).join(" · ")}</small></span></span></td>
-                  <td data-label="Progress" className="rt-prog">
+                  <td className="rt-prog">
                     <span className="rt-bar"><i className={x.total && x.ok === x.total ? "full" : ""} style={{ width: `${x.total ? Math.round((x.ok / x.total) * 100) : 0}%` }} /></span>
                     <small>{x.total ? `${x.ok} of ${x.total} approved` : "Locked until the hours are done"}</small>
                   </td>
-                  {reviewPath && <td data-label="Waiting for you" className="c">{x.nWait ? <span className="rt-pill wait">{x.nWait}</span> : <span className="rt-dash">–</span>}</td>}
-                  <td data-label="Missing / returned" className="c">{x.nMiss ? <span className="rt-pill bad">{x.nMiss}</span> : <span className="rt-dash">–</span>}</td>
-                  <td data-label="" className="r"><button type="button" className="ix-b ghost sm" onClick={(e) => { e.stopPropagation(); setOpenId(x.u.id); }}>See checklist <Icon name="chevronRight" size={13} /></button></td>
+                  {reviewPath && <td className="c">{x.nWait ? <span className="rt-pill wait">{x.nWait}</span> : <span className="rt-dash">–</span>}</td>}
+                  <td className="c">{x.nMiss ? <span className="rt-pill bad">{x.nMiss}</span> : <span className="rt-dash">–</span>}</td>
+                  <td className="r"><button type="button" className="ix-b ghost sm" onClick={(e) => { e.stopPropagation(); setOpenId(x.u.id); }}>See checklist <Icon name="chevronRight" size={13} /></button></td>
                 </tr>
               ))}
             </tbody>
@@ -690,7 +686,6 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
         );
       })()}
 
-      {manage && <RequirementsManage onClose={() => setManage(false)} onChanged={() => setVer((v) => v + 1)} />}
     </>
   );
 }
@@ -728,27 +723,8 @@ const RT_CSS = `
 .rt-st.approved { background: #dcfce7; color: #15803d; } .rt-st.pending { background: #fef3c7; color: #b45309; }
 .rt-st.rejected { background: #fee2e2; color: #b91c1c; } .rt-st.missing { background: #f3f4f6; color: #6b7280; }
 .rt-st.locked, .rt-st.na { background: transparent; color: #9ca3af; font-weight: 600; }
-@media (min-width: 641px) and (max-width: 760px) { .rt-list th:nth-child(3), .rt-list td:nth-child(3), .rt-list th:nth-child(4), .rt-list td:nth-child(4) { display: none; } }
+@media (max-width: 760px) { .rt-list th:nth-child(3), .rt-list td:nth-child(3), .rt-list th:nth-child(4), .rt-list td:nth-child(4) { display: none; } }
 `;
-
-// a table whose rows turn into cards below `px` wide: the first cell is the title,
-// every other cell shows its data-label on the left and its value on the right
-function cardRows(sel, px) {
-  return `@media (max-width: ${px}px) {
-  ${sel}, ${sel} tbody { display: block; width: 100%; }
-  ${sel} thead { display: none; }
-  ${sel} tr { display: block; padding: 12px 16px; border-bottom: 1px solid #f1f3f6; }
-  ${sel} tbody tr:last-child { border-bottom: 0; }
-  ${sel} td { display: block; padding: 5px 0; border: 0; text-align: right; white-space: normal; overflow-wrap: anywhere; }
-  ${sel} td::before { content: attr(data-label); float: left; margin-right: 12px; padding-top: 2px; text-align: left;
-    font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #9ca3af; }
-  ${sel} td[data-label=""]::before { content: none; }
-  ${sel} td::after { content: ""; display: block; clear: both; }
-  ${sel} td:first-child { text-align: left; padding-bottom: 8px; }
-  ${sel} td:first-child::before { content: none; }
-  ${sel} td small { display: block; }
-}`;
-}
 
 const CT_CSS = `
 .ct-pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px; }
@@ -776,9 +752,10 @@ const CT_CSS = `
 .ct-empty { display: grid; justify-items: center; gap: 6px; padding: 44px 20px; color: #6b7280; text-align: center; }
 .ct-empty b { color: #1f2937; font-size: 15px; }
 .ct-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
-/* like the other pages' filter bars: search, then the filters right next to it, Export on the far right */
+/* the search is as wide as it needs (not the whole row); the filters and Export sit on the right */
 .ix-page .ct-bar > .ct-search { flex: 0 1 420px !important; max-width: 420px; min-width: 220px; }
-@media (max-width: 760px) { .ix-page .ct-bar > .ct-search { flex: 1 1 100% !important; max-width: none; } }
+.ix-page .ct-bar > .ct-search + * { margin-left: auto; }
+@media (max-width: 760px) { .ix-page .ct-bar > .ct-search { flex: 1 1 100% !important; max-width: none; } .ix-page .ct-bar > .ct-search + * { margin-left: 0; } }
 .ct-exp { margin-left: auto; }
 .ct-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 4px 0 14px; }
 .ct-stat { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 14px 16px; border-radius: 14px; border: 1px solid #eceff3; background: #fff; cursor: pointer; font: inherit; text-align: left; }
@@ -850,10 +827,6 @@ const CT_CSS = `
 .hd-list li.ct-click:hover { background: #fff7f3; }
 .hd-go { color: #9ca3af; font-size: 22px; line-height: 1; padding: 0 4px; } .hd-list li.ct-click:hover .hd-go { color: #e8582a; }
 @media (max-width: 900px) { .ct-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ct-exp { margin-left: 0; } }
-/* small screens: each row becomes a card (label on the left, value on the right), like the other tables.
-   HTEs & MOAs has six columns, so it switches already on tablets; the requirements list on phones. */
-${cardRows(".ct-t.ct-cards", 900)}
-${cardRows(".ct-t.rt-list", 640)}
 /* smaller laptops: a narrower Intern column and smaller headings, so the grid still fits without sideways scrolling */
 @media (max-width: 1440px) { .ct-grid .ct-stick { width: 180px; } .ct-grid th.ct-rq { font-size: 10px; } .ct-grid .ct-end { width: 84px; } .ct-grid td.c .ct-c { min-width: 20px; height: 20px; font-size: 11px; } }
 `;

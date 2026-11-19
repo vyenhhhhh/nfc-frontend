@@ -7,8 +7,7 @@ import Shell, {
   calcHours, fmtTime, greeting, esc, requiredHoursFor, programKey,
   PRE_REQUIREMENTS, POST_REQUIREMENTS, DURING_REQUIREMENTS, REQUIREMENTS_BY_PHASE, reqsFor, dueStatus, AnnouncementBoard, AccountSecurity, UserDetails,
   sessionsByDate, dayHours, dayOvertime, fmtMinutes, manilaHour, dtrModeOf, DTR_MODES, MODALITIES, SCOPES, modalityOf, scopeOf, SCHEDULE, liveRefresh, todayManila,
-  ojtComplete,
-} from "../components/DashKit.jsx";
+  ojtComplete, confirmBox } from "../components/DashKit.jsx";
 
 // Home look (stats, calendar, gaps) is shared with the admin / coordinator dashboards
 import { HomeCalendar, Calendar, adminCss } from "./AdminDashboard.jsx";
@@ -18,7 +17,7 @@ import { mdCss } from "../components/materialTheme.js";
 import { API } from "../config.js";
 import { fileHref, openFile, useFileLinkState } from "../files.js";
 import RequirementForms from "./RequirementForms.jsx";   // blank forms to download and print
-import { MyGrade } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
+import { MyGrade, gradeIsNew } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
 import { Pager } from "../components/ReviewQueue.jsx";   // page numbers under a table
 import { ID_OFFICE, CardFace, CardBack, idCardCss, loadCardSettings } from "../components/NfcCards.jsx";   // where interns sign and claim their ID card
 
@@ -155,7 +154,20 @@ export default function InternDashboard() {
     return liveRefresh(load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const nav = NAV.map((it) => (it.path === "/intern/movs" && movTodo > 0 ? { ...it, badge: movTodo } : it));
+  // the sidebar count on My Grade: shown when the coordinator released the grade, gone once the intern opens My Grade
+  const [gradeNew, setGradeNew] = useState(false);
+  useEffect(() => {
+    const load = () => fetch(`${API}/my-grade`, { headers: { Accept: "application/json" } }).then((r) => r.json())
+      .then((g) => setGradeNew(gradeIsNew(g))).catch(() => {});
+    const seen = () => setGradeNew(false);
+    load();
+    window.addEventListener("grade-seen", seen);
+    const stop = liveRefresh(load);
+    return () => { window.removeEventListener("grade-seen", seen); stop && stop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const nav = NAV.map((it) => (it.path === "/intern/movs" && movTodo > 0 ? { ...it, badge: movTodo }
+    : it.path === "/intern/grade" && gradeNew && path !== "/intern/grade" ? { ...it, badge: 1 } : it));
 
   const uniqueDays = [...new Set(records.map((r) => r.date))].length;
   const totalHours = calcHours(records);
@@ -309,7 +321,6 @@ function MyRequests({ user, records }) {
   const openDay = () => { setDayForm({ date: "", time_in: "08:00", time_out: "17:00", reason: "" }); setDayMsg(null); setDayOpen(true); };
   const sendDay = async (e) => {
     e.preventDefault();
-    if (weekdayIdx(dayForm.date) >= 5) { setDayMsg({ type: "error", text: "Pick a weekday (Monday to Friday)." }); return; }
     if (records.some((r) => r.date === dayForm.date)) { setDayMsg({ type: "error", text: 'That day already has attendance. Use "Request fix" on that day in My Attendance instead.' }); return; }
     setDayBusy(true); setDayMsg(null);
     try {
@@ -327,10 +338,18 @@ function MyRequests({ user, records }) {
     } finally { setDayBusy(false); }
   };
   const dayWaiting = fixes.filter((f) => f.kind === "day" && (f.status === "pending" || f.status === "endorsed"));
-  const removeEvent = async (id) => {
-    if (!window.confirm("Remove this request?")) return;
-    await fetch(`${API}/intern/school-events/${id}`, { method: "DELETE", headers: { Accept: "application/json" } }).catch(() => {});
-    setOpenKey(null); load();
+  // take back a request the supervisor has not checked yet (excused day, time correction, online attendance)
+  const REMOVE_URL = { event: "intern/school-events", correction: "intern/time-corrections", online: "intern/submit-online" };
+  const [rmMsg, setRmMsg] = useState("");
+  useEffect(() => { setRmMsg(""); }, [openKey]);
+  const removeRequest = async (row) => {
+    if (!(await confirmBox({ title: "Remove this request?", message: "Your request is taken back and will not be reviewed.", ok: "Yes, remove", danger: true }))) return;
+    setRmMsg("");
+    try {
+      const res = await fetch(`${API}/${REMOVE_URL[row.kind]}/${row.rid}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setRmMsg(d.message || "Couldn't remove the request."); return; }
+      setOpenKey(null); load();
+    } catch { setRmMsg("Couldn't reach the server."); }
   };
 
   const day = (v) => v ? new Date(String(v).slice(0, 10) + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -343,7 +362,7 @@ function MyRequests({ user, records }) {
 
   const rows = [
     ...online.map((o) => ({
-      key: `o${o.id}`, kind: "online", date: o.date, status: o.status, viaSupervisor: hasSup,
+      key: `o${o.id}`, rid: o.id, kind: "online", date: o.date, status: o.status, viaSupervisor: hasSup,
       endorsed: !!o.endorsed_at || o.status === "endorsed",
       details: o.description, remarks: o.remarks || o.endorse_remarks,
     })),
@@ -356,12 +375,12 @@ function MyRequests({ user, records }) {
       remarks: r.ot_remarks,
     })),
     ...fixes.map((c) => ({
-      key: `c${c.id}`, kind: "correction", date: c.date, status: c.status, viaSupervisor: true, supervisorOnly: true,
+      key: `c${c.id}`, rid: c.id, kind: "correction", date: c.date, status: c.status, viaSupervisor: true, supervisorOnly: true,
       endorsed: !!c.endorsed_at || c.status === "endorsed",
       details: `${c.kind === "day" ? `Missed the whole day · in ${time12(c.requested_in)}, out` : c.kind === "in" ? `Forgot to time in · in ${time12(c.requested_in)}, out` : "Forgot to time out ·"} ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks,
     })),
     ...events.map((v) => ({
-      key: `e${v.id}`, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
+      key: `e${v.id}`, rid: v.id, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
       endorsed: !!v.endorsed_at || v.status === "endorsed",
       details: `${v.event_name}${v.mandatory ? " (mandatory)" : ""} · excused ${PORTION_LBL[v.portion] || "whole day"}, no hours counted for it${v.reason ? " — " + v.reason : ""}`,
       remarks: v.remarks || v.endorse_remarks,
@@ -485,9 +504,11 @@ function MyRequests({ user, records }) {
               <div className="ibx-sec"><span>Where it is now</span><Steps r={open} big /></div>
               {open.details && <div className="ibx-sec"><span>Details</span><p>{open.details}</p></div>}
               {open.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{open.remarks}”</p></div>}
-              {open.kind === "event" && (open.status === "pending" || open.status === "endorsed") && (
-                <button type="button" className="ix-b ghost" onClick={() => removeEvent(open.evId)}>Remove request</button>
+              {/* only while still waiting for the supervisor: once checked, it can't be taken back */}
+              {REMOVE_URL[open.kind] && open.status === "pending" && (
+                <button type="button" className="ix-b ghost" onClick={() => removeRequest(open)}>Remove request</button>
               )}
+              <Msg msg={rmMsg ? { type: "error", text: rmMsg } : null} />
             </div>
           </Drawer>
         );
@@ -506,7 +527,7 @@ function MyRequests({ user, records }) {
               <label htmlFor="rq-day-date">Which day?</label>
               <input id="rq-day-date" type="date" required max={addDays(manilaToday(), -1)} min={addDays(manilaToday(), -30)} value={dayForm.date}
                 onChange={(e) => setDayForm((f) => ({ ...f, date: e.target.value }))} />
-              <small className="fx-hint">A weekday in the last 30 days that has no attendance.</small>
+              <small className="fx-hint">A workday in the last 30 days that has no attendance (a weekday, or a weekend day your HTE marked open).</small>
             </div>
             <div className="fx-two">
               <div className="ix-field">
@@ -545,7 +566,7 @@ function MyRequests({ user, records }) {
               <label htmlFor="ev-date">Which day?</label>
               <input id="ev-date" type="date" required min={addDays(manilaToday(), -30)} value={evForm.date}
                 onChange={(e) => setEvForm((f) => ({ ...f, date: e.target.value }))} />
-              <small className="fx-hint">A weekday. File it before the event if you can.</small>
+              <small className="fx-hint">A workday (a weekday, or a weekend day your HTE marked open). File it before the event if you can.</small>
             </div>
             <PortionPick value={evForm.portion} onChange={(v) => setEvForm((f) => ({ ...f, portion: v }))} />
             <div className="ix-field">
@@ -1115,7 +1136,8 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
   };
   const weekday = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-PH", { weekday: "short", timeZone: "UTC" });
 
-  const noCheckout = allDays.filter(([, t]) => t.checkin && !t.checkout).length;
+  // today is not "to fix" yet (the intern can still tap out); only past days count
+  const noCheckout = allDays.filter(([d, t]) => t.checkin && !t.checkout && d !== manilaToday()).length;
 
   const stats = [
     { icon: "calendar", tone: "orange", label: "Total days", value: uniqueDays, hint: "days logged" },
@@ -1315,6 +1337,8 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
 const ONLINE_LIST_URL = `${API}/intern/my-online`;
 
 const cap = (s = "") => s.charAt(0).toUpperCase() + s.slice(1);
+// requirement status shown to the intern: a sent-back file is "Returned" (stored as "rejected")
+const movLabel = (s = "") => (s === "rejected" ? "Returned" : s === "pending" ? "Waiting" : cap(s));
 const statusType = (s) => (s === "approved" ? "approved" : s === "rejected" ? "rejected" : "pending");
 
 // Delete endpoints (Laravel). Change here if your routes are named differently.
@@ -1908,7 +1932,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                         <ul className="mv-hist">{others.map((m) => (
                           <li key={m.id}>
                             <span className="mv-hist-main"><b>{m.title}</b>{fileLink(m)}<small>{[m.created_at && !isNaN(new Date(m.created_at)) ? new Date(m.created_at).toLocaleDateString("en-PH") : "", m.remarks ? `“${m.remarks}”` : ""].filter(Boolean).join(" · ")}</small></span>
-                            <Badge label={cap(m.status)} type={statusType(m.status)} />
+                            <Badge label={movLabel(m.status)} type={statusType(m.status)} />
                             {m.status === "pending" && <RemoveBtn onConfirm={() => removeMov(m.id)} />}
                           </li>
                         ))}</ul>
@@ -1942,14 +1966,14 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                                   <small>{rp.due_date ? `Due ${new Date(rp.due_date + "T00:00:00").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}` : "No due date"}</small>
                                 </span>
                                 {due && due.tone !== "none" && <span className={`req-due ${due.tone}`} style={{ margin: 0 }}>{due.label}</span>}
-                                <Badge label={st === "none" ? "Not submitted" : cap(st)} type={st === "none" ? "none" : statusType(st)} />
+                                <Badge label={st === "none" ? "Not submitted" : movLabel(st)} type={st === "none" ? "none" : statusType(st)} />
                               </div>
                               {st === "rejected" && last.remarks && <div className="rp-note">Returned: “{last.remarks}”. Upload a corrected file.</div>}
                               {ups.length > 0 && (
                                 <ul className="mv-hist rp-files">{ups.map((x) => (
                                   <li key={x.id}>
                                     <span className="mv-hist-main">{fileLink(x)}<small>{x.created_at && !isNaN(new Date(x.created_at)) ? `Sent ${new Date(x.created_at).toLocaleDateString("en-PH")}` : ""}</small></span>
-                                    <Badge label={cap(x.status)} type={statusType(x.status)} />
+                                    <Badge label={movLabel(x.status)} type={statusType(x.status)} />
                                     {x.status === "pending" && <RemoveBtn onConfirm={() => removeMov(x.id)} />}
                                   </li>
                                 ))}</ul>
@@ -1972,7 +1996,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                         <ul className="mv-hist">{oldReports.map((x) => (
                           <li key={x.id}>
                             <span className="mv-hist-main">{fileLink(x)}<small>{x.created_at && !isNaN(new Date(x.created_at)) ? `Sent ${new Date(x.created_at).toLocaleDateString("en-PH")}` : ""}</small></span>
-                            <Badge label={cap(x.status)} type={statusType(x.status)} />
+                            <Badge label={movLabel(x.status)} type={statusType(x.status)} />
                           </li>
                         ))}</ul>
                       </div>
@@ -1992,7 +2016,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                       <div><b>{r.label}</b><small>{r.hint || ""}</small></div>
                       <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
                         {due && <span className={`req-due ${due.tone}`} style={{ margin: 0 }}>{due.label}</span>}
-                        <Badge label={m ? cap(m.status) : "Not submitted"} type={m ? statusType(m.status) : "none"} />
+                        <Badge label={m ? movLabel(m.status) : "Not submitted"} type={m ? statusType(m.status) : "none"} />
                       </span>
                     </div>
                     {m?.status === "rejected" && m.remarks && <div className="nfc-wait"><Icon name="warn" size={16} /><span>Rejected: “{m.remarks}”. Upload a corrected file.</span></div>}
@@ -2012,7 +2036,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                         <ul className="mv-hist">{(r.repeat ? mine : mine.slice(0, 1)).map((x) => (
                           <li key={x.id} className={r.repeat && shownFile?.id === x.id ? "mv-sel" : ""} onClick={r.repeat ? () => setPrevId(x.id) : undefined} style={r.repeat ? { cursor: "pointer" } : undefined}>
                             <span className="mv-hist-main">{fileLink(x)}<small>{[x.created_at && !isNaN(new Date(x.created_at)) ? `Sent ${new Date(x.created_at).toLocaleDateString("en-PH")}` : "", x.remarks ? `“${x.remarks}”` : ""].filter(Boolean).join(" · ")}</small></span>
-                            <Badge label={cap(x.status)} type={statusType(x.status)} />
+                            <Badge label={movLabel(x.status)} type={statusType(x.status)} />
                             {x.status === "pending" && <RemoveBtn onConfirm={() => removeMov(x.id)} />}
                           </li>
                         ))}</ul>
@@ -2161,7 +2185,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
             counted.forEach((r) => { const k = stateOf(r); c[k in c ? k : "none"]++; });
             const n = counted.length || 1;
             const othersWaiting = others.filter((m) => m.status === "pending").length;   // sent under "Other documents", still waiting
-            const segs = [["approved", "approved"], ["pending", "waiting"], ["rejected", "needs fix"], ["none", "to upload"]];
+            const segs = [["approved", "approved"], ["pending", "waiting"], ["rejected", "returned"], ["none", "to upload"]];
             return (
               <div className="mv-prog2">
                 <b>{c.approved} of {counted.length} approved</b>

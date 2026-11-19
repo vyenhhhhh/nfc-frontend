@@ -4,7 +4,7 @@
 // Table 1 (enrolled / deployed per program) and Table 4 (interns per HTE) are counted by the system;
 // everything else is typed here, saved per quarter, and printed (or saved as PDF) in the college's layout.
 import { Fragment, useState, useEffect, useMemo, useRef } from "react";
-import { Icon, Msg, Spinner, programKey, esc, HTE_CATEGORIES, Drawer, Table, Badge, Modal } from "./DashKit.jsx";
+import { Icon, Msg, Spinner, programKey, esc, HTE_CATEGORIES, Drawer, Table, Badge, Modal, confirmBox } from "./DashKit.jsx";
 import { API } from "../config.js";
 import csuLogo from "../assets/csu-logo.png";
 import bpLogo from "../assets/bagong-pilipinas.png";     // Bagong Pilipinas, beside the CSU logo on the cover
@@ -631,7 +631,7 @@ function ReportForm({ user, supervisors = [], interns: allInterns = [], year, qu
       <style>{QR_CSS}</style>
       <div className="ix-card qr-bar">
         <div className="qr-title">
-          <button type="button" className="qr-back" onClick={() => { if (!dirty || window.confirm("You have changes that are not saved. Leave without saving?")) onBack(); }}>
+          <button type="button" className="qr-back" onClick={async () => { if (!dirty || (await confirmBox({ title: "Leave without saving?", message: "You have changes that are not saved. Leave without saving?", ok: "Leave without saving", danger: true }))) onBack(); }}>
             <Icon name="menu" size={14} /> Back to the list</button>
           <h3>{qTitle(year, quarter)} <small>{Q_MONTHS[quarter - 1]}</small></h3>
           {doneN === SECTIONS.length ? <Badge label="Ready" type="approved" /> : <Badge label="Draft" type="pending" />}

@@ -2,6 +2,7 @@
 // Shared shell (navbar + sidebar) and UI pieces for the Admin, Coordinator and Intern dashboards.
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, createContext, useContext, Fragment } from "react";
 import { createPortal } from "react-dom";
+import { createRoot } from "react-dom/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import { currentFit } from "../fit.js";
 import logo from "../assets/logo.png";
@@ -712,6 +713,37 @@ export function PhotoPicker({ file, onChange }) {
 }
 
 // `actions` = optional buttons shown beside the X (e.g. an Edit button); `wide` = bigger window
+/* Ask before doing something (instead of the browser's own confirm box), in the same pop-up design as the rest:
+     if (!(await confirmBox({ title: "Delete this day?", message: "...", ok: "Yes, delete", danger: true }))) return;
+   Resolves true for the main button, false for Cancel / Esc / clicking outside. */
+const CONFIRM_CSS = `
+/* above side panels and other pop-ups: the question is always on top */
+.ix-modal-wrap:has(.cf-btns) { z-index: 10000 !important; }
+.cf-msg { margin: 0; font-size: 14px; line-height: 1.55; color: #4b5563; white-space: pre-line; }
+.cf-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+`;
+function ConfirmBox({ title, message, ok, cancel, danger, onDone }) {
+  return (
+    <Modal title={title} onClose={() => onDone(false)}>
+      <style>{CONFIRM_CSS}</style>
+      {message && <p className="cf-msg">{message}</p>}
+      <div className="cf-btns">
+        <button type="button" className="ix-b ghost" onClick={() => onDone(false)}>{cancel}</button>
+        <button type="button" className={danger ? "ix-b danger" : "ix-b primary"} autoFocus onClick={() => onDone(true)}>{ok}</button>
+      </div>
+    </Modal>
+  );
+}
+export function confirmBox({ title = "Are you sure?", message = "", ok = "Yes", cancel = "Cancel", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onDone = (v) => { root.unmount(); host.remove(); resolve(v); };
+    root.render(<ConfirmBox title={title} message={message} ok={ok} cancel={cancel} danger={danger} onDone={onDone} />);
+  });
+}
+
 export function Modal({ title, sub, onClose, actions, wide, children }) {
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -1063,7 +1095,7 @@ export function MyProfile({ user }) {
 /* Inline profile panel on Monitor Interns: attendance focus only.
    Personal details live in Manage Accounts (View). */
 /* ───── Requirements checklist of one intern (in their profile under Interns) ─────
-   Every requirement of the phase with its status: Approved / Pending / Rejected / Not submitted. */
+   Every requirement of the phase with its status: Approved / Waiting / Returned / Not submitted. */
 function RequirementChecklist({ internId, intern = null, canViewFiles = false }) {
   const [movs, setMovs] = useState(null);
   const [phase, setPhase] = useState("pre");
@@ -1118,7 +1150,7 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
   const approvedIn = (ph) => reqsFor(ph, intern).filter((r) => r.key === "weekly_report"
     ? reports.length > 0 && reports.every((rp) => (movs || []).find((x) => Number(x.report_id) === Number(rp.id))?.status === "approved")
     : statusOf(r.key, ph)?.status === "approved").length;
-  const LABEL = { approved: "Approved", pending: "Pending", rejected: "Rejected" };
+  const LABEL = { approved: "Approved", pending: "Waiting", rejected: "Returned" };
 
   return (
     <div className="ipv-block">
@@ -3475,7 +3507,7 @@ export function AnnouncementManager({ user }) {
 
   // take it down: interns stop seeing it, and it moves to the Removed history
   const remove = async (a) => {
-    if (!window.confirm(`Remove "${a.title}"? Interns will no longer see it. It stays in the Removed history.`)) return;
+    if (!(await confirmBox({ title: "Remove this announcement?", message: `Remove "${a.title}"? Interns will no longer see it. It stays in the Removed history.`, ok: "Yes, remove", danger: true }))) return;
     setBusy(`p${a.id}`); setMsg(null);
     try {
       const res = await fetch(`${API}/announcements/${a.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
@@ -3490,7 +3522,7 @@ export function AnnouncementManager({ user }) {
 
   // delete a removed announcement for good
   const purge = async (h) => {
-    if (!window.confirm(`Delete "${h.title}" for good? This cannot be undone.`)) return;
+    if (!(await confirmBox({ title: "Delete for good?", message: `Delete "${h.title}" for good? This cannot be undone.`, ok: "Yes, delete", danger: true }))) return;
     setBusy(`h${h.id}`); setMsg(null);
     try {
       const res = await fetch(`${API}/announcements/history/${h.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
@@ -3706,7 +3738,7 @@ const NOTIF_PAGES = {
     supervisor_assigned: "/intern/profile", announcement: "/intern", grade_released: "/intern/profile", evaluation: "/intern/profile",
   },
   ojt_coordinator: {
-    mov_submission: "/coordinator/approvals?tab=movs", online_submission: "/coordinator/approvals?tab=online",
+    mov_submission: "/coordinator/requirements?tab=movs", online_submission: "/coordinator/approvals?tab=online",
     online_review: "/coordinator/approvals?tab=online", overtime: "/coordinator/approvals?tab=overtime",
     overtime_review: "/coordinator/approvals?tab=overtime", nfc_request: "/coordinator/approvals?tab=nfc",
     dtr_certified: "/coordinator/reports?tab=dtr", supervisor_assigned: "/coordinator/htes?tab=supervisors",
@@ -4498,7 +4530,8 @@ export default function Shell({ navItems, user, children }) {
 /* One look for every "pick one" switch: a light grey track, the picked option white with orange text
    (the same as "Online workday · Excused absence" on the intern's Submit Online page). */
 const SEG = ".oa-switch, .ix-pills, .ct-pills, .idq-tabs, .so-tabs, .dl-tabs, .mv2-ph, .req-tabs, .an-tabs, .nc-seg, .cm-seg, .so-kind";
-const segIn = (sel) => SEG.split(", ").map((c) => `.ix-page ${c}${sel}`).join(", ");
+// also inside modals and drawers: they open outside the page (portal), so .ix-page alone misses them
+const segIn = (sel) => SEG.split(", ").flatMap((c) => [`.ix-page ${c}${sel}`, `.ix-modal-wrap ${c}${sel}`]).join(", ");
 const SEG_CSS = `
 ${segIn("")} {
   display: inline-flex !important; flex-wrap: wrap; align-items: stretch; gap: 4px !important; padding: 3px !important;
@@ -4524,7 +4557,7 @@ ${segIn(" > button:disabled")} { opacity: .5; cursor: not-allowed; }
 .ix-page .oa-switch { display: flex !important; width: auto !important; align-self: stretch; margin: 10px 10px 6px !important; flex-wrap: nowrap; }
 .ix-page .oa-switch > button { flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; padding: 0 6px !important; }
 /* switches that fill their row: two or three equal options */
-.ix-page :is(.so-kind, .cm-seg) { display: grid !important; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100% !important; align-self: stretch; }
+.ix-page :is(.so-kind, .cm-seg), .ix-modal-wrap :is(.so-kind, .cm-seg) { display: grid !important; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100% !important; align-self: stretch; }
 .ix-page .cm-seg.two > button { min-height: 52px !important; flex-direction: column; gap: 2px !important; }
 .ix-page .dl-tabs { margin-bottom: 12px !important; }
 `;

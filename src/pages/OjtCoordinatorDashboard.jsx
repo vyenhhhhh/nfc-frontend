@@ -19,7 +19,7 @@ import { internCss, cardUnify, preStatusOf } from "./InternDashboard.jsx";
 import QuarterlyReport from "../components/QuarterlyReport.jsx";
 import Evaluations from "../components/Evaluations.jsx";
 import { HteBoard, RequirementsTracker } from "../components/CoordinatorTools.jsx";
-import RequirementForms from "./RequirementForms.jsx";
+import RequirementsManage from "../components/RequirementsManage.jsx";
 import { schoolEventIsMine } from "./SchoolEventReview.jsx";
 import { DashLayout, Panel, DashRow, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
@@ -30,6 +30,7 @@ import { fileHref, openFile, useFileLinkState } from "../files.js";
 const NAV = [
   { path: "/coordinator",               label: "Dashboard",     icon: "dashboard" },
   { path: "/coordinator/approvals",     label: "Approvals",     icon: "inbox" },
+  { path: "/coordinator/requirements",  label: "Requirements",  icon: "folder" },
   { path: "/coordinator/interns",       label: "Interns",       icon: "users" },
   { path: "/coordinator/htes",          label: "Partner HTEs",          icon: "globe" },
   { path: "/coordinator/accounts",      label: "Add Accounts",  icon: "plus" },
@@ -47,7 +48,6 @@ const GROUPS = {
     live: true,
     tabs: [
       { key: "online",      label: "Online Attendance", icon: "inbox",  sub: "Remote workdays: the supervisor confirms first, then you give the final decision." },
-      { key: "movs",        label: "MOV Submissions",   icon: "folder", sub: "Review intern-submitted documents (MOVs, forms, certificates)." },
       { key: "overtime",    label: "Overtime",          icon: "clock",  sub: "Time after 5:00 PM: the supervisor approves first, then you give the final decision." },
       { key: "event",       label: "Excused",     icon: "calendar", sub: "Sick days and school events: the supervisor confirms first, then you decide. The excused time is not counted as absent and gives no hours." },
       { key: "nfc",         label: "NFC Cards",         icon: "card",   sub: "ID card requests: approve or reject. The admin prints the card and links it when the intern claims it." },
@@ -60,8 +60,19 @@ const GROUPS = {
     tabs: [
       { key: "monitor", label: "All Interns", icon: "users", sub: "Every intern and their real-time status. Click a name to open their full information." },
       { key: "records", label: "Attendance",  icon: "list",  sub: "Complete attendance log of every intern." },
-      { key: "requirements", label: "Requirements", icon: "folder", sub: "Every intern and every requirement in one table. Filter it, then export it to Excel." },
       { key: "evaluation", label: "Grades", icon: "chart", sub: "Internship grade: the HTE supervisor's appraisal (60%) + your evaluation (40%). Release it when it's final." },
+    ],
+  },
+  // everything about requirements in one place: review what interns sent, follow their progress, and set up the list
+  "/coordinator/requirements": {
+    title: "Requirements",
+    live: true,
+    tabs: [
+      { key: "movs",     label: "Submissions",          icon: "inbox",    sub: "Files interns uploaded for their requirements. Approve them, or return them with remarks." },
+      { key: "progress", label: "Progress",             icon: "list",     sub: "Every intern and every requirement in one table: who is done and what is missing. Filter it, then export it to Excel." },
+      { key: "list",     label: "Requirement list",     icon: "pencil",   sub: "The requirements of each phase that interns see in Submit MOV. Add, edit, reorder or remove one, and upload its blank form in Forms and templates." },
+      { key: "due",      label: "Due dates & reminders", icon: "calendar", sub: "Set a due date for a requirement and remind the interns who have not submitted it yet." },
+      { key: "reports",  label: "Report requests",      icon: "file",     sub: "Ask for a weekly or monthly report whenever you need one. Interns upload each report on its own, and old ones are kept." },
     ],
   },
   "/coordinator/htes": {
@@ -83,7 +94,7 @@ const GROUPS = {
 // The old addresses still work (bookmarks, links in notifications): they open the matching tab.
 const OLD_PATHS = {
   "/coordinator/pending":     "/coordinator/approvals?tab=online",
-  "/coordinator/submissions": "/coordinator/approvals?tab=movs",
+  "/coordinator/submissions": "/coordinator/requirements?tab=movs",
   "/coordinator/overtime":    "/coordinator/approvals?tab=overtime",
   "/coordinator/corrections": "/coordinator/approvals",   // time corrections moved to the HTE supervisor
   "/coordinator/records":     "/coordinator/interns?tab=records",
@@ -107,6 +118,7 @@ export default function OjtCoordinatorDashboard() {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState([]);       // school-event (excused) requests
   const [nfcWaiting, setNfcWaiting] = useState(0);   // card requests waiting for approval
+  const [gradesReady, setGradesReady] = useState(0); // grades the coordinator can release now (sidebar count on Grades)
 
   useEffect(() => {
     fetchAll();
@@ -115,7 +127,7 @@ export default function OjtCoordinatorDashboard() {
 
   const fetchAll = async () => {
     try {
-      const [p, m, r, u, ot, nr, se] = await Promise.all([
+      const [p, m, r, u, ot, nr, se, gs] = await Promise.all([
         fetch(`${API}/supervisor/pending`).then((r) => r.json()),
         fetch(`${API}/coordinator/movs`).then((r) => r.json()),
         fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
@@ -123,7 +135,9 @@ export default function OjtCoordinatorDashboard() {
         fetch(`${API}/coordinator/overtime`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/supervisor/nfc-requests`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/supervisor/school-events`).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/grades/summary`).then((r) => r.json()).catch(() => null),
       ]);
+      if (gs && typeof gs.ready === "number") setGradesReady(gs.ready);
       if (Array.isArray(se)) setEvents(se);
       if (Array.isArray(nr)) setNfcWaiting(nr.filter((x) => x.status === "pending").length);
       if (Array.isArray(p)) setPending(p);
@@ -153,9 +167,14 @@ export default function OjtCoordinatorDashboard() {
       navigate("/coordinator/htes?tab=supervisors", { replace: true });
       return;
     }
+    // requirements moved to their own page (old links and bookmarks still work)
+    const oldTab = new URLSearchParams(search).get("tab");
+    if (path === "/coordinator/approvals" && oldTab === "movs") { navigate("/coordinator/requirements?tab=movs", { replace: true, state }); return; }
+    if (path === "/coordinator/requirements" && oldTab === "forms") { navigate("/coordinator/requirements?tab=list", { replace: true }); return; }
+    if (path === "/coordinator/interns" && oldTab === "requirements") { navigate("/coordinator/requirements?tab=progress", { replace: true, state }); return; }
     if (OLD_PATHS[path]) navigate(OLD_PATHS[path], { replace: true, state });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path]);
+  }, [path, search]);
 
   // which tab is open on a grouped page
   const group = GROUPS[path];
@@ -164,10 +183,12 @@ export default function OjtCoordinatorDashboard() {
   const pickTab = (key) => navigate(`${path}?tab=${key}`, { replace: true });
   const projectsWaiting = interns.filter((u) => u.modality === "project" && u.project_marked_at && !u.project_confirmed_at).length;
   const counts = { online: onlineForMe.length, movs: pendingMovs, overtime: pendingOt, nfc: nfcWaiting, event: events.filter((e) => schoolEventIsMine(e, "ojt_coordinator")).length,
-    projects: projectsWaiting };
+    projects: projectsWaiting, evaluation: gradesReady };
 
   return (
-    <Shell navItems={navWithTabs(NAV, GROUPS, {}, { "/coordinator/approvals": counts })} user={user}>
+    <Shell navItems={navWithTabs(NAV, GROUPS, {}, {
+      "/coordinator/approvals": counts, "/coordinator/requirements": { movs: pendingMovs }, "/coordinator/interns": { evaluation: gradesReady },
+    })} user={user}>
       {/* same order as the admin dashboard so every page looks identical */}
       <style>{adminCss}</style>
       <style>{internCss}</style>
@@ -187,7 +208,12 @@ export default function OjtCoordinatorDashboard() {
         <GroupPage group={group} tab={tab} onPick={pickTab} counts={counts}>
           {/* Approvals */}
           {tab.key === "online" && <Pending pending={onlineForMe} waiting={onlineWaiting} interns={interns} user={user} onRefresh={fetchAll} />}
+          {/* Requirements */}
           {tab.key === "movs" && <MovReview movs={movs} user={user} interns={interns} onRefresh={fetchAll} />}
+          {tab.key === "progress" && <RequirementsTracker interns={interns} movs={movs} records={records} />}
+          {tab.key === "list" && <div className="rq-tabpage rq-scroll"><RequirementsManage onChanged={fetchAll} /></div>}
+          {tab.key === "due" && <div className="rq-tabpage rq-scroll"><DeadlinesPanel /></div>}
+          {tab.key === "reports" && <div className="rq-tabpage"><ReportsPanel interns={interns} /></div>}
           {tab.key === "overtime" && <OvertimeReview overtime={overtime} onRefresh={fetchAll} />}
           {tab.key === "event" && <ExcusedQueue />}
           {tab.key === "nfc" && (
@@ -204,12 +230,11 @@ export default function OjtCoordinatorDashboard() {
             <InternMonitor
               interns={interns} records={records} loading={loading} onRefresh={fetchAll}
               recordsPath="/coordinator/interns?tab=records"
-              movsPath="/coordinator/approvals?tab=movs"   // "Review files" opens that intern in MOV Submissions
+              movsPath="/coordinator/requirements?tab=movs"   // "Review files" opens that intern in Requirements → Submissions
               canViewFiles   // only the coordinator can open the files interns upload
             />
           )}
           {tab.key === "records" && <Records records={records} loading={loading} interns={interns} />}
-          {tab.key === "requirements" && <RequirementsTracker interns={interns} movs={movs} records={records} />}
           {tab.key === "projects" && <ProjectQueue interns={interns} records={records} onRefresh={fetchAll} />}
           {tab.key === "evaluation" && <Evaluations user={user} />}
           {/* HTEs */}
@@ -275,7 +300,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingNfc = 0, pendi
 
   const review = [
     { key: "online", icon: "inbox", tone: "blue", title: "Online attendance", sub: "Remote workdays to approve", n: pending.length, to: "/coordinator/approvals?tab=online" },
-    { key: "movs", icon: "folder", tone: "purple", title: "MOV submissions", sub: "Documents and certificates", n: pendingMovs, to: "/coordinator/approvals?tab=movs" },
+    { key: "movs", icon: "folder", tone: "purple", title: "MOV submissions", sub: "Documents and certificates", n: pendingMovs, to: "/coordinator/requirements?tab=movs" },
     { key: "ot", icon: "clock", tone: "amber", title: "Overtime", sub: "Approved by the supervisor, your final say", n: pendingOt, to: "/coordinator/approvals?tab=overtime" },
     { key: "nfc", icon: "card", tone: "green", title: "NFC card requests", sub: "Approve or reject ID cards", n: pendingNfc, to: "/coordinator/approvals?tab=nfc" },
     { key: "event", icon: "calendar", tone: "green", title: "Excused absences", sub: "Sick days and school events", n: pendingEv, to: "/coordinator/approvals?tab=event" },
@@ -819,8 +844,6 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
     const ph = phaseOf(m);
     return <Badge label={ph === "post" ? "Post" : ph === "during" ? "During" : "Pre"} type={ph === "post" ? "online" : ph === "during" ? "pending" : "onsite"} />;
   };
-  const [showDue, setShowDue] = useState(false);
-  const [formsOpen, setFormsOpen] = useState(false);   // upload the blank forms interns can print
   const phaseOk = (m) => fPhase === "all" || phaseOf(m) === fPhase;
 
   const pendingAll = movs.filter((m) => m.status === "pending");
@@ -864,7 +887,7 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
         if (!res.ok) throw new Error(data.message || `Couldn't update "${m.title || m.original_name}".`);
         ok += 1;
       }
-      setMsg({ type: "success", text: `${ok} document${ok === 1 ? "" : "s"} ${status === "approved" ? "approved" : "rejected"}.` });
+      setMsg({ type: "success", text: `${ok} document${ok === 1 ? "" : "s"} ${status === "approved" ? "approved" : "returned"}.` });
     } catch (err) {
       setMsg({ type: "error", text: `${ok ? `${ok} done, then: ` : ""}${err instanceof TypeError ? "Couldn't reach the server." : err.message}` });
     } finally {
@@ -919,34 +942,7 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
 
   return (
     <>
-      <PageHeader title="MOV Submissions" sub="Review intern-submitted documents (MOVs, forms, certificates)." live />
-      <div className="dl-bar">
-        <span><Icon name="calendar" size={16} /> Set due dates, ask for reports, and remind interns who haven't submitted.</span>
-        {(
-          <span style={{ display: "inline-flex", gap: 8 }}>
-            <button type="button" className="ix-b ghost sm" onClick={() => setFormsOpen(true)}>
-              <Icon name="file" size={14} /> Forms and templates
-            </button>
-            <button type="button" className="ix-b ghost sm" onClick={() => setShowDue("reports")}>
-              <Icon name="file" size={14} /> Weekly / monthly reports
-            </button>
-            <button type="button" className="ix-b primary sm" onClick={() => setShowDue("due")}>
-              <Icon name="calendar" size={14} /> Due dates &amp; reminders
-            </button>
-          </span>
-        )}
-      </div>
-      {formsOpen && <RequirementForms manage onClose={() => setFormsOpen(false)} />}
-      {showDue === "due" && (
-        <Modal wide title="Due dates & reminders" sub="Leave a date blank for no due date. Weekly / monthly reports are set under Weekly / monthly reports." onClose={() => setShowDue(false)}>
-          <DeadlinesPanel onClose={() => setShowDue(false)} />
-        </Modal>
-      )}
-      {showDue === "reports" && (
-        <Modal wide title="Weekly / monthly reports" sub="Ask for a report whenever you need one. Interns upload each report on its own, and old ones are kept." onClose={() => setShowDue(false)}>
-          <ReportsPanel interns={interns} onClose={() => setShowDue(false)} />
-        </Modal>
-      )}
+      <PageHeader title="Submissions" sub="Files interns uploaded for their requirements. Approve them, or return them with remarks." live />
       {<>
         <Msg msg={msg} />
         <MovBoard movs={movs} interns={interns} reqLabel={reqLabel} remarks={remarks} setRemarks={setRemarks}
@@ -965,7 +961,7 @@ const mvTotal = (noOutput) => MV_PHASES.reduce((n, [, , l]) => n + l.filter((r) 
 const mvSkip = (p, r) => r.key === "system_output" && p.noOutput;   // the HTE doesn't require a presentation
 const mvTime = (m) => String(m.created_at || "");
 const mvExt = (m) => String(m.original_name || m.file_path || "").split(".").pop().toLowerCase();
-const MV_CHIP = { approved: ["Approved", "ok"], pending: ["Waiting", "wait"], rejected: ["Rejected", "bad"], missing: ["Missing", "miss"] };
+const MV_CHIP = { approved: ["Approved", "ok"], pending: ["Waiting", "wait"], rejected: ["Returned", "bad"], missing: ["Missing", "miss"] };   // a requirement sent back is "Returned" everywhere
 
 /* MOV review in the shared Approvals layout (ReviewQueue):
    "Needs my review" and "Done" tabs → a table of documents → a wide drawer with the preview and Approve / Reject.
@@ -1042,7 +1038,7 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
       key={fromMonitor ?? "all"}
       tabs={[
         { key: "waiting", label: "Needs my review", items: waiting, hot: true, empty: ["All caught up", "No documents waiting for your review."] },
-        { key: "done", label: "Done", items: done, empty: ["Nothing reviewed yet", "Documents you approve or reject show here."] },
+        { key: "done", label: "Done", items: done, empty: ["Nothing reviewed yet", "Documents you approve or return show here."] },
       ]}
       initialTab={fromMonitor != null && !waiting.some((m) => m.user_id === fromMonitor) ? "done" : undefined}
       initialQuery={fromName}
@@ -1054,7 +1050,7 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
         <>
           <input type="text" className="ix-input rq2-bulk-note" placeholder="Remarks for all (optional)" value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} />
           <button type="button" className="ix-b danger sm" disabled={!!processing} onClick={async () => { await onBulk(picked, "rejected", bulkNote); setBulkNote(""); clear(); }}>
-            {processing === "bulkrejected" ? "..." : "Reject selected"}</button>
+            {processing === "bulkrejected" ? "..." : "Return selected"}</button>
           <button type="button" className="ix-b ok sm" disabled={!!processing} onClick={async () => { await onBulk(picked, "approved", bulkNote); setBulkNote(""); clear(); }}>
             {processing === "bulkapproved" ? "..." : "Approve selected"}</button>
         </>
@@ -1080,7 +1076,7 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
             <input type="text" className="ix-input" placeholder="Remarks (optional)" value={remarks[doc.id] || ""}
               onChange={(e) => setRemarks((r) => ({ ...r, [doc.id]: e.target.value }))} />
             <button type="button" className="ix-b danger" onClick={() => onReview(doc.id, "rejected")} disabled={!!processing}>
-              {processing === doc.id + "rejected" ? "..." : "Reject"}</button>
+              {processing === doc.id + "rejected" ? "..." : "Return"}</button>
             <button type="button" className="ix-b ok" onClick={() => onReview(doc.id, "approved")} disabled={!!processing}>
               {processing === doc.id + "approved" ? "..." : "Approve"}</button>
           </>
@@ -1088,7 +1084,7 @@ function MovBoard({ movs, interns, reqLabel, remarks, setRemarks, processing, on
           <>
             <span className={doc.status === "rejected" ? "rq2-result bad" : "rq2-result ok"}>
               <Icon name={doc.status === "rejected" ? "x" : "check"} size={14} />
-              <span>{doc.status === "rejected" ? "Rejected" : "Approved"}{doc.reviewed_at ? ` · ${fmtDate(doc.reviewed_at)}` : ""}{doc.remarks ? <> · <em>{doc.remarks}</em></> : null}</span>
+              <span>{doc.status === "rejected" ? "Returned" : "Approved"}{doc.reviewed_at ? ` · ${fmtDate(doc.reviewed_at)}` : ""}{doc.remarks ? <> · <em>{doc.remarks}</em></> : null}</span>
             </span>
             {undoCell(doc)}
           </>
@@ -1832,6 +1828,14 @@ const coordCss = `
 .ix-content .ix-card.dl-panel { padding: 20px 22px !important; }
 .dl-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
 .dl-head h3 { margin: 0; font-size: 17px; font-weight: 700; }
+/* Requirements page: the panels that used to open in a pop-up are shown as tab pages, as tall as the window allows
+   (their lists scroll inside, the same as in the pop-up) */
+.rq-tabpage { height: calc(100vh - 260px); min-height: 460px; display: flex; flex-direction: column; }
+.rq-tabpage > .dl-flat { flex: 1 1 auto; min-height: 0; }
+/* Requirement list and Due dates: the whole page scrolls (the table is as long as the list), no box inside */
+.rq-tabpage.rq-scroll { height: auto; min-height: 0; display: block; }
+.rq-tabpage.rq-scroll .dl-flat:not(.rp-two) .dl-table { flex: none; min-height: 0; overflow: visible; }
+.rq-tabpage.rq-scroll .dl-flat:not(.rp-two) .dl-th { position: static; }
 /* the same size as Forms and templates: 1180px wide, as tall as the window allows */
 .ix-modal:has(.dl-flat) { width: min(1180px, 96vw) !important; max-width: none !important; height: 90vh; }
 /* reports pop-up: the form on the left (fixed), the reports on the right (scrolls inside when there are many).

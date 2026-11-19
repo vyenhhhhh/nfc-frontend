@@ -71,6 +71,8 @@ window.fetch = async (input, init = {}) => {
   const token = tokenOf();
   const headers = new Headers(init.headers || (typeof input !== "string" ? input.headers : undefined));
   if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
+  // ask for JSON, so an error (e.g. 429 too many tries) comes back as a message, not as a web page
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
   const method = String(init.method || (typeof input !== "string" ? input.method : "") || "GET").toUpperCase();
   const shareable = method === "GET" && init.cache !== "no-store" && !/\/live\b/.test(url);
@@ -124,6 +126,7 @@ const internRoutes = [
 const coordinatorRoutes = [
   "/coordinator",
   "/coordinator/approvals",
+  "/coordinator/requirements",
   // old addresses below still work: they open the matching tab
   "/coordinator/pending",
   "/coordinator/submissions",

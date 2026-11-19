@@ -234,17 +234,22 @@ export default function App() {
     const res = await w.write(cw.payload, writer === "acr122u" ? 12000 : 3500, uid);
     setReader((r) => ({ ...r, waiting: false }));
     if (!res.ok) return res;
-    for (let i = 0; i < 3; i++) {   // the card already has the new code: make sure the server hears it
-      try {
-        const r = await fetch(`${API}/tap/confirm`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
-          body: JSON.stringify({ card: cw.payload }),
-        });
-        if (r.ok || r.status === 409) break;
-      } catch { /* retry */ }
-      await new Promise((r) => setTimeout(r, 600));
-    }
+    // The card already has the new code, so the tap is finished: the intern hears the beep now.
+    // The "written" message goes to the server in the background (no waiting). If it never arrives,
+    // the server still accepts this new code at the next tap (pending code), so nothing is lost.
+    (async () => {
+      for (let i = 0; i < 3; i++) {
+        try {
+          const r = await fetch(`${API}/tap/confirm`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
+            body: JSON.stringify({ card: cw.payload }),
+          });
+          if (r.ok || r.status === 409) return;
+        } catch { /* retry */ }
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    })();
     return { ok: true };
   };
 
@@ -341,6 +346,7 @@ export default function App() {
       if (res.status >= 500) throw new TypeError("server down");   // the database can't be reached: keep the tap
       setOnline(true);
       const data = await res.json().catch(() => ({}));
+      const tServer = performance.now();
       // ACR122U: put the next one-time code on the card (the intern still holds it there)
       if (res.ok && data.card_write && extra.writer) {
         const w = await writeNextCode(extra.writer, data.card_write, uid);
@@ -349,6 +355,9 @@ export default function App() {
         }
       }
       signal(res.ok);
+      // how long the tap took (open the browser console, F12, to see it: used for the 3-second test)
+      const tDone = performance.now();
+      console.info(`[tap] ${uid}: server ${Math.round(tServer - t0)} ms · card write ${Math.round(tDone - tServer)} ms · total ${((tDone - t0) / 1000).toFixed(2)} s`);
       await hold();
       // nothing was recorded, just tell the intern why:
       //   DUPLICATE_TAP = tapped again within 5 minutes

@@ -286,6 +286,14 @@ export default function LoginForm({ variant = "student" }) {
     else document.exitFullscreen?.();
   };
 
+  // reads the server's answer even when it is not JSON (an error page), and gives a clear message
+  const readLogin = async (res, fallback) => {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 429) throw new Error("Too many login attempts. Please wait a minute and try again.");
+    if (!res.ok) throw new Error(data.message || (res.status >= 500 ? "The server had a problem. Please try again in a moment." : fallback));
+    return data;
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -293,11 +301,10 @@ export default function LoginForm({ variant = "student" }) {
     try {
       const res = await fetch(`${API}/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Login failed.");
+      const data = await readLogin(res, "Login failed.");
 
       sessionStorage.setItem("user", JSON.stringify(data));
       if (remember) {
@@ -331,11 +338,10 @@ export default function LoginForm({ variant = "student" }) {
         try {
           const res = await fetch(`${API}/login/google`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: JSON.stringify({ access_token: resp.access_token }),
           });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.message || "Google sign-in failed.");
+          const data = await readLogin(res, "Google sign-in failed.");
           sessionStorage.setItem("user", JSON.stringify(data));
           if (remember) {
             localStorage.setItem(REMEMBER_KEY, JSON.stringify({ user: data, expires: Date.now() + REMEMBER_DAYS * 24 * 60 * 60 * 1000 }));
@@ -473,7 +479,7 @@ export default function LoginForm({ variant = "student" }) {
                 <p className="lf-welcome-sub">Interns, coordinators, supervisors and admins.</p>
              <div className="lf-dv" style={{ height: dropH ?? "auto" }}>
               <div className={`lf-dv-track ${dropView}`}>
-              <div className="lf-dv-pane" ref={loginPane} aria-hidden={dropView !== "login"} inert={dropView !== "login" ? "" : undefined}>
+              <div className="lf-dv-pane" ref={loginPane} aria-hidden={dropView !== "login"} inert={dropView !== "login"}>
               {error && (
                 <div className="lf-error" role="alert">
                   <span className="lf-error-dot">!</span> {error}
@@ -575,7 +581,7 @@ export default function LoginForm({ variant = "student" }) {
               </div>
 
               {/* ── Recover account: slides in from the right ── */}
-              <div className="lf-dv-pane" ref={recoverPane} aria-hidden={dropView !== "recover"} inert={dropView !== "recover" ? "" : undefined}>
+              <div className="lf-dv-pane" ref={recoverPane} aria-hidden={dropView !== "recover"} inert={dropView !== "recover"}>
                 <button type="button" className="lf-dv-back" onClick={() => setDropView("login")}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
                   Back to log in

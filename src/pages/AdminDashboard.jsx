@@ -6,8 +6,7 @@ import Shell, {
   navWithTabs,
   Spinner, PageHeader, StatCard, Badge, Table, Section, Empty, Msg, Modal, Bar, Avatar, Ring, Icon, PhotoPicker, Inbox,
   InternMonitor, AccountSecurity, UserDetails, UserForm, RolePickModal, outputRequired, PRE_REQUIREMENTS, POST_REQUIREMENTS, todayManila, fmtTime, calcHours, greeting, esc, requiredHoursFor,
-  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL,
-} from "../components/DashKit.jsx";
+  DTR_MODES, dtrModeOf, liveRefresh, programKey, AnnouncementBoard, Drawer, OA_CSS, REQUIREMENTS_BY_PHASE, PHASE_LABEL, confirmBox } from "../components/DashKit.jsx";
 import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople, NeedsAttention } from "../components/DashBoard.jsx";
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
@@ -63,6 +62,25 @@ const GROUPS = {
   },
 };
 
+// Card Requests in the sidebar: one sub-item per step (the page itself shows the same tabs)
+const CARD_TABS = [
+  { key: "toprint",  label: "To print" },
+  { key: "tolink",   label: "To link" },
+  { key: "toclaim",  label: "To claim" },
+  { key: "released", label: "Released" },
+];
+// the step of each intern's newest approved / issued card request (the same rule as the Card Requests page)
+export function cardStageCounts(requests) {
+  const latest = {};
+  [...(requests || [])].sort((a, b) => b.id - a.id).forEach((r) => { if (!latest[r.user_id]) latest[r.user_id] = r; });
+  const n = { toprint: 0, tolink: 0, toclaim: 0, released: 0 };
+  Object.values(latest).forEach((r) => {
+    if (r.status === "issued") n.released++;
+    else if (r.status === "approved") n[!r.printed_at ? "toprint" : r.uid ? "toclaim" : "tolink"]++;
+  });
+  return n;
+}
+
 // The old addresses still work (bookmarks): they open the matching tab.
 const OLD_PATHS = {
   "/admin/records": "/admin/interns?tab=records",
@@ -76,7 +94,7 @@ const OLD_PATHS = {
 /* ───────── Page with tabs (one title, a row of tabs, then the open tab) ─────────
    The open tab's own title is hidden (the group title + the tab's description replace it);
    a button the tab had in its header (e.g. "Add New User") stays, on the right. */
-export function GroupPage({ group, tab, onPick, children }) {
+export function GroupPage({ group, tab, onPick, counts = {}, children }) {
   return (
     <>
       <style>{grpCss}</style>
@@ -91,6 +109,7 @@ export function GroupPage({ group, tab, onPick, children }) {
           >
             <Icon name={t.icon} size={16} />
             <span>{t.label}</span>
+            {counts[t.key] > 0 && <span className="grp-tab-n">{counts[t.key] > 99 ? "99+" : counts[t.key]}</span>}
           </button>
         ))}
       </div>
@@ -201,7 +220,8 @@ export default function AdminDashboard() {
   const [records, setRecords] = useState([]);
   const [users, setUsers] = useState([]);
   const [movs, setMovs] = useState([]);
-  const [cardReqs, setCardReqs] = useState([]);   // NFC card requests: the sidebar count on Card Requests
+  const [cardReqs, setCardReqs] = useState([]);   // NFC card requests: the sidebar counts on Card Requests
+  const [openAlerts, setOpenAlerts] = useState(0); // copied-card alerts not resolved yet: the sidebar count on Kiosks
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -211,12 +231,14 @@ export default function AdminDashboard() {
 
   const fetchAll = async () => {
     try {
-      const [r, u, m, c] = await Promise.all([
+      const [r, u, m, c, f] = await Promise.all([
         fetch(`${API}/admin/all-attendance`).then((r) => r.json()),
         fetch(`${API}/admin/users`).then((r) => r.json()),
         fetch(`${API}/coordinator/movs`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/supervisor/nfc-requests`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/card-flags`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null),
       ]);
+      if (f && Array.isArray(f.flags)) setOpenAlerts(f.flags.filter((x) => !x.resolved_at).length);
       if (Array.isArray(m)) setMovs([...m]);
       if (Array.isArray(c)) setCardReqs(c);
       if (Array.isArray(r)) setRecords([...r]);
@@ -250,11 +272,15 @@ export default function AdminDashboard() {
   const asked = new URLSearchParams(search).get("tab");
   const tab = group ? (group.tabs.find((t) => t.key === asked) || group.tabs[0]) : null;
   const pickTab = (key) => navigate(`${path}?tab=${key}`, { replace: true });
+  const cardCounts = cardStageCounts(cardReqs);
+  const cardTab = path === "/admin/cards" ? (CARD_TABS.find((t) => t.key === asked)?.key || null) : null;
 
   return (
     // the admin's own work on Card Requests: approved cards to print, and printed cards still to link
-    <Shell navItems={navWithTabs(NAV, GROUPS, {}, {
-      "/admin/cards": cardReqs.filter((q) => q.status === "approved" && (!q.printed_at || !q.uid)).length,
+    // (released cards are done: no count) · Partner HTEs → Kiosks: copied-card alerts still open
+    <Shell navItems={navWithTabs(NAV, GROUPS, { "/admin/cards": CARD_TABS }, {
+      "/admin/cards": { toprint: cardCounts.toprint, tolink: cardCounts.tolink, toclaim: cardCounts.toclaim },
+      "/admin/htes": { kiosks: openAlerts },
     })} user={user}>
       <style>{adminCss}</style>
       <style>{internCss}</style>
@@ -265,7 +291,7 @@ export default function AdminDashboard() {
       {path === "/admin" && <Home user={user} records={records} interns={interns} coordinators={coordinators} loading={loading} />}
 
       {group && (
-        <GroupPage group={group} tab={tab} onPick={pickTab}>
+        <GroupPage group={group} tab={tab} onPick={pickTab} counts={path === "/admin/htes" ? { kiosks: openAlerts } : {}}>
           {/* Interns */}
           {tab.key === "monitor" && (
             <InternMonitor
@@ -282,7 +308,7 @@ export default function AdminDashboard() {
               <AssignSupervisorsLazy interns={interns} supervisors={users.filter((u) => u.role === "supervisor")} records={records} onRefresh={fetchAll} />
             </Suspense>
           )}
-          {tab.key === "kiosks" && <Kiosks interns={interns} />}
+          {tab.key === "kiosks" && <Kiosks interns={interns} onAlerts={fetchAll} />}
           {/* Accounts */}
           {tab.key === "users" && <Accounts users={users} onRefresh={fetchAll} />}
           {tab.key === "term" && <EndOfTerm users={users} records={records} onRefresh={fetchAll} />}
@@ -293,7 +319,7 @@ export default function AdminDashboard() {
       {/* their own pages (moved out of Accounts) */}
       {path === "/admin/cards" && (<>
         <PageHeader title="Card Requests" sub="Approved ID cards: download the details for your printing app, then mark them as printed." />
-        <PrintIdCards interns={interns} />
+        <PrintIdCards interns={interns} tab={cardTab} onTab={(k) => navigate(`/admin/cards?tab=${k}`, { replace: true })} onChanged={fetchAll} />
       </>)}
       {path === "/admin/activity" && (<>
         <PageHeader title="Activity Log" sub="Who did what, and when: sign-ins, approvals, edits and deletions." />
@@ -375,11 +401,11 @@ function Home({ user, records, interns, coordinators, loading }) {
     return m < 10 ? { tag: "Online", tone: "green" } : { tag: "Idle", tone: "amber" };
   };
   const actTone = (a) => (/refused|locked|failed|deleted|removed/i.test(a) ? "red" : /approved|signed in|added|agreed/i.test(a) ? "green" : "");
-  const approved = (cards || []).filter((r) => r.status === "approved");
+  const cn = cardStageCounts(cards);   // the same counts as the sidebar and the Card Requests tabs
   const stages = [
-    { key: "print", icon: "print", tone: "", title: "To print", sub: "Approved, download and print", n: approved.filter((r) => !r.printed_at).length },
-    { key: "link", icon: "nfc", tone: "blue", title: "To link", sub: "Printed, tap the card to link its UID", n: approved.filter((r) => r.printed_at && !r.uid).length },
-    { key: "claim", icon: "card", tone: "green", title: "Ready to claim", sub: "Linked, waiting for the intern", n: approved.filter((r) => r.printed_at && r.uid).length },
+    { key: "print", icon: "print", tone: "", title: "To print", sub: "Approved, download and print", n: cn.toprint },
+    { key: "link", icon: "nfc", tone: "blue", title: "To link", sub: "Printed, tap the card to link its UID", n: cn.tolink },
+    { key: "claim", icon: "card", tone: "green", title: "To claim", sub: "Linked, waiting for the intern", n: cn.toclaim },
   ];
   const cardWork = stages.reduce((s, x) => s + x.n, 0);
 
@@ -406,7 +432,7 @@ function Home({ user, records, interns, coordinators, loading }) {
           <div className="dbx-fill">
             {stages.map((s) => (
               <DashRow key={s.key} icon={s.icon} tone={s.tone} title={s.title} sub={s.sub}
-                tag={s.n > 0 ? String(s.n) : "None"} tagTone={s.n > 0 ? "orange" : ""} onClick={() => go("/admin/cards")} />
+                tag={s.n > 0 ? String(s.n) : "None"} tagTone={s.n > 0 ? "orange" : ""} onClick={() => go(`/admin/cards?tab=to${s.key}`)} />
             ))}
           </div>
         </Panel>
@@ -1067,7 +1093,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
   // graduated / inactive: can't sign in or tap, records stay
   const [toggling, setToggling] = useState(null);
   const setActive = async (u, active) => {
-    if (!active && !window.confirm(`Deactivate ${u.name}?\n\nThey won't be able to sign in or tap their card. All their records are kept, and you can reactivate the account anytime.`)) return;
+    if (!active && !(await confirmBox({ title: "Deactivate this account?", message: `Deactivate ${u.name}?\n\nThey won't be able to sign in or tap their card. All their records are kept, and you can reactivate the account anytime.`, ok: "Yes, deactivate", danger: true }))) return;
     setToggling(u.id); setMsg(null);
     try {
       const res = await fetch(`${API}/admin/users/${u.id}/active`, {
@@ -1083,7 +1109,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
   };
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`Delete user "${name}"? This cannot be undone.`)) return false;
+    if (!(await confirmBox({ title: "Delete this account?", message: `Delete user "${name}"? This cannot be undone.`, ok: "Yes, delete", danger: true }))) return false;
     setDeleting(id);
     try {
       const res = await fetch(`${API}/admin/users/${id}`, { method: "DELETE" });
@@ -1452,7 +1478,7 @@ export function Accounts({ users, onRefresh, limited = false }) {
 /* ───────────────────────── Card Requests ─────────────────────────
    ID cards are printed in the card printer's own app. Here the admin gets the approved list, downloads
    the details and photos, and marks the cards as printed. */
-function PrintIdCards({ interns }) {
+function PrintIdCards({ interns, tab, onTab, onChanged }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1470,7 +1496,8 @@ function PrintIdCards({ interns }) {
   return (
     <>
       {error && <div className="ix-alert"><Icon name="warn" size={18} /> {error}</div>}
-      {loading ? <Spinner /> : <CardRequests requests={requests} interns={interns} onChanged={load} />}
+      {loading ? <Spinner /> : <CardRequests requests={requests} interns={interns} tab={tab} onTab={onTab}
+        onChanged={() => { load(); onChanged && onChanged(); }} />}
     </>
   );
 }
@@ -2009,9 +2036,12 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
   const hteEvent = sup || !!ev?.hte_key;                 // an HTE calendar day
   const base = sup ? `${API}/supervisor/calendar` : `${API}/calendar`;
   const [date, setDate] = useState(String(ev ? ev.date : initDate).slice(0, 10));
-  const [type, setType] = useState(ev ? ev.type : workFrom ? "working" : "holiday");
+  // Saturday / Sunday: interns can't time in unless the HTE marks the day "We're open"
+  const isWeekendDay = (iso) => { const g = new Date(String(iso).slice(0, 10) + "T12:00:00Z").getUTCDay(); return g === 0 || g === 6; };
+  const openWeekend = !ev && hteEvent && !workFrom && isWeekendDay(initDate);   // a new HTE day on a weekend starts as "We're open"
+  const [type, setType] = useState(ev ? ev.type : workFrom || openWeekend ? "working" : "holiday");
   const [scope, setScope] = useState(ev?.scope || "no_ojt");
-  const [title, setTitle] = useState(ev ? ev.title : workFrom ? "Office open as usual" : "");
+  const [title, setTitle] = useState(ev ? ev.title : workFrom || openWeekend ? "Office open as usual" : "");
   const [description, setDescription] = useState(ev ? ev.description || "" : workFrom ? `Our HTE works on ${workFrom.title}.` : "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
@@ -2043,7 +2073,7 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
     } catch (er) { setErr(er.message); } finally { setSaving(false); }
   };
   const del = async () => {
-    if (!window.confirm("Delete this day from the calendar?")) return;
+    if (!(await confirmBox({ title: "Delete this day?", message: "The day is taken off the calendar. If it was a holiday or a non-working day, interns can time in on it again.", ok: "Yes, delete", danger: true }))) return;
     try {
       const res = await fetch(`${base}/${ev.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
       const data = await res.json().catch(() => ({}));
@@ -2076,7 +2106,8 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
   const isWork = type === "working";
   // "We work" only makes sense on a day the university closed (No OJT): it opens that day for this HTE's interns
   const uniClosed = events.some((x) => !x.hte_key && String(x.date).slice(0, 10) === date && x.scope !== "school_event");
-  const canWork = hteEvent && (uniClosed || isWork);
+  const wkd = date && isWeekendDay(date);
+  const canWork = hteEvent && (uniClosed || wkd || isWork);
   return (
     <Drawer inPage title={dateTitle}
       kicker={hteEvent ? (sup ? (ev ? "Your HTE calendar" : "Add to your HTE calendar") : `HTE calendar · ${ev?.hte_name || ""}`) : ev ? "University calendar · edit" : "University calendar"}
@@ -2129,9 +2160,9 @@ function CalDrawer({ ev, date: initDate, sup, workFrom, events = [], onClose, on
           <label htmlFor="cal-desc">Description <span className="ix-muted">(optional)</span></label>
           <textarea id="cal-desc" rows={3} placeholder="e.g. interns are not allowed to time in" value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
-        {canWork && !isWork && <small className="cm-note">The university has no OJT this day. If your office is open, choose “We're open” so your interns can time in.</small>}
+        {canWork && !isWork && <small className="cm-note">{wkd && !uniClosed ? "Interns don't time in on weekends." : "The university has no OJT this day."} If your office is open, choose “We're open” so your interns can time in.</small>}
         <small className="cm-note">{isWork
-          ? "The university has no OJT this day, but your office is open: your interns can time in as usual. Only your interns see this."
+          ? `${wkd && !uniClosed ? "Interns don't normally time in on weekends" : "The university has no OJT this day"}, but your office is open: your interns can time in as usual. Only your interns see this.`
           : hteEvent ? "Only the interns placed at this HTE can't time in this day. Only your interns see this."
           : scope === "school_event" ? "Shown on everyone's calendar. Interns still time in at their HTE."
           : "No intern can time in this day (unless their HTE marks it as a working day). It shows on the DTR."}</small>
@@ -2277,7 +2308,7 @@ function CalEditor({ ev, onDone }) {
     } finally { setSaving(false); }
   };
   const del = async () => {
-    if (!window.confirm("Delete this calendar event?")) return;
+    if (!(await confirmBox({ title: "Delete this event?", message: "The event is taken off the calendar for everyone.", ok: "Yes, delete", danger: true }))) return;
     try {
       const res = await fetch(`${API}/calendar/${ev.id}`, { method: "DELETE", headers: { Accept: "application/json" } });
       const data = await res.json();
@@ -2985,7 +3016,7 @@ function KioskHistory({ kiosk }) {
   );
 }
 
-function Kiosks({ interns = [] }) {
+function Kiosks({ interns = [], onAlerts }) {
   const [data, setData] = useState(null);       // { kiosks, placements }
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -3011,6 +3042,7 @@ function Kiosks({ interns = [] }) {
   }, [alertsOpen]);
   const closeAlerts = () => {
     setAlertsOpen(false);
+    onAlerts && onAlerts();   // the sidebar count follows the alerts that were just resolved
     const q = new URLSearchParams(loc.search);
     if (q.has("alerts")) { q.delete("alerts"); navigate({ search: q.toString() }, { replace: true }); }
   };
@@ -3039,7 +3071,7 @@ function Kiosks({ interns = [] }) {
     if (d?.key) { setShown({ id: d.id, name: form.name.trim(), key: d.key }); setCopied(false); setForm({ name: "", placement: "" }); setAdding("done"); }
   };
   const newKey = async (k) => {
-    if (!window.confirm(`Make a new key for "${k.name}"? The old key stops working right away, so you'll need to set up the kiosk again.`)) return;
+    if (!(await confirmBox({ title: "Make a new key?", message: `Make a new key for "${k.name}"? The old key stops working right away, so you'll need to set up the kiosk again.`, ok: "Yes, make a new key", danger: true }))) return;
     const d = await call(`${API}/admin/kiosks/${k.id}`, "PATCH", { new_key: true }, "key" + k.id);
     if (d?.key) { setShown({ id: k.id, name: k.name, key: d.key }); setCopied(false); }
   };
@@ -3056,7 +3088,7 @@ function Kiosks({ interns = [] }) {
     } finally { setBusy(null); }
   };
   const toggle = (k) => call(`${API}/admin/kiosks/${k.id}`, "PATCH", { active: !k.active }, "on" + k.id);
-  const remove = async (k) => window.confirm(`Remove "${k.name}"? Its key stops working.`) && !!(await call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id));
+  const remove = async (k) => (await confirmBox({ title: "Remove this kiosk?", message: `Remove "${k.name}"? Its key stops working.`, ok: "Yes, remove", danger: true })) && !!(await call(`${API}/admin/kiosks/${k.id}`, "DELETE", null, "rm" + k.id));
   const link = shown ? `${window.location.origin}/?kiosk_key=${encodeURIComponent(shown.key)}${readerPick !== "auto" ? `&reader=${readerPick}` : ""}` : "";
   const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select it by hand */ } };
   const seen = (v) => (v ? new Date(String(v).replace(" ", "T")).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Never");
@@ -3772,7 +3804,7 @@ function ImportInterns({ onClose, onDone }) {
 
   const create = async () => {
     const good = checked.rows.filter((x) => !x.errors.length).length;
-    if (!window.confirm(`Create ${good} intern account${good === 1 ? "" : "s"}? Each intern gets a temporary password by email.`)) return;
+    if (!(await confirmBox({ title: "Create the accounts?", message: `Create ${good} intern account${good === 1 ? "" : "s"}? Each intern gets a temporary password by email.`, ok: "Yes, create" }))) return;
     setBusy("create"); setErr("");
     try {
       const res = await fetch(`${API}/admin/users/import`, {
