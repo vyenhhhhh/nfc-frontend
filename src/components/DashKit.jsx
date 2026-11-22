@@ -103,6 +103,46 @@ export const MODALITY_HINT = {
   project: "Works on a project: done when the project is complete (supervisor marks it, coordinator confirms it)",
 };
 export const modalityOf = (u) => (MODALITIES[u?.modality] ? u.modality : "onsite");
+
+/* The intern's modality in their profile. The intern's own HTE supervisor can change it here (the scope stays with
+   the OJT coordinator); everyone else just sees it. Same look as the DTR type field. */
+export function ModalityField({ u }) {
+  // starts again from the intern's saved modality whenever another intern is shown or the saved value changes
+  const key = `${u?.id}:${u?.modality}`;
+  const [st, setSt] = useState({ key, mod: modalityOf(u), state: "" });   // state: "" | saving | saved | error text
+  const cur = st.key === key ? st : { key, mod: modalityOf(u), state: "" };
+  const { mod, state } = cur;
+  const setMod = (m) => setSt((p) => ({ ...(p.key === key ? p : cur), mod: m }));
+  const setState = (x) => setSt((p) => ({ ...(p.key === key ? p : cur), state: x }));
+  let me = {};
+  try { me = JSON.parse(sessionStorage.getItem("user") || "{}"); } catch { /* not signed in */ }
+  const canSet = me.role === "supervisor" && Number(u?.supervisor_id) === Number(me.id);
+  if (!canSet) return MODALITIES[mod];
+  const change = async (e) => {
+    const next = e.target.value, prev = mod;
+    setMod(next); setState("saving");
+    try {
+      const res = await fetch(`${API}/supervisor/interns/${u.id}/modality`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ modality: next }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || "Couldn't save.");
+      setState("saved");
+      window.dispatchEvent(new Event(LIVE_EVENT));   // reload the page's data (the DTR field depends on the modality)
+    } catch (err) {
+      setMod(prev); setState(err instanceof TypeError ? "Couldn't reach the server." : err.message);
+    }
+  };
+  return (
+    <span className="dtr-set">
+      <select value={mod} onChange={change} disabled={state === "saving"} aria-label="Internship modality (set by the HTE supervisor)" title={MODALITY_HINT[mod]}>
+        {Object.entries(MODALITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+      {state === "saved" && <em className="ok">Saved</em>}
+      {state && state !== "saved" && state !== "saving" && <em className="err">{state}</em>}
+    </span>
+  );
+}
 // a project-based intern keeps a flexible schedule (never late, no undertime on the DTR) unless their HTE makes
 // its project-based interns follow 8:00–5:00 (hte_fixed_schedule: from the supervisor's account, sent with the intern)
 const on = (v) => v === true || v === 1 || v === "1" || v === "true";
@@ -1541,9 +1581,10 @@ function InternProfile({ u, records, today, onClose, onViewRecords, onReviewFile
               {v("HTE supervisor", u.supervisor_name || "Not assigned yet")}
               {v("Program", u.program)}
               {v("Semester", u.semester)}
-              {v("Modality", MODALITIES[modalityOf(u)])}
+              {/* modality and DTR type: the intern's own HTE supervisor can change them here; everyone else just sees them.
+                  The scope stays with the OJT coordinator. */}
+              {v("Modality", <ModalityField u={u} />)}
               {v("Scope", SCOPES[scopeOf(u)])}
-              {/* the intern's own HTE supervisor can change it here; everyone else just sees it */}
               {v("Time record (DTR)", <DtrModeField u={u} />)}
               {v("Required hours", `${required} hours`)}
               {v("College", u.college || "CCIS")}
