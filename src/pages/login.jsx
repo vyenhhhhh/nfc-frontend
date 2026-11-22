@@ -74,6 +74,28 @@ const WaveIcon = ({ size = 22 }) => (
   </svg>
 );
 
+/* Password box with an eye button to show or hide what was typed (same eye as the log in form) */
+function PwInput({ value, onChange, show, onToggle, autoFocus }) {
+  return (
+    <div className="lf-rec-pw">
+      <input type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} required minLength={8} autoComplete="new-password" autoFocus={autoFocus} />
+      <button type="button" className="lf-eye" onClick={onToggle} aria-label={show ? "Hide password" : "Show password"}>
+        {show ? (
+          <Icon size={20}>
+            <path d="M17.9 17.9A10.4 10.4 0 0 1 12 19.5C5.5 19.5 2 12 2 12a18 18 0 0 1 4.1-5.1M9.9 4.6A9.7 9.7 0 0 1 12 4.5c6.5 0 10 7.5 10 7.5a18 18 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2" />
+            <path d="M3 3l18 18" />
+          </Icon>
+        ) : (
+          <Icon size={20}>
+            <path d="M2 12s3.5-7.5 10-7.5S22 12 22 12s-3.5 7.5-10 7.5S2 12 2 12z" />
+            <circle cx="12" cy="12" r="3" />
+          </Icon>
+        )}
+      </button>
+    </div>
+  );
+}
+
 /* Forgot password flow: recover with your recovery code, or get the code by email */
 function RecoverFlow({ onDone }) {
   const [step, setStep] = useState("verify"); // "verify" | "newpass" | "email"
@@ -83,6 +105,7 @@ function RecoverFlow({ onDone }) {
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [showPw, setShowPw] = useState(false);
+  const [showPw2, setShowPw2] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
@@ -154,10 +177,9 @@ function RecoverFlow({ onDone }) {
           <p className="lf-modal-lead">Verified{pass?.name ? `: ${pass.name}` : ""}. Choose a new password.</p>
           <form onSubmit={setNew}>
             <label>New password</label>
-            <input type={showPw ? "text" : "password"} value={pw} onChange={(e) => setPw(e.target.value)} required minLength={8} autoComplete="new-password" autoFocus />
+            <PwInput value={pw} onChange={setPw} show={showPw} onToggle={() => setShowPw(!showPw)} autoFocus />
             <label>Confirm new password</label>
-            <input type={showPw ? "text" : "password"} value={pw2} onChange={(e) => setPw2(e.target.value)} required minLength={8} autoComplete="new-password" />
-            <label className="lf-rec-check"><input type="checkbox" checked={showPw} onChange={(e) => setShowPw(e.target.checked)} /> Show passwords</label>
+            <PwInput value={pw2} onChange={setPw2} show={showPw2} onToggle={() => setShowPw2(!showPw2)} />
             {note}
             <button type="submit" className="lf-rec-btn" disabled={busy || msg?.type === "success"}>{busy ? "Saving..." : "Change password"}</button>
           </form>
@@ -1015,6 +1037,9 @@ const css = `
   .lf-rec-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--field); border-radius: 12px; margin-top: 8px; }
   .lf-rec-tabs button { padding: 8px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; font-size: 13px; color: var(--mut); cursor: pointer; }
   .lf-rec-tabs button.on { background: #fff; color: var(--o); box-shadow: 0 2px 8px rgba(27,20,16,.08); }
+  .lf-rec-pw { position: relative; }
+  .lf-rec .lf-rec-pw input { padding-right: 48px; }
+  .lf-rec-pw .lf-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); }
   .lf-rec-check { display: flex; align-items: center; gap: 8px; font-weight: 500 !important; cursor: pointer; }
   .lf-rec-btn { margin-top: 8px; padding: 13px; border: 0; border-radius: 14px; cursor: pointer; color: #fff; font-size: 14.5px; font-weight: 700; background: linear-gradient(135deg, var(--o2), #e04a1a); box-shadow: 0 10px 22px var(--o-glow); }
   .lf-rec-btn:disabled { opacity: .7; cursor: default; }
