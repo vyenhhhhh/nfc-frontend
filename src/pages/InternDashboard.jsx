@@ -4375,9 +4375,16 @@ export const internCss = `
 .ix-page .ix-content .dbx-fix-link:hover { background: #ffe8db; }
 .ix-page .ix-content .dbx-fix-link > svg { flex: none; }
 .ix-page .ix-content .dbx-fix-link > i { font-style: normal; font-size: 14px; }
-/* intern dashboard: Announcements shows 3 at a time; more scroll inside the card */
+/* intern dashboard: Announcements. Small screens: about 3 at a time, more scroll inside the card.
+   Wide screens: the card fills the column down to the bottom of the other cards (taller in full screen),
+   and the list scrolls inside it, so the card never sticks out or ends short. */
 .ix-page .ix-content .dbx-side .adm-duty .ann-list { max-height: 312px !important; flex: none !important; overflow-y: auto !important; }
 .ix-page .ix-content .dbx-side .adm-duty:has(.ann-list) { flex: none !important; }
+@media (min-width: 1251px) {
+  .ix-page .ix-content .dbx-grid.has-left.has-right > .dbx-side { min-height: 0; }
+  .ix-page .ix-content .dbx-side .adm-duty:has(.ann-list) { flex: 1 1 auto !important; min-height: 0 !important; }
+  .ix-page .ix-content .dbx-side .adm-duty .ann-list { flex: 1 1 0 !important; height: 0; min-height: 170px; max-height: none !important; }
+}
 .at-ot.approved { color: #146c3a; }
 /* My Attendance: an excused day in the list */
 .ix-page .at-exc-tag { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 8px; background: #f3efff; color: #6d28d9; font-size: 12px; font-weight: 600; white-space: nowrap; }

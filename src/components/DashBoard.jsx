@@ -401,7 +401,8 @@ export const dbCss = `
 }
 
 /* intern: recent taps (one row per time in / time out) */
-.ix-page .ix-content .dbx-tap { grid-template-columns: 34px minmax(0, 1fr) 62px 80px 76px; }
+.ix-page .ix-content .dbx-tap { grid-template-columns: 34px minmax(0, 1fr) 82px 80px 76px; }
+.ix-page .ix-content .dbx-tap > .dbx-tag { overflow: hidden; text-overflow: ellipsis; }
 .ix-page .ix-content .dbx-tap-day { font-size: 12.5px; font-weight: 600; color: var(--dbx-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ix-page .ix-content .dbx-tap-time { text-align: right; font-size: 13px; font-weight: 700; white-space: nowrap; }
 @media (max-width: 640px) { .ix-page .ix-content .dbx-tap { grid-template-columns: 34px minmax(0, 1fr) auto auto; } .ix-page .ix-content .dbx-tap > .dbx-tag.blue, .ix-page .ix-content .dbx-tap > .dbx-tag.purple { display: none; } }
