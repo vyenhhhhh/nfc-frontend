@@ -174,7 +174,7 @@ export function OnlineQueue({ mine = [], withSup = [], done = [], onReview, role
           body: (
             <>
               <style>{OA_CSS}</style><style>{AQ_CSS}</style>
-              <Facts items={[["Counts as", "8 hours (8:00 AM – 5:00 PM)"], !sup && ["Supervisor", o.endorser_name || o.supervisor_name || "None assigned"], ["Sent", stamp(o.submitted_at || o.created_at)]]} />
+              <Facts items={[["Counts as", "8 hours (8:00 AM – 5:00 PM)"], ["Placement", o.intern_placement || "Not set"], !sup && ["Supervisor", o.endorser_name || o.supervisor_name || "None assigned"], ["Sent", stamp(o.submitted_at || o.created_at)]]} />
               {reason && <div className="aq-note warn"><b>Why they weren't at the office</b><p>{reason}</p></div>}
               <div className="aq-note"><b>What they worked on</b><p>{tasks || "—"}</p></div>
               {/* the intern's proof of the day (older submissions have none) */}
@@ -271,7 +271,7 @@ export function OvertimeQueue({ mine = [], withSup = [], done = [], all = [], ca
             <>
               <style>{OA_CSS}</style><style>{AQ_CSS}</style>
               {bar(o)}
-              <Facts items={[["After 5:00 PM", fmtMinutes(o.ot_minutes)], ["HTE Supervisor approved", supOk ? fmtMinutes(o.ot_endorsed_minutes) : sup ? "Not yet" : o.supervisor_id ? "Not yet" : "No supervisor"],
+              <Facts items={[["Placement", o.intern_placement || "Not set"], ["After 5:00 PM", fmtMinutes(o.ot_minutes)], ["HTE Supervisor approved", supOk ? fmtMinutes(o.ot_endorsed_minutes) : sup ? "Not yet" : o.supervisor_id ? "Not yet" : "No supervisor"],
                 ["Approved this month", month ? fmtMinutes(month) : "None yet"]]} />
               <Steps list={[["Stayed after 5 PM", "done", "Recorded"], (hasSup || sup) ? [SUP_STEP, supOk ? "done" : rej ? "bad" : "now"] : [SUP_STEP, "skip", "No supervisor"],
                 [COORD_STEP, st === "approved" ? "done" : rej && supOk ? "bad" : st === "endorsed" || (!hasSup && !sup && st === "pending") ? "now" : "", rej && !supOk ? "Not reached" : null],
@@ -376,7 +376,7 @@ export function ExcusedQueue({ role = "coordinator" }) {
             body: (
               <>
                 <style>{OA_CSS}</style><style>{AQ_CSS}</style>
-                <Facts items={[["Reason", `${r.event_name}${r.mandatory ? " (mandatory)" : ""}`], ["Supervisor", r.reviewer_name || (r.supervisor_id ? "Assigned" : "None assigned")], ["Sent", stamp(r.created_at)]]} />
+                <Facts items={[["Placement", r.intern_placement || "Not set"], ["Reason", `${r.event_name}${r.mandatory ? " (mandatory)" : ""}`], ["Supervisor", r.reviewer_name || (r.supervisor_id ? "Assigned" : "None assigned")], ["Sent", stamp(r.created_at)]]} />
                 {r.reason && <div className="aq-note"><b>Intern's note</b><p>{r.reason}</p></div>}
                 {r.proof_path ? <FileBox key={r.id} path={r.proof_path} name={r.proof_name} /> : <div className="aq-note warn"><b>No proof attached</b></div>}
                 <Steps list={[["Submitted by intern", "done", "Submitted"], hasSup ? [SUP_STEP, r.status === "endorsed" || r.status === "approved" || (rej && !supRejEv(r)) ? "done" : rej ? "bad" : "now", r.status === "endorsed" || r.status === "approved" || (rej && !supRejEv(r)) ? "Confirmed" : null] : [SUP_STEP, "skip", "No supervisor"],
@@ -585,7 +585,7 @@ const AQ_CSS = `
 .ix-input.aq-need::placeholder { color: #b91c1c; }
 .aq-facts { flex: none; display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 14px; border: 1px solid #eef0f4; border-radius: 12px; background: #fafbfc; }
 .aq-facts span { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.aq-facts small { font-size: 12px; color: #64748b; } .aq-facts b { font-size: 13.5px; color: #0f172a; font-weight: 600; }
+.aq-facts small { font-size: 12px; color: #64748b; } .aq-facts b { font-size: 13.5px; color: #0f172a; font-weight: 600; overflow-wrap: anywhere; }
 .aq-note { flex: none; border: 1px solid #eef0f4; border-radius: 12px; padding: 10px 14px; background: #fff; }
 .aq-note b { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #94a3b8; margin-bottom: 4px; }
 .aq-note p { margin: 0; font-size: 13.5px; line-height: 1.55; color: #1e293b; white-space: pre-wrap; overflow-wrap: anywhere; }
