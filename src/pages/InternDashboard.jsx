@@ -4396,7 +4396,12 @@ export const internCss = `
   .ix-page.lay2 .ix-content .dbx-grid > .dbx-side > .adm-duty > ul.ann-list.ann-two,
   .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > ul.ann-list.ann-two {
     flex: 1 1 0 !important; height: auto !important; min-height: 170px !important; max-height: none !important; }
+  /* with the extra room, each announcement shows up to 4 lines of its text instead of 2 */
+  .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > ul.ann-list.ann-two li p { -webkit-line-clamp: 4 !important; }
 }
+/* every dashboard card: the white sticky header follows the card's rounded top corners (16px card, 1px border),
+   so it no longer paints over the corners and the top border looks complete */
+.ix-page .ix-content .dbx-card > header.dbx-ch { border-top-left-radius: 15px; border-top-right-radius: 15px; }
 .at-ot.approved { color: #146c3a; }
 /* My Attendance: an excused day in the list */
 .ix-page .at-exc-tag { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 8px; background: #f3efff; color: #6d28d9; font-size: 12px; font-weight: 600; white-space: nowrap; }
