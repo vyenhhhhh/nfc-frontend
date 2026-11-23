@@ -327,12 +327,13 @@ function MyRequests({ user, records }) {
   const rows = [
     ...online.map((o) => ({
       key: `o${o.id}`, rid: o.id, kind: "online", date: o.date, status: o.status, viaSupervisor: hasSup,
-      endorsed: !!o.endorsed_at || o.status === "endorsed",
+      // rejected: "endorsed" = it got past the supervisor, so the coordinator rejected it
+      endorsed: o.status === "rejected" ? o.rejected_by === "coordinator" : !!o.endorsed_at || o.status === "endorsed",
       details: o.description, remarks: o.remarks || o.endorse_remarks, supRm: o.endorse_remarks, coRm: o.remarks,
     })),
     ...records.filter((r) => r.ot_status).map((r) => ({
       key: `t${r.id}`, kind: "overtime", date: r.date, status: r.ot_status, viaSupervisor: hasSup,
-      endorsed: !!r.ot_endorsed_at || r.ot_status === "endorsed",
+      endorsed: r.ot_status === "rejected" ? Number(r.ot_endorsed_minutes) > 0 : !!r.ot_endorsed_at || r.ot_status === "endorsed",
       details: r.ot_status === "approved" && r.ot_approved_minutes != null
         ? `${fmtMinutes(r.ot_approved_minutes)} approved of ${fmtMinutes(r.ot_minutes || 0)}`
         : `${fmtMinutes(r.ot_minutes || 0)} after 5:00 PM`,
@@ -345,7 +346,7 @@ function MyRequests({ user, records }) {
     })),
     ...events.map((v) => ({
       key: `e${v.id}`, rid: v.id, proof_path: v.proof_path, proof_name: v.proof_name, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
-      endorsed: !!v.endorsed_at || v.status === "endorsed",
+      endorsed: v.status === "rejected" ? !!v.endorsed_by && Number(v.endorsed_by) !== Number(v.reviewed_by) : !!v.endorsed_at || v.status === "endorsed",
       details: `${v.event_name}${v.mandatory ? " (mandatory)" : ""} · excused ${PORTION_LBL[v.portion] || "whole day"}, no hours counted for it${v.reason ? " — " + v.reason : ""}`,
       remarks: v.remarks || v.endorse_remarks, supRm: v.endorse_remarks, coRm: v.remarks,
     })),
@@ -381,7 +382,7 @@ function MyRequests({ user, records }) {
       <div className="mon-bar rq-bar">
         {/* same switch as "My online submissions" */}
         <div className="so-tabs" role="tablist" aria-label="Filter by status">
-          {[["all", "All", ofType.length], ["waiting", "Waiting", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
+          {[["all", "All", ofType.length], ["waiting", "Pending", count("waiting")], ["approved", "Approved", count("approved")], ["rejected", "Rejected", count("rejected")]].map(([k, l, n]) => (
             <button key={k} type="button" role="tab" aria-selected={filter === k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{l} · {n}</button>
           ))}
         </div>
@@ -416,7 +417,7 @@ function MyRequests({ user, records }) {
                       </td>
                       <td className="rq-date">{day(r.date)}</td>
                       <td><Steps r={r} /></td>
-                      <td className="rq-st"><Badge label={r.status === "endorsed" ? "Waiting" : st.label} type={st.type} /></td>
+                      <td className="rq-st"><Badge label={r.status === "endorsed" ? "Pending" : st.label} type={st.type} /></td>
                     </tr>
                   );
                 })}
@@ -430,7 +431,7 @@ function MyRequests({ user, records }) {
           <div className="ix-card rq-box">
             <b>This month</b>
             <div className="rq-nums">
-              <div><small>Waiting</small><strong className="w">{thisMonth.filter((r) => groupOf(r) === "waiting").length}</strong></div>
+              <div><small>Pending</small><strong className="w">{thisMonth.filter((r) => groupOf(r) === "waiting").length}</strong></div>
               <div><small>Approved</small><strong className="a">{thisMonth.filter((r) => groupOf(r) === "approved").length}</strong></div>
               <div><small>Rejected</small><strong className="r">{thisMonth.filter((r) => groupOf(r) === "rejected").length}</strong></div>
               <div><small>OT</small><strong>{fmtMinutes(otCredited)}</strong></div>
@@ -454,7 +455,7 @@ function MyRequests({ user, records }) {
             </ol>
             <div className="rq-legend">
               <small>What the colors mean</small>
-              <div><span><i className="done" />Done</span><span><i className="now" />Waiting</span><span><i className="fail" />Rejected</span></div>
+              <div><span><i className="done" />Done</span><span><i className="now" />Pending</span><span><i className="fail" />Rejected</span></div>
             </div>
           </div>
         </aside>
@@ -1630,19 +1631,19 @@ function PortionPick({ value = "whole", onChange }) {
     </div>
   );
 }
-const SO_TABS = [["all", "All"], ["waiting", "Waiting"], ["approved", "Approved"], ["rejected", "Rejected"]];
+const SO_TABS = [["all", "All"], ["waiting", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]];
 const soGroup = (x) => (x.status === "approved" ? "approved" : x.status === "rejected" ? "rejected" : "waiting");
 // two dots: 1 = HTE supervisor, 2 = OJT coordinator
 function soStage(x) {
   const s = x.status || "pending";
   if (s === "approved") return { a: "done", b: "done", tone: "ok", label: "Approved", text: "Approved · counted 8:00 AM – 5:00 PM" };
-  if (s === "endorsed") return { a: "done", b: "wait", tone: "wait", label: "Waiting", text: "Supervisor confirmed · waiting for the coordinator" };
+  if (s === "endorsed") return { a: "done", b: "wait", tone: "wait", label: "Pending", text: "Confirmed by the HTE Supervisor · pending the OJT Coordinator's approval" };
   if (s === "rejected") {
-    const bySup = !x.endorsed_at;
+    const bySup = x.rejected_by ? x.rejected_by === "supervisor" : !x.endorsed_at;
     return { a: bySup ? "no" : "done", b: bySup ? "" : "no", tone: "no", label: "Rejected",
-      text: `Rejected by the ${bySup ? "supervisor" : "coordinator"}${x.remarks ? `: “${x.remarks}”` : ""}` };
+      text: `Rejected by the ${bySup ? "HTE Supervisor" : "OJT Coordinator"}${x.remarks ? `: “${x.remarks}”` : ""}` };
   }
-  return { a: "wait", b: "", tone: "wait", label: "Waiting", text: "Waiting for your HTE supervisor" };
+  return { a: "wait", b: "", tone: "wait", label: "Pending", text: "Pending the HTE Supervisor's review" };
 }
 const PROOF_CSS = `
 .so-file { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1.5px dashed #d6dae1; border-radius: 10px; background: #fafbfc; color: #6b7280; font-size: 12.5px; cursor: pointer; overflow: hidden; box-sizing: border-box; }
@@ -4390,7 +4391,11 @@ export const internCss = `
 @media (min-width: 1251px) {
   .ix-page .ix-content .dbx-grid.has-left.has-right > .dbx-side { min-height: 0; }
   .ix-page .ix-content .dbx-side .adm-duty:has(.ann-list) { flex: 1 1 auto !important; min-height: 0 !important; }
-  .ix-page .ix-content .dbx-side .adm-duty .ann-list { flex: 1 1 0 !important; height: 0; min-height: 170px; max-height: none !important; }
+  /* stronger than the "two announcements" rule in DashKit (flex: none; min-height: 0; max-height: 236px), which with
+     height: 0 left the list empty: the list fills the card and scrolls inside it */
+  .ix-page.lay2 .ix-content .dbx-grid > .dbx-side > .adm-duty > ul.ann-list.ann-two,
+  .ix-page.lay2 .ix-content .dbx-grid.has-left.has-right > .dbx-side > .adm-duty:last-child > ul.ann-list.ann-two {
+    flex: 1 1 0 !important; height: auto !important; min-height: 170px !important; max-height: none !important; }
 }
 .at-ot.approved { color: #146c3a; }
 /* My Attendance: an excused day in the list */
