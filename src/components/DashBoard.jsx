@@ -342,7 +342,7 @@ export const dbCss = `
 .ix-page .ix-content .dbx-tag.red { background: #fee2e2; color: #b91c1c; }
 .ix-page .ix-content .dbx-tag.orange { background: #fff1ea; color: #c2410c; }
 .ix-page .ix-content .dbx-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 2px;
-  margin: 12px; padding: 22px 14px; border: 1.5px dashed #e5e7eb; border-radius: 12px; }
+  margin: 12px; padding: 22px 14px; border: 0; border-radius: 12px; }   /* the card already has a border: no second (dashed) one inside */
 .ix-page .ix-content .dbx-empty strong { font-size: 12.5px; color: #374151; }
 .ix-page .ix-content .dbx-empty p { margin: 0; font-size: 11.5px; color: var(--dbx-mut); }
 
