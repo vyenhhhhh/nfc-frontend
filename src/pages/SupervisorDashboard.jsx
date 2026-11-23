@@ -123,7 +123,7 @@ export default function SupervisorDashboard() {
   };
 
   return (
-    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime Requests" }, { key: "fix", label: "Time Corrections" }, { key: "event", label: "Excused" }, { key: "projects", label: "Projects" } ] }, { "/supervisor/approvals": counts })} user={user}>
+    <Shell navItems={navWithTabs(NAV, GROUPS, { "/supervisor/approvals": [{ key: "online", label: "Online Attendance" }, { key: "overtime", label: "Overtime Requests" }, { key: "fix", label: "Time Corrections" }, { key: "event", label: "Authorized Absence" }, { key: "projects", label: "Projects" } ] }, { "/supervisor/approvals": counts })} user={user}>
       {/* same order as the admin dashboard so every page looks identical */}
       <style>{adminCss}</style>
       <style>{internCss}</style>
@@ -178,7 +178,7 @@ function Home({ user, records, interns, loading, go, counts = {} }) {
     { key: "online", icon: "inbox", tone: "blue", title: "Online attendance", sub: "Confirm remote workdays", n: counts.online || 0 },
     { key: "overtime", icon: "clock", tone: "amber", title: "Overtime Requests", sub: "Time after 5:00 PM", n: counts.overtime || 0 },
     { key: "fix", icon: "pencil", tone: "purple", title: "Time corrections", sub: "Forgot to time in or out, or a missed day", n: counts.fix || 0 },
-    { key: "event", icon: "calendar", tone: "green", title: "Excused absences", sub: "Sick days and school events", n: counts.event || 0 },
+    { key: "event", icon: "calendar", tone: "green", title: "Authorized Absence", sub: "Sick days and school events", n: counts.event || 0 },
   ];
   const toReview = review.reduce((s, r) => s + r.n, 0);
 
@@ -329,7 +329,7 @@ function Approvals({ overtime, corrections, online = [], events = [], onRefresh,
           { key: "online", label: "Online Attendance", icon: "inbox", n: onPending.length },
           { key: "overtime", label: "Overtime Requests", icon: "clock", n: otPending.length },
           { key: "fix", label: "Time Corrections", icon: "pencil", n: fixPending.length },
-          { key: "event", label: "Excused", icon: "calendar", n: events.filter((e) => schoolEventIsMine(e, "supervisor")).length },
+          { key: "event", label: "Authorized Absence", icon: "calendar", n: events.filter((e) => schoolEventIsMine(e, "supervisor")).length },
           ...(interns.some((u) => u.modality === "project")
             ? [{ key: "projects", label: "Projects", icon: "briefcase", n: interns.filter((u) => u.modality === "project" && !u.project_marked_at).length }] : []),
         ].map((t) => (

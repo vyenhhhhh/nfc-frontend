@@ -245,7 +245,7 @@ const REQ_KINDS = {
   online:     { label: "Online attendance", icon: "upload" },
   overtime:   { label: "Overtime request",  icon: "clock" },
   correction: { label: "Time correction",   icon: "pencil" },
-  event:      { label: "Excused",           icon: "calendar" },
+  event:      { label: "Authorized absence", icon: "calendar" },
 };
 
 function reqSteps(row) {
@@ -442,7 +442,7 @@ function MyRequests({ user, records }) {
               <button type="button" title="Opens My Attendance: use “Request fix” on that day" onClick={() => go("/intern/records")}><Icon name="pencil" size={15} /><span>Forgot to time in / out</span></button>
               <button type="button" title="Opens My Attendance" onClick={() => go("/intern/records", { state: { missedDay: Date.now() } })}><Icon name="calendar" size={15} /><span>Missed a whole day</span></button>
               <button type="button" onClick={() => go("/intern/online")}><Icon name="upload" size={15} /><span>Online attendance</span></button>
-              <button type="button" title="Opens Submit Online, Excused absence tab" onClick={() => go("/intern/online", { state: { kind: "event" } })}><Icon name="calendar" size={15} /><span>Excused (sick, school event)</span></button>
+              <button type="button" title="Opens Submit Online, Authorized absence tab" onClick={() => go("/intern/online", { state: { kind: "event" } })}><Icon name="calendar" size={15} /><span>Authorized absence (sick, school event)</span></button>
             </div>
           </div>
           <div className="ix-card rq-box rq-how-box">
@@ -1498,7 +1498,7 @@ function SubmitOnline({ user }) {
           <div className="so-body">
             <div className="so-kind" role="tablist">
               <button type="button" role="tab" aria-selected={kind === "online"} className={kind === "online" ? "on" : ""} onClick={() => setKind("online")}>{dayLabel}</button>
-              <button type="button" role="tab" aria-selected={kind === "event"} className={kind === "event" ? "on" : ""} onClick={() => setKind("event")}>Excused absence</button>
+              <button type="button" role="tab" aria-selected={kind === "event"} className={kind === "event" ? "on" : ""} onClick={() => setKind("event")}>Authorized absence</button>
             </div>
             {kind === "online" ? (<>
               <div className="ix-field">
@@ -1556,7 +1556,7 @@ function SubmitOnline({ user }) {
                 </label>
                 <input id="sev-proof" type="file" accept="image/*,.pdf" hidden onChange={(e) => setProof(e.target.files?.[0] || null)} />
               </div>
-              <small className="so-note">Excused time gives no hours and isn't marked absent.</small>
+              <small className="so-note">An authorized absence gives no hours and isn't marked absent.</small>
             </>)}
             <button type="submit" disabled={submitting} className="ix-b primary so-send">
               <Icon name="send" size={15} /> {submitting ? "Submitting..." : kind === "event" ? "Send for approval" : "Submit for approval"}</button>
@@ -1589,7 +1589,7 @@ function SubmitOnline({ user }) {
                     <button type="button" className="so-row" onClick={() => setOpenId(isOpen ? null : x.key)} aria-expanded={isOpen}>
                       <span className="so-dd"><b>{d.getDate()}</b><small>{d.toLocaleDateString("en-US", { weekday: "short" })}</small></span>
                       <span className="so-tx">
-                        <b><em className={`so-tag${x.isEv ? "" : " wd"}`}>{x.isEv ? `Excused absence${x.portion === "am" ? " · Morning" : x.portion === "pm" ? " · Afternoon" : ""}` : dayLabel}</em>{x.description}</b>
+                        <b><em className={`so-tag${x.isEv ? "" : " wd"}`}>{x.isEv ? `Authorized absence${x.portion === "am" ? " · Morning" : x.portion === "pm" ? " · Afternoon" : ""}` : dayLabel}</em>{x.description}</b>
                         <span className="so-steps"><i className={st.a} /><i className={st.b} /><em>{st.text}</em></span>
                       </span>
                       <span className={`so-pill ${st.tone}`}>{st.label}</span>

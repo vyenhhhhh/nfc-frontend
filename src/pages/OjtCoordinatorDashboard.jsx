@@ -49,7 +49,7 @@ const GROUPS = {
     tabs: [
       { key: "online",      label: "Online Attendance", icon: "inbox",  sub: "Remote workdays: the supervisor confirms first, then you give the final decision." },
       { key: "overtime",    label: "Overtime Requests", icon: "clock",  sub: "Time after 5:00 PM: the supervisor approves first, then you give the final decision." },
-      { key: "event",       label: "Excused",     icon: "calendar", sub: "Sick days and school events: the supervisor confirms first, then you decide. The excused time is not counted as absent and gives no hours." },
+      { key: "event",       label: "Authorized Absence", icon: "calendar", sub: "Sick days and school events: the HTE supervisor confirms first, then the OJT coordinator approves. An authorized absence is not counted as absent and gives no hours." },
       { key: "nfc",         label: "NFC Cards",         icon: "card",   sub: "ID card requests: approve or reject. The admin prints the card and links it when the intern claims it." },
       { key: "projects",    label: "Projects",          icon: "briefcase", sub: "Project-based interns: confirm the project the HTE supervisor marked as complete." },
     ],
@@ -303,7 +303,7 @@ function Home({ user, pending, pendingMovs, pendingOt = 0, pendingNfc = 0, pendi
     { key: "movs", icon: "folder", tone: "purple", title: "MOV submissions", sub: "Documents and certificates", n: pendingMovs, to: "/coordinator/requirements?tab=movs" },
     { key: "ot", icon: "clock", tone: "amber", title: "Overtime Requests", sub: "Approved by the supervisor, your final say", n: pendingOt, to: "/coordinator/approvals?tab=overtime" },
     { key: "nfc", icon: "card", tone: "green", title: "NFC card requests", sub: "Approve or reject ID cards", n: pendingNfc, to: "/coordinator/approvals?tab=nfc" },
-    { key: "event", icon: "calendar", tone: "green", title: "Excused absences", sub: "Sick days and school events", n: pendingEv, to: "/coordinator/approvals?tab=event" },
+    { key: "event", icon: "calendar", tone: "green", title: "Authorized Absence", sub: "Sick days and school events", n: pendingEv, to: "/coordinator/approvals?tab=event" },
   ];
 
   return (

@@ -346,7 +346,7 @@ export function ExcusedQueue({ role = "coordinator" }) {
   const done = rows.filter((r) => r.status === "approved" || r.status === "rejected").sort((a, b) => String(b.date).localeCompare(String(a.date)));
   // rejected by the HTE supervisor (they are both the endorser and the reviewer), not by the coordinator
   const supRejEv = (r) => r.status === "rejected" && !!r.endorsed_by && Number(r.endorsed_by) === Number(r.reviewed_by);
-  const badge = (r) => <Badge label={r.status === "approved" ? "Excused Day Approved" : r.status === "rejected" ? "Rejected"
+  const badge = (r) => <Badge label={r.status === "approved" ? "Approved" : r.status === "rejected" ? "Rejected"
     : r.status === "endorsed" ? "Pending · OJT Coordinator" : sup ? "Pending your review" : r.supervisor_id ? "Pending · HTE Supervisor" : "Pending your review"}
     type={r.status === "approved" ? "approved" : r.status === "rejected" ? "rejected" : r.status === "endorsed" ? "online" : "pending"} />;
 
@@ -355,7 +355,7 @@ export function ExcusedQueue({ role = "coordinator" }) {
       <Msg msg={msg} />
       <ReviewQueue
         tabs={[
-          { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No excused absences waiting for you to confirm." : "No excused absences waiting for your decision."] },
+          { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", sup ? "No authorized absence requests waiting for you to confirm." : "No authorized absence requests waiting for your decision."] },
           { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Requests you confirmed wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
           { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Requests you approve or reject show here."] },
         ]}
@@ -372,7 +372,7 @@ export function ExcusedQueue({ role = "coordinator" }) {
         drawer={(r) => {
           const rej = r.status === "rejected", hasSup = sup || !!r.supervisor_id || r.status === "endorsed";
           return {
-            icon: "calendar", kicker: `${r.intern_name} · Excused absence`, title: `${day(r.date, true)} · ${portionOf(r)}`, actions: badge(r),
+            icon: "calendar", kicker: `${r.intern_name} · Authorized Absence`, title: `${day(r.date, true)} · ${portionOf(r)}`, actions: badge(r),
             body: (
               <>
                 <style>{OA_CSS}</style><style>{AQ_CSS}</style>
@@ -381,14 +381,14 @@ export function ExcusedQueue({ role = "coordinator" }) {
                 {r.proof_path ? <FileBox key={r.id} path={r.proof_path} name={r.proof_name} /> : <div className="aq-note warn"><b>No proof attached</b></div>}
                 <Steps list={[["Submitted by intern", "done", "Submitted"], hasSup ? [SUP_STEP, r.status === "endorsed" || r.status === "approved" || (rej && !supRejEv(r)) ? "done" : rej ? "bad" : "now", r.status === "endorsed" || r.status === "approved" || (rej && !supRejEv(r)) ? "Confirmed" : null] : [SUP_STEP, "skip", "No supervisor"],
                   [COORD_STEP, r.status === "approved" ? "done" : rej && !supRejEv(r) ? "bad" : (r.status === "endorsed" || (!hasSup && r.status === "pending")) ? "now" : "", rej && supRejEv(r) ? "Not reached" : null],
-                  ["Excused Day Approved", r.status === "approved" ? "done" : "", r.status === "approved" ? "Approved" : rej ? "Not approved" : null]]} />
+                  ["Request Approved", r.status === "approved" ? "done" : "", r.status === "approved" ? "Absence authorized" : rej ? "Not approved" : null]]} />
                 <Remarks sup={r.endorse_remarks} coord={r.remarks} />
               </>
             ),
             footer: isMine(r)
               ? <Decide id={r.id} remarks={remarks} setRemarks={setRemarks} busy={busy} approveLabel={sup ? "Confirm" : "Approve"} onReject={() => decide(r, "rejected")} onApprove={() => decide(r, "approved")} />
               : <Result tone={r.status === "approved" ? "ok" : rej ? "bad" : ""} icon={r.status === "approved" ? "check" : rej ? "x" : "clock"}>
-                  {r.status === "approved" ? "Excused day approved. No hours counted and not marked absent." : rej ? "Request rejected. The day is not excused."
+                  {r.status === "approved" ? "Request approved. The absence is authorized: no hours counted and not marked absent." : rej ? "Request rejected. The absence is not authorized."
                     : r.status === "endorsed" ? "Confirmed by the HTE Supervisor. Pending the OJT Coordinator's approval." : "Pending the HTE Supervisor's review."}
                 </Result>,
           };
