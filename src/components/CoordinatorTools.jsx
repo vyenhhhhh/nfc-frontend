@@ -600,6 +600,36 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
   // click a program: its interns in the list view
   const openProgram = (p) => { if (PROGS.includes(p)) setProg(p); setView("list"); };
 
+  // ── Post-internship: every APPROVED narrative report of the interns shown, in one ZIP (follows the filters) ──
+  const narrIds = [...new Set(movs.filter((m) => m.requirement === "narrative_report" && m.status === "approved").map((m) => Number(m.user_id)))];
+  const narrShown = shown.filter((x) => narrIds.includes(Number(x.u.id)));
+  const [narrBusy, setNarrBusy] = useState(false);
+  const narrKey = [phase, view, prog, hte, show, q].join("|");   // the message is cleared when a filter changes
+  const [narrNote, setNarrNote] = useState(null);
+  const narrMsg = narrNote && narrNote.key === narrKey ? narrNote.msg : null;
+  const setNarrMsg = (msg) => setNarrNote(msg ? { key: narrKey, msg } : null);
+  const downloadNarratives = async () => {
+    setNarrBusy(true); setNarrMsg(null);
+    try {
+      const ids = narrShown.map((x) => x.u.id).join(",");
+      const res = await fetch(`${API}/coordinator/narrative-reports?ids=${ids}`, { headers: { Accept: "application/zip" } });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.message || "Couldn't download the narrative reports.");
+      }
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      const name = m ? decodeURIComponent(m[1]) : `Narrative_Reports_${prog !== "all" ? prog + "_" : ""}${today()}.zip`;
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      setNarrMsg({ type: "success", text: `Downloaded ${narrShown.length} narrative report${narrShown.length === 1 ? "" : "s"}.` });
+    } catch (err) {
+      setNarrMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setNarrBusy(false); }
+  };
+
   const open = openId != null ? interns.find((u) => u.id === openId) : null;
 
   return (
@@ -646,10 +676,18 @@ export function RequirementsTracker({ interns, movs, records, reviewPath = "/coo
           </div>
           {view === "program"
             ? <button type="button" className="ix-b ghost sm rt-exp" onClick={exportProgCsv} disabled={!progStats.all.n}><Icon name="download" size={14} /> Export</button>
-            : <button type="button" className="ix-b ghost sm rt-exp" onClick={exportCsv} disabled={!shown.length}><Icon name="download" size={14} /> Export</button>}
+            : <>
+              {phase === "post" && (
+                <button type="button" className="ix-b ghost sm rt-exp" onClick={downloadNarratives} disabled={narrBusy || !narrShown.length}
+                  title={narrShown.length ? `The approved narrative reports of the ${narrShown.length} intern${narrShown.length === 1 ? "" : "s"} shown, in one ZIP file` : "No approved narrative report among the interns shown"}>
+                  <Icon name="download" size={14} /> {narrBusy ? "Preparing..." : `Narrative reports${narrShown.length ? ` (${narrShown.length})` : ""}`}</button>
+              )}
+              <button type="button" className="ix-b ghost sm rt-exp" onClick={exportCsv} disabled={!shown.length}><Icon name="download" size={14} /> Export</button>
+            </>}
         </div>
         {/* only the OJT coordinator changes the list of requirements (the admin sees a read-only overview) */}
       </div>
+      {phase === "post" && view !== "program" && <Msg msg={narrMsg} />}
 
       {view === "program" ? (
         /* 3c · one row per program: how far each program is in every phase */
