@@ -243,14 +243,14 @@ export default function InternDashboard() {
    The modality (on-site / hybrid / virtual) is decided by the HTE, so interns don't request it. */
 const REQ_KINDS = {
   online:     { label: "Online attendance", icon: "upload" },
-  overtime:   { label: "Overtime",          icon: "clock" },
+  overtime:   { label: "Overtime request",  icon: "clock" },
   correction: { label: "Time correction",   icon: "pencil" },
   event:      { label: "Excused",           icon: "calendar" },
 };
 
 function reqSteps(row) {
-  const steps = row.supervisorOnly ? ["Filed", "Supervisor"]
-    : row.viaSupervisor ? ["Filed", "Supervisor", "Coordinator"] : ["Filed", "Coordinator"];
+  const steps = row.supervisorOnly ? ["Submitted", "HTE Supervisor"]
+    : row.viaSupervisor ? ["Submitted", "HTE Supervisor", "OJT Coordinator"] : ["Submitted", "OJT Coordinator"];
   const last = steps.length - 1;
   let done = 1, current = 1, failed = -1;
   if (row.status === "endorsed" && !row.supervisorOnly) { done = 2; current = 2; }
@@ -267,8 +267,8 @@ function reqSteps(row) {
 }
 
 const REQ_STATUS = {
-  pending:  { label: "Waiting", type: "pending" },
-  endorsed: { label: "Confirmed by supervisor", type: "pending" },
+  pending:  { label: "Pending", type: "pending" },
+  endorsed: { label: "Pending · OJT Coordinator", type: "pending" },
   approved: { label: "Approved", type: "approved" },
   rejected: { label: "Rejected", type: "rejected" },
 };
@@ -328,7 +328,7 @@ function MyRequests({ user, records }) {
     ...online.map((o) => ({
       key: `o${o.id}`, rid: o.id, kind: "online", date: o.date, status: o.status, viaSupervisor: hasSup,
       endorsed: !!o.endorsed_at || o.status === "endorsed",
-      details: o.description, remarks: o.remarks || o.endorse_remarks,
+      details: o.description, remarks: o.remarks || o.endorse_remarks, supRm: o.endorse_remarks, coRm: o.remarks,
     })),
     ...records.filter((r) => r.ot_status).map((r) => ({
       key: `t${r.id}`, kind: "overtime", date: r.date, status: r.ot_status, viaSupervisor: hasSup,
@@ -336,18 +336,18 @@ function MyRequests({ user, records }) {
       details: r.ot_status === "approved" && r.ot_approved_minutes != null
         ? `${fmtMinutes(r.ot_approved_minutes)} approved of ${fmtMinutes(r.ot_minutes || 0)}`
         : `${fmtMinutes(r.ot_minutes || 0)} after 5:00 PM`,
-      remarks: r.ot_remarks,
+      remarks: r.ot_remarks || r.ot_endorse_remarks, supRm: r.ot_endorse_remarks, coRm: r.ot_remarks,
     })),
     ...fixes.map((c) => ({
       key: `c${c.id}`, rid: c.id, kind: "correction", date: c.date, proof_path: c.proof_path, proof_name: c.proof_name, status: c.status, viaSupervisor: true, supervisorOnly: true,
       endorsed: !!c.endorsed_at || c.status === "endorsed",
-      details: `${c.kind === "day" ? `Missed the whole day · in ${time12(c.requested_in)}, out` : c.kind === "in" ? `Forgot to time in · in ${time12(c.requested_in)}, out` : "Forgot to time out ·"} ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks,
+      details: `${c.kind === "day" ? `Missed the whole day · in ${time12(c.requested_in)}, out` : c.kind === "in" ? `Forgot to time in · in ${time12(c.requested_in)}, out` : "Forgot to time out ·"} ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks, supRm: c.remarks || c.endorse_remarks,
     })),
     ...events.map((v) => ({
       key: `e${v.id}`, rid: v.id, proof_path: v.proof_path, proof_name: v.proof_name, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
       endorsed: !!v.endorsed_at || v.status === "endorsed",
       details: `${v.event_name}${v.mandatory ? " (mandatory)" : ""} · excused ${PORTION_LBL[v.portion] || "whole day"}, no hours counted for it${v.reason ? " — " + v.reason : ""}`,
-      remarks: v.remarks || v.endorse_remarks,
+      remarks: v.remarks || v.endorse_remarks, supRm: v.endorse_remarks, coRm: v.remarks,
     })),
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
@@ -367,8 +367,9 @@ function MyRequests({ user, records }) {
 
   const Steps = ({ r, big }) => (
     <ol className={big ? "rq-steps rq-steps-lg" : "rq-trk"} aria-label="Progress">
-      {reqSteps(r).map((x) => (
-        <li key={x.label} className={x.state}><i>{big ? (x.state === "done" ? "✓" : x.state === "fail" ? "✕" : "") : ""}</i><span>{x.label}</span></li>
+      {reqSteps(r).map((x, i) => (
+        <li key={x.label} className={x.state}><i>{big ? (x.state === "done" ? "✓" : x.state === "fail" ? "✕" : "") : ""}</i>
+          <span>{x.label}{big && <small className="rq-word">{x.state === "done" ? (i === 0 ? "Submitted" : "Approved") : x.state === "now" ? "Pending" : x.state === "fail" ? "Rejected" : "Waiting"}</small>}</span></li>
       ))}
     </ol>
   );
@@ -468,7 +469,10 @@ function MyRequests({ user, records }) {
               <div className="ibx-sec"><span>Where it is now</span><Steps r={open} big /></div>
               {open.details && <div className="ibx-sec"><span>Details</span><p>{open.details}</p></div>}
               {open.proof_path && <div className="ibx-sec"><span>Proof</span><p><a className="ix-link" href={fileHref(open.proof_path)} onClick={(e) => openFile(open.proof_path, e)} target="_blank" rel="noopener noreferrer">{open.proof_name || "View file"}</a></p></div>}
-              {open.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{open.remarks}”</p></div>}
+              {/* remarks of each reviewer, by role */}
+              {open.supRm && <div className="ibx-sec"><span>HTE Supervisor's remarks</span><p>“{open.supRm}”</p></div>}
+              {open.coRm && open.coRm !== open.supRm && <div className="ibx-sec"><span>OJT Coordinator's remarks</span><p>“{open.coRm}”</p></div>}
+              {!open.supRm && !open.coRm && open.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{open.remarks}”</p></div>}
               {/* only while still waiting for the supervisor: once checked, it can't be taken back */}
               {REMOVE_URL[open.kind] && open.status === "pending" && (
                 <button type="button" className="ix-b ghost" onClick={() => removeRequest(open)}>Remove request</button>
@@ -4142,6 +4146,9 @@ export const internCss = `
 .ix-page .ibx-ic.big { width: 48px; height: 48px; border-radius: 14px; }
 .ix-page .rq-steps-lg { transform: none; margin-top: 4px; }
 .ix-page .rq-steps-lg li span { font-size: 12.5px !important; }
+.ix-page .rq-steps-lg li { width: 96px; }
+.rq-word { display: block; font-size: 11px; font-weight: 700; margin-top: 2px; color: #9ca3af; }
+.rq-steps li.done .rq-word { color: #15803d; } .rq-steps li.now .rq-word { color: #b45309; } .rq-steps li.fail .rq-word { color: #b91c1c; }
 /* My Attendance (dense): summary strip, filters, compact day rows */
 .ix-page .at-sum { display: grid; grid-template-columns: minmax(280px, 2fr) repeat(3, minmax(110px, 1fr)); background: var(--ix-surface, #fff); border: 1px solid #eceef1; border-radius: 14px; overflow: hidden; }
 .ix-page .at-sum > * { padding: 12px 16px; min-width: 0; }

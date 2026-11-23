@@ -1,7 +1,8 @@
 // components/NfcCards.jsx
 // Coordinator page: review NFC card requests and see the request history.
 // CardRequests (exported) is the admin's "Card Requests" page: approved cards to print in the printing app.
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import CardAlerts from "./CardAlerts.jsx";
 import logo from "../assets/logo.png";          // CCIS logo (right side of the ID)
 import csuLogo from "../assets/csu-logo.png";   // CSU seal (left side of the ID)
@@ -642,6 +643,57 @@ const saveBlob = (blob, name) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 };
 
+/* Print: the browser's own print window, one page per side at the real card size (CR80, 54mm x 85.6mm, portrait):
+   page 1 the front, page 2 the back, then the next card. "Save as PDF" in that window gives the PDF.
+   The cards are drawn off screen, the photos, logos and signature are given time to load, then window.print(). */
+const PRINT_CSS = `
+  .idp-root { position: fixed; left: -10000px; top: 0; }
+  @media print {
+    @page { size: 54mm 85.6mm; margin: 0; }
+    html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; height: auto !important; overflow: visible !important; }
+    body > *:not(.idp-root) { display: none !important; }
+    .idp-root { position: static; left: auto; }
+    .idp-page { width: 54mm; height: 85.6mm; overflow: hidden; break-after: page; page-break-after: always; }
+    .idp-page:last-child { break-after: auto; page-break-after: auto; }
+    .idp-page .idc { box-shadow: none !important; border: 0 !important; border-radius: 0 !important; }
+    .idp-root, .idp-root * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  }`;
+function PrintCards({ users, settings, onDone }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    let off = false, closed = false;
+    const finish = () => { if (closed) return; closed = true; window.removeEventListener("afterprint", finish); onDone(); };
+    (async () => {
+      const t0 = Date.now();
+      // wait for every picture on the cards (at most 8 seconds; the signature is fetched first, so at least 1.2 seconds)
+      while (!off && Date.now() - t0 < 8000) {
+        const imgs = [...(ref.current?.querySelectorAll("img") || [])];
+        if (Date.now() - t0 > 1200 && imgs.every((i) => i.complete)) break;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      try { await document.fonts?.ready; } catch { /* fonts are optional */ }
+      if (off) return;
+      window.addEventListener("afterprint", finish);
+      window.print();
+      setTimeout(finish, 500);   // browsers where print() doesn't wait for the window to close
+    })();
+    return () => { off = true; window.removeEventListener("afterprint", finish); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return createPortal(
+    <div className="idp-root" ref={ref} aria-hidden="true">
+      <style>{idCardCss}{PRINT_CSS}</style>
+      {users.map((u) => (
+        <Fragment key={u.id}>
+          <div className="idp-page"><CardFace u={u} settings={settings} /></div>
+          <div className="idp-page"><CardBack u={u} settings={settings} /></div>
+        </Fragment>
+      ))}
+    </div>,
+    document.body,
+  );
+}
+
 // tab / onTab: the open step follows the address (/admin/cards?tab=tolink), so the sidebar can open it
 export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
   const [busy, setBusy] = useState(null);
@@ -651,6 +703,7 @@ export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
   const buffer = useRef("");
   // what every card shows: the valid date (end of the school year); the rest is added in the printing app
   const settings = loadCardSettings();
+  const [printing, setPrinting] = useState(null);       // the interns whose cards are being printed
 
   // the NFC reader "types" the card UID and presses Enter
   useEffect(() => {
@@ -822,6 +875,11 @@ export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
           </button>
         )}
         {st === "toprint" && (
+          <button type="button" className="ix-b ghost" onClick={() => setPrinting(items.map((x) => x.u))} disabled={!list.length || !!printing} title={`Print ${what} cards, front and back, at the card size`}>
+            <Icon name="print" size={15} /> {printing ? "Opening..." : "Print"}
+          </button>
+        )}
+        {st === "toprint" && (
           <button type="button" className="ix-b ghost" onClick={() => downloadPhotos(items)} disabled={!list.length || !!busy} title={`Download ${what} photos for the printing app`}>
             <Icon name="download" size={15} /> {busy === "photos" ? "Preparing..." : "Photos"}
           </button>
@@ -846,6 +904,8 @@ export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
     if (st === "toprint" && r) {
       footer = (<>
         <span className="rq2-result">Printed this card after the intern signed?</span>
+        <button type="button" className="ix-b ghost" onClick={() => setPrinting([u])} disabled={!!printing} title="Print the front and back at the card size (54mm x 85.6mm)">
+          <Icon name="print" size={15} /> {printing ? "Opening..." : "Print"}</button>
         <button type="button" className="ix-b primary" onClick={() => mark(true, [x])} disabled={!!busy}>
           <Icon name="check" size={15} /> {busy === "mark" ? "Saving..." : "Mark as printed"}</button>
       </>);
@@ -922,7 +982,7 @@ export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
         searchText={(x) => `${x.u.name} ${x.u.email} ${x.u.student_id || ""} ${x.u.program || ""} ${x.u.placement || ""}`}
         toolbar={toolbar} bulk={bulk} drawer={drawer} openLabel={() => "View"}
         initialTab={tab || undefined} onTab={onTab} />
-
+      {printing && <PrintCards users={printing} settings={settings} onDone={() => setPrinting(null)} />}
     </div>
   );
 }

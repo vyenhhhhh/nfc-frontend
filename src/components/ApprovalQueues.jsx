@@ -44,16 +44,28 @@ const errText = (e) => (e instanceof TypeError ? "Couldn't reach the server." : 
 const Who = ({ name, photo, sub }) => (
   <span className="rq2-who"><Avatar name={name} photo={photo} size={32} /><span><b>{name}</b>{sub ? <small>{sub}</small> : null}</span></span>
 );
-// the steps of one item: [label, state] where state is done | now | bad | skip | ""
+// the steps of one item: [label, state, status word?] where state is done | now | bad | skip | ""
+// every step shows who it is (HTE Supervisor, OJT Coordinator) and where it stands (Pending, Approved, Rejected)
+const STEP_WORD = { done: "Approved", now: "Pending", bad: "Rejected", skip: "Not needed", "": "Waiting" };
 const Steps = ({ list }) => (
   <ol className="oa-steps aq-steps" style={{ gridTemplateColumns: `repeat(${list.length}, minmax(0, 1fr))` }}>
-    {list.map(([t, s], i) => (
+    {list.map(([t, s, w], i) => (
       <li key={i} className={s}>
         <i>{s === "done" ? <Icon name="check" size={11} /> : s === "bad" ? <Icon name="x" size={11} /> : s === "skip" ? "–" : i + 1}</i>
-        <span>{s === "bad" ? "Rejected" : t}</span>
+        <span><b>{t}</b><small>{w || STEP_WORD[s || ""]}</small></span>
       </li>
     ))}
   </ol>
+);
+// the two review steps, named by role
+const SUP_STEP = "HTE Supervisor Review";
+const COORD_STEP = "OJT Coordinator Approval";
+// remarks of each reviewer, labelled by role (the coordinator's only when they differ from the supervisor's)
+const Remarks = ({ sup, coord }) => (
+  <>
+    {sup ? <div className="aq-note ok"><b>HTE Supervisor's remarks</b><p>{sup}</p></div> : null}
+    {coord && coord !== sup ? <div className="aq-note"><b>OJT Coordinator's remarks</b><p>{coord}</p></div> : null}
+  </>
 );
 const Facts = ({ items }) => (
   <div className="aq-facts">{items.filter(Boolean).map(([k, v]) => <span key={k}><small>{k}</small><b>{v}</b></span>)}</div>
@@ -63,11 +75,14 @@ const Result = ({ tone, icon, children }) => (
 );
 // remarks + Reject + Approve (the footer of a drawer)
 function Decide({ id, remarks, setRemarks, busy, onReject, onApprove, approveLabel = "Approve", approveDisabled }) {
+  const [need, setNeed] = useState(false);   // Reject pressed with no reason
+  const reject = () => { if (!String(remarks[id] || "").trim()) { setNeed(true); return; } setNeed(false); onReject(); };
   return (
     <>
-      <input type="text" className="ix-input" maxLength={300} placeholder="Remarks (optional)" aria-label="Remarks" value={remarks[id] || ""}
-        onChange={(e) => setRemarks((r) => ({ ...r, [id]: e.target.value }))} />
-      <button type="button" className="ix-b danger" disabled={!!busy} onClick={onReject}>{busy === id + "rejected" ? "..." : "Reject"}</button>
+      <input type="text" className={need ? "ix-input aq-need" : "ix-input"} maxLength={300} aria-label="Remarks or reason" aria-invalid={need || undefined}
+        placeholder={need ? "Write the reason for rejecting first" : "Remarks or reason (required to reject)"} value={remarks[id] || ""}
+        onChange={(e) => { setNeed(false); setRemarks((r) => ({ ...r, [id]: e.target.value })); }} />
+      <button type="button" className="ix-b danger" disabled={!!busy} onClick={reject}>{busy === id + "rejected" ? "..." : "Reject"}</button>
       <button type="button" className="ix-b ok" disabled={!!busy || approveDisabled} onClick={onApprove}>{busy === id + "approved" ? "..." : approveLabel}</button>
     </>
   );
@@ -118,17 +133,17 @@ export function OnlineQueue({ mine = [], withSup = [], done = [], onReview, role
     return ok;
   };
   const badge = (o) => o.status === "approved" ? <Badge label="Approved" type="approved" /> : o.status === "rejected" ? <Badge label="Rejected" type="rejected" />
-    : o.status === "endorsed" ? <Badge label={sup ? "Sent to coordinator" : "Supervisor confirmed"} type="online" />
-    : sup ? <Badge label="Waiting for you" type="pending" />
-    : o.supervisor_id || o.supervisor_name ? <Badge label="With supervisor" type="pending" /> : <Badge label="No supervisor" type="pending" />;
+    : o.status === "endorsed" ? <Badge label="Pending · OJT Coordinator" type="online" />
+    : sup ? <Badge label="Pending your review" type="pending" />
+    : o.supervisor_id || o.supervisor_name ? <Badge label="Pending · HTE Supervisor" type="pending" /> : <Badge label="Pending your review" type="pending" />;
   const steps = (o) => {
     const st = o.status, rej = st === "rejected";
     const hasSup = sup || st === "endorsed" || !!o.endorsed_by || !!o.endorser_name || !!o.supervisor_id;
     const supRej = rej && (o.rejected_by === "supervisor" || (sup && !o.endorsed_by && !o.endorser_name));
     const supDone = st === "endorsed" || ((st === "approved" || rej) && hasSup && !supRej);
-    return [["Intern sent it", "done"], hasSup ? [sup ? "You confirm" : "Supervisor confirms", supDone ? "done" : supRej ? "bad" : "now"] : ["No supervisor", "skip"],
-      [sup ? "OJT coordinator decides" : "You decide", st === "approved" ? "done" : rej && !supRej ? "bad" : st === "endorsed" || (!hasSup && st === "pending") ? "now" : ""],
-      ["8 hours counted", st === "approved" ? "done" : ""]];
+    return [["Submitted by intern", "done", "Submitted"], hasSup ? [SUP_STEP, supDone ? "done" : supRej ? "bad" : "now", supDone ? "Confirmed" : null] : [SUP_STEP, "skip", "No supervisor"],
+      [COORD_STEP, st === "approved" ? "done" : rej && !supRej ? "bad" : st === "endorsed" || (!hasSup && st === "pending") ? "now" : "", supRej ? "Not reached" : null],
+      ["Request Approved", st === "approved" ? "done" : "", st === "approved" ? "8 hours counted" : rej ? "Not approved" : null]];
   };
   const all = [...mine, ...withSup, ...done];
 
@@ -164,8 +179,8 @@ export function OnlineQueue({ mine = [], withSup = [], done = [], onReview, role
               <div className="aq-note"><b>What they worked on</b><p>{tasks || "—"}</p></div>
               {/* the intern's proof of the day (older submissions have none) */}
               {o.proof_path ? <FileBox key={`p${o.id}`} path={o.proof_path} name={o.proof_name} /> : <div className="aq-note warn"><b>No proof attached</b></div>}
-              {o.endorse_remarks && <div className="aq-note ok"><b>Supervisor's note</b><p>{o.endorse_remarks}</p></div>}
               <Steps list={steps(o)} />
+              <Remarks sup={o.endorse_remarks} coord={o.remarks} />
               {others.length > 0 && (
                 <div className="aq-hist"><b>Earlier from {String(o.intern_name).split(" ")[0]}</b>
                   <ul>{others.map((x) => <li key={x.id}><span>{day(x.date)}</span><em>{splitReason(x.description).tasks || "Online day"}</em>{badge(x)}</li>)}</ul></div>
@@ -175,9 +190,9 @@ export function OnlineQueue({ mine = [], withSup = [], done = [], onReview, role
           footer: mine.some((x) => x.id === o.id)
             ? <Decide id={o.id} remarks={remarks} setRemarks={setRemarks} busy={busy} approveLabel={sup ? "Confirm" : "Approve"} onReject={() => decide(o, "rejected")} onApprove={() => decide(o, "approved")} />
             : <Result tone={o.status === "approved" ? "ok" : o.status === "rejected" ? "bad" : ""} icon={o.status === "approved" ? "check" : o.status === "rejected" ? "x" : "clock"}>
-                {o.status === "approved" ? "Approved. The 8 hours are counted." : o.status === "rejected" ? "Rejected."
-                  : sup ? "You confirmed it. Waiting for the OJT coordinator's final decision." : "Waiting for the HTE supervisor to confirm it first."}
-                {o.remarks ? <> · <em>{o.remarks}</em></> : null}{o.reviewed_at ? ` · ${stamp(o.reviewed_at)}` : ""}
+                {o.status === "approved" ? "Request approved. The 8 hours are counted." : o.status === "rejected" ? "Request rejected."
+                  : sup ? "Confirmed by the HTE Supervisor. Pending the OJT Coordinator's approval." : "Pending the HTE Supervisor's review."}
+                {o.reviewed_at ? ` · ${stamp(o.reviewed_at)}` : ""}
               </Result>,
         };
       }}
@@ -199,9 +214,9 @@ export function OvertimeQueue({ mine = [], withSup = [], done = [], all = [], ca
   };
   const badge = (o) => o.ot_status === "approved" ? <Badge label={`+${fmtMinutes(o.ot_approved_minutes)}`} type="approved" />
     : o.ot_status === "rejected" ? <Badge label="Rejected" type="rejected" />
-    : o.ot_status === "endorsed" ? <Badge label={sup ? `${fmtMinutes(o.ot_endorsed_minutes)} sent to coordinator` : `${fmtMinutes(o.ot_endorsed_minutes)} confirmed`} type="online" />
-    : sup ? <Badge label="Waiting for you" type="pending" />
-    : o.supervisor_id ? <Badge label="With supervisor" type="pending" /> : <Badge label="No supervisor" type="pending" />;
+    : o.ot_status === "endorsed" ? <Badge label={`${fmtMinutes(o.ot_endorsed_minutes)} · Pending · OJT Coordinator`} type="online" />
+    : sup ? <Badge label="Pending your review" type="pending" />
+    : o.supervisor_id ? <Badge label="Pending · HTE Supervisor" type="pending" /> : <Badge label="Pending your review" type="pending" />;
   // the day: regular hours (green) and after 5:00 PM (orange)
   const bar = (o) => {
     const tin = mins(o.checked_in_at) ?? 480;
@@ -223,9 +238,9 @@ export function OvertimeQueue({ mine = [], withSup = [], done = [], all = [], ca
   return (
     <ReviewQueue
       tabs={[
-        { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", "No overtime waiting for your decision."] },
-        { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Overtime you approved waits here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
-        { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Overtime that was approved or rejected shows here."] },
+        { key: "mine", label: "Needs my review", items: mine, hot: true, empty: ["All caught up", "No overtime requests waiting for your decision."] },
+        { key: "sup", label: sup ? "With the coordinator" : "Waiting for supervisor", items: withSup, empty: ["Nothing here", sup ? "Overtime requests you approved wait here for the OJT coordinator." : "Nothing is with the HTE supervisors right now."] },
+        { key: "done", label: "Done", items: done, empty: ["Nothing decided yet", "Overtime requests that were approved or rejected show here."] },
       ]}
       rowKey={(o) => o.id}
       searchText={(o) => `${o.intern_name} ${o.endorser_name || o.supervisor_name || ""}`}
@@ -251,16 +266,17 @@ export function OvertimeQueue({ mine = [], withSup = [], done = [], all = [], ca
         const hasSup = supOk || !!o.supervisor_id || !!o.ot_endorsed_at;
         const other = ch === "other" || (ch !== undefined && ch !== "" && !quick.includes(Number(ch)));
         return {
-          icon: "clock", kicker: `${o.intern_name} · Overtime`, title: day(o.date, true), actions: badge(o),
+          icon: "clock", kicker: `${o.intern_name} · Overtime Request`, title: day(o.date, true), actions: badge(o),
           body: (
             <>
               <style>{OA_CSS}</style><style>{AQ_CSS}</style>
               {bar(o)}
-              <Facts items={[["After 5:00 PM", fmtMinutes(o.ot_minutes)], [sup ? "You approved" : "Supervisor confirmed", supOk ? fmtMinutes(o.ot_endorsed_minutes) : sup ? "Not yet" : o.supervisor_id ? "Not yet" : "No supervisor"],
+              <Facts items={[["After 5:00 PM", fmtMinutes(o.ot_minutes)], ["HTE Supervisor approved", supOk ? fmtMinutes(o.ot_endorsed_minutes) : sup ? "Not yet" : o.supervisor_id ? "Not yet" : "No supervisor"],
                 ["Approved this month", month ? fmtMinutes(month) : "None yet"]]} />
-              {o.ot_endorse_remarks && <div className="aq-note ok"><b>Supervisor's note</b><p>{o.ot_endorse_remarks}</p></div>}
-              <Steps list={[["Stayed after 5 PM", "done"], (hasSup || sup) ? [sup ? "You approve" : "Supervisor approves", supOk ? "done" : rej ? "bad" : "now"] : ["No supervisor", "skip"],
-                [sup ? "OJT coordinator decides" : "You decide", st === "approved" ? "done" : rej && supOk ? "bad" : st === "endorsed" || (!hasSup && !sup && st === "pending") ? "now" : ""], ["Added to hours", st === "approved" ? "done" : ""]]} />
+              <Steps list={[["Stayed after 5 PM", "done", "Recorded"], (hasSup || sup) ? [SUP_STEP, supOk ? "done" : rej ? "bad" : "now"] : [SUP_STEP, "skip", "No supervisor"],
+                [COORD_STEP, st === "approved" ? "done" : rej && supOk ? "bad" : st === "endorsed" || (!hasSup && !sup && st === "pending") ? "now" : "", rej && !supOk ? "Not reached" : null],
+                ["Overtime Request Approved", st === "approved" ? "done" : "", st === "approved" ? "Added to hours" : rej ? "Not approved" : null]]} />
+              <Remarks sup={o.ot_endorse_remarks} coord={o.ot_remarks} />
               {isMine && (
                 <div className="aq-credit">
                   <b>How much to credit?</b>
@@ -283,9 +299,8 @@ export function OvertimeQueue({ mine = [], withSup = [], done = [], all = [], ca
                 approveLabel={`Approve${minutes ? " " + fmtMinutes(minutes) : ""}`}
                 onReject={() => decide(o, "rejected", null)} onApprove={() => decide(o, "approved", minutes)} />
             : <Result tone={st === "approved" ? "ok" : rej ? "bad" : ""} icon={st === "approved" ? "check" : rej ? "x" : "clock"}>
-                {st === "approved" ? `Approved. ${fmtMinutes(o.ot_approved_minutes)} added to that day.` : rej ? "Rejected. No overtime added."
-                  : sup ? `You approved ${fmtMinutes(o.ot_endorsed_minutes)}. Waiting for the OJT coordinator's final decision.` : "Waiting for the HTE supervisor to approve it first."}
-                {o.ot_remarks ? <> · <em>{o.ot_remarks}</em></> : null}
+                {st === "approved" ? `Overtime request approved. ${fmtMinutes(o.ot_approved_minutes)} added to that day.` : rej ? "Overtime request rejected. No overtime added."
+                  : sup ? `Approved ${fmtMinutes(o.ot_endorsed_minutes)} by the HTE Supervisor. Pending the OJT Coordinator's approval.` : "Pending the HTE Supervisor's review."}
               </Result>,
         };
       }}
@@ -329,8 +344,10 @@ export function ExcusedQueue({ role = "coordinator" }) {
   const mine = rows.filter(isMine).sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const withSup = rows.filter((r) => (sup ? r.status === "endorsed" : r.status === "pending" && r.supervisor_id));
   const done = rows.filter((r) => r.status === "approved" || r.status === "rejected").sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const badge = (r) => <Badge label={r.status === "approved" ? "Excused" : r.status === "rejected" ? "Rejected"
-    : r.status === "endorsed" ? (sup ? "Sent to coordinator" : "Supervisor confirmed") : sup ? "Waiting for you" : r.supervisor_id ? "With supervisor" : "No supervisor"}
+  // rejected by the HTE supervisor (they are both the endorser and the reviewer), not by the coordinator
+  const supRejEv = (r) => r.status === "rejected" && !!r.endorsed_by && Number(r.endorsed_by) === Number(r.reviewed_by);
+  const badge = (r) => <Badge label={r.status === "approved" ? "Excused Day Approved" : r.status === "rejected" ? "Rejected"
+    : r.status === "endorsed" ? "Pending · OJT Coordinator" : sup ? "Pending your review" : r.supervisor_id ? "Pending · HTE Supervisor" : "Pending your review"}
     type={r.status === "approved" ? "approved" : r.status === "rejected" ? "rejected" : r.status === "endorsed" ? "online" : "pending"} />;
 
   return (
@@ -362,16 +379,17 @@ export function ExcusedQueue({ role = "coordinator" }) {
                 <Facts items={[["Reason", `${r.event_name}${r.mandatory ? " (mandatory)" : ""}`], ["Supervisor", r.reviewer_name || (r.supervisor_id ? "Assigned" : "None assigned")], ["Sent", stamp(r.created_at)]]} />
                 {r.reason && <div className="aq-note"><b>Intern's note</b><p>{r.reason}</p></div>}
                 {r.proof_path ? <FileBox key={r.id} path={r.proof_path} name={r.proof_name} /> : <div className="aq-note warn"><b>No proof attached</b></div>}
-                <Steps list={[["Intern sent it", "done"], hasSup ? [sup ? "You confirm" : "Supervisor confirms", r.status === "endorsed" || r.status === "approved" ? "done" : rej && sup ? "bad" : "now"] : ["No supervisor", "skip"],
-                  [sup ? "OJT coordinator decides" : "You decide", r.status === "approved" ? "done" : rej && !sup ? "bad" : (sup ? r.status === "endorsed" : isMine(r)) ? "now" : ""], ["Day excused", r.status === "approved" ? "done" : ""]]} />
+                <Steps list={[["Submitted by intern", "done", "Submitted"], hasSup ? [SUP_STEP, r.status === "endorsed" || r.status === "approved" || (rej && !supRejEv(r)) ? "done" : rej ? "bad" : "now", r.status === "endorsed" || r.status === "approved" || (rej && !supRejEv(r)) ? "Confirmed" : null] : [SUP_STEP, "skip", "No supervisor"],
+                  [COORD_STEP, r.status === "approved" ? "done" : rej && !supRejEv(r) ? "bad" : (r.status === "endorsed" || (!hasSup && r.status === "pending")) ? "now" : "", rej && supRejEv(r) ? "Not reached" : null],
+                  ["Excused Day Approved", r.status === "approved" ? "done" : "", r.status === "approved" ? "Approved" : rej ? "Not approved" : null]]} />
+                <Remarks sup={r.endorse_remarks} coord={r.remarks} />
               </>
             ),
             footer: isMine(r)
               ? <Decide id={r.id} remarks={remarks} setRemarks={setRemarks} busy={busy} approveLabel={sup ? "Confirm" : "Approve"} onReject={() => decide(r, "rejected")} onApprove={() => decide(r, "approved")} />
               : <Result tone={r.status === "approved" ? "ok" : rej ? "bad" : ""} icon={r.status === "approved" ? "check" : rej ? "x" : "clock"}>
-                  {r.status === "approved" ? "Excused. No hours counted and not marked absent." : rej ? "Rejected. The day is not excused."
-                    : sup ? "You confirmed it. Waiting for the OJT coordinator's final decision." : "Waiting for the HTE supervisor."}
-                  {r.remarks ? <> · <em>{r.remarks}</em></> : null}
+                  {r.status === "approved" ? "Excused day approved. No hours counted and not marked absent." : rej ? "Request rejected. The day is not excused."
+                    : r.status === "endorsed" ? "Confirmed by the HTE Supervisor. Pending the OJT Coordinator's approval." : "Pending the HTE Supervisor's review."}
                 </Result>,
           };
         }}
@@ -452,8 +470,10 @@ export function NfcQueue({ user, onRefresh, preOf }) {
                 {p && !p.started && r.status !== "rejected" && r.status !== "issued" && (
                   <div className="aq-note warn"><b>Pre-internship requirements aren't complete yet ({p.approved}/{p.total})</b><p>The card can be approved and printed, but the intern can claim it only when every requirement is approved.</p></div>
                 )}
-                <Steps list={["Intern applied", "You approve", "Admin prints", "Card claimed"].map((t, i) =>
-                  [t, s < 0 ? (i === 0 ? "done" : i === 1 ? "bad" : "") : i < s ? "done" : i === s ? "now" : ""])} />
+                <Steps list={[["Submitted by intern", "Submitted"], [COORD_STEP, "Approved"], ["Printed by Administrator", "Printed"], ["Card Claimed", "Claimed"]].map(([t, w], i) => {
+                  const c = s < 0 ? (i === 0 ? "done" : i === 1 ? "bad" : "") : i < s ? "done" : i === s ? "now" : "";
+                  return [t, c, c === "done" ? w : s < 0 && i > 1 ? "Not reached" : null];
+                })} />
               </>
             ),
             footer: r.status === "pending"
@@ -528,7 +548,7 @@ export function ProjectQueue({ interns, records, onRefresh, role = "coordinator"
               <div className="aq-note"><b>How a project-based OJT ends</b><p>{sup
                 ? "The OJT is complete when all the project tasks you gave are done, even before the required hours. You mark it complete, then the OJT coordinator confirms it and the intern's post-internship requirements open."
                 : "The OJT is complete when all the project tasks given by the HTE are done, even before the required hours. The HTE supervisor marks it complete, then you confirm it. Confirming opens the intern's post-internship requirements."}</p></div>
-              <Steps list={[[sup ? "You mark it complete" : "Supervisor marks it complete", x.s.marked_at ? "done" : "now"], [sup ? "OJT coordinator confirms" : "You confirm", x.s.confirmed_at ? "done" : x.s.marked_at ? "now" : ""], ["Post-internship opens", x.s.confirmed_at ? "done" : ""]]} />
+              <Steps list={[["HTE Supervisor marks it complete", x.s.marked_at ? "done" : "now", x.s.marked_at ? "Marked complete" : null], ["OJT Coordinator Confirmation", x.s.confirmed_at ? "done" : x.s.marked_at ? "now" : "", x.s.confirmed_at ? "Confirmed" : null], ["Post-internship opens", x.s.confirmed_at ? "done" : "", x.s.confirmed_at ? "Open" : null]]} />
             </>
           ),
           footer: sup ? (
@@ -556,7 +576,13 @@ const AQ_CSS = `
 /* step labels wrap to a second line instead of being cut ("You mark it c…") */
 .oa-steps.aq-steps { align-items: start; }
 .oa-steps.aq-steps li { align-items: flex-start; }
-.oa-steps.aq-steps li span { white-space: normal; overflow: visible; text-overflow: clip; padding-top: 3px; overflow-wrap: anywhere; }
+.oa-steps.aq-steps li span { white-space: normal; overflow: visible; text-overflow: clip; padding-top: 2px; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 2px; }
+.oa-steps.aq-steps li span b { font-weight: 600; color: #334155; }
+.oa-steps.aq-steps li span small { font-size: 11.5px; font-weight: 700; letter-spacing: .02em; }
+.oa-steps.aq-steps li.done span small { color: #15803d; } .oa-steps.aq-steps li.now span small { color: #c2410c; }
+.oa-steps.aq-steps li.bad span small { color: #b91c1c; } .oa-steps.aq-steps li.skip span small, .oa-steps.aq-steps li:not([class]) span small, .oa-steps.aq-steps li[class=""] span small { color: #94a3b8; }
+.ix-input.aq-need { border-color: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.15); }
+.ix-input.aq-need::placeholder { color: #b91c1c; }
 .aq-facts { flex: none; display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 14px; border: 1px solid #eef0f4; border-radius: 12px; background: #fafbfc; }
 .aq-facts span { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .aq-facts small { font-size: 12px; color: #64748b; } .aq-facts b { font-size: 13.5px; color: #0f172a; font-weight: 600; }
