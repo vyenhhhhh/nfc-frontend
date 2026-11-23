@@ -1,7 +1,7 @@
 // components/NfcCards.jsx
 // Coordinator page: review NFC card requests and see the request history.
 // CardRequests (exported) is the admin's "Card Requests" page: approved cards to print in the printing app.
-import { useState, useEffect, useRef, Fragment } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import CardAlerts from "./CardAlerts.jsx";
 import logo from "../assets/logo.png";          // CCIS logo (right side of the ID)
@@ -643,19 +643,22 @@ const saveBlob = (blob, name) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 };
 
-/* Print: the browser's own print window, one page per side at the real card size (CR80, 54mm x 85.6mm, portrait):
-   page 1 the front, page 2 the back, then the next card. "Save as PDF" in that window gives the PDF.
+/* Print: the browser's own print window on ONE A4 sheet per 3 cards. Each card is a row with its front and back
+   side by side at the real card size (CR80, 54mm x 85.6mm), with a thin outline to cut along.
+   "Save as PDF" in that window gives the PDF. A named page (idcard) so the A4 rules of other pages (DTR) don't apply.
    The cards are drawn off screen, the photos, logos and signature are given time to load, then window.print(). */
 const PRINT_CSS = `
   .idp-root { position: fixed; left: -10000px; top: 0; }
+  @page idcard { size: 210mm 297mm; margin: 0; }
   @media print {
-    @page { size: 54mm 85.6mm; margin: 0; }
+    @page { size: 210mm 297mm; margin: 0; }
     html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; height: auto !important; overflow: visible !important; }
     body > *:not(.idp-root) { display: none !important; }
     .idp-root { position: static; left: auto; }
-    .idp-page { width: 54mm; height: 85.6mm; overflow: hidden; break-after: page; page-break-after: always; }
-    .idp-page:last-child { break-after: auto; page-break-after: auto; }
-    .idp-page .idc { box-shadow: none !important; border: 0 !important; border-radius: 0 !important; }
+    .idp-sheet { page: idcard; width: 210mm; height: 296mm; box-sizing: border-box; padding: 12mm 0; display: flex; flex-direction: column; align-items: center; gap: 6mm; overflow: hidden; break-after: page; page-break-after: always; }
+    .idp-sheet:last-child { break-after: auto; page-break-after: auto; }
+    .idp-row { display: flex; gap: 6mm; }
+    .idp-row .idc { box-shadow: none !important; border: 0.2mm solid #cbd5e1 !important; }
     .idp-root, .idp-root * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   }`;
 function PrintCards({ users, settings, onDone }) {
@@ -683,11 +686,15 @@ function PrintCards({ users, settings, onDone }) {
   return createPortal(
     <div className="idp-root" ref={ref} aria-hidden="true">
       <style>{idCardCss}{PRINT_CSS}</style>
-      {users.map((u) => (
-        <Fragment key={u.id}>
-          <div className="idp-page"><CardFace u={u} settings={settings} /></div>
-          <div className="idp-page"><CardBack u={u} settings={settings} /></div>
-        </Fragment>
+      {Array.from({ length: Math.ceil(users.length / 3) }, (_, i) => users.slice(i * 3, i * 3 + 3)).map((sheet, i) => (
+        <div className="idp-sheet" key={i}>
+          {sheet.map((u) => (
+            <div className="idp-row" key={u.id}>
+              <CardFace u={u} settings={settings} />
+              <CardBack u={u} settings={settings} />
+            </div>
+          ))}
+        </div>
       ))}
     </div>,
     document.body,
@@ -904,7 +911,7 @@ export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
     if (st === "toprint" && r) {
       footer = (<>
         <span className="rq2-result">Printed this card after the intern signed?</span>
-        <button type="button" className="ix-b ghost" onClick={() => setPrinting([u])} disabled={!!printing} title="Print the front and back at the card size (54mm x 85.6mm)">
+        <button type="button" className="ix-b ghost" onClick={() => setPrinting([u])} disabled={!!printing} title="Print the front and back on one sheet, at the card size (54mm x 85.6mm)">
           <Icon name="print" size={15} /> {printing ? "Opening..." : "Print"}</button>
         <button type="button" className="ix-b primary" onClick={() => mark(true, [x])} disabled={!!busy}>
           <Icon name="check" size={15} /> {busy === "mark" ? "Saving..." : "Mark as printed"}</button>
