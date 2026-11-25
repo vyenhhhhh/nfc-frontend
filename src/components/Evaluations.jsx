@@ -7,6 +7,8 @@
 // OJT coordinator: sees Part 1, rates Part 2, then releases the grade to the intern.
 // Intern: <MyGrade /> shows the grade once it is released.
 // The signed paper evaluation form is still uploaded by the intern as a post-internship requirement.
+// Paper appraisal: when the HTE supervisor fills in the paper form, the intern uploads the signed copy
+// (Student Trainee Performance Appraisal) and the coordinator encodes its ratings here so it counts toward the grade.
 import { Fragment, useState, useEffect } from "react";
 import { Icon, Msg, Spinner, Badge, Avatar, OA_CSS, esc, confirmBox } from "./DashKit.jsx";
 import { API } from "../config.js";
@@ -192,14 +194,17 @@ export default function Evaluations({ user }) {
 }
 
 /* ───────── HTE supervisor: the appraisal (60%) ───────── */
-function SupervisorPanel({ intern, cfg, onDone, onError }) {
+function SupervisorPanel({ intern, cfg, onDone, onError, encode = false, onCancel }) {
+  // encode = the OJT coordinator copies the ratings of the signed paper appraisal the intern uploaded
   const ex = intern.appraisal;
-  const dr = !ex ? intern.draft : null;   // a saved draft (not submitted yet): the supervisor continues from it
+  const dr = !ex && !encode ? intern.draft : null;   // a saved draft (not submitted yet): the supervisor continues from it
   const src = ex || dr;
   const locked = !!intern.grade?.finalized_at;
   const [r, setR] = useState(() => src?.ratings || {});
   const [f, setF] = useState({ strengths: src?.strengths || "", improvements: src?.improvements || "", comments: src?.comments || "" });
-  const [edit, setEdit] = useState(!ex);
+  const [edit, setEdit] = useState(!ex || encode);
+  const paper = intern.docs?.performance_appraisal;
+  const encoded = ex?.evaluator_role === "ojt_coordinator";   // copied from the paper form by the coordinator
   const [shareNotes, setShareNotes] = useState(src ? src.share_comments !== false : true);
   const [busy, setBusy] = useState("");
   const total = supTotal(cfg, r);
@@ -227,8 +232,14 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
       {dr && !locked && (
         <div className="oa-done"><Icon name="pencil" size={14} /><span>Draft saved on {day(dr.updated_at)}. It is not sent to the OJT coordinator until you click Submit appraisal.</span></div>
       )}
-      {!edit && ex && !locked && (
-        <div className="oa-done"><Icon name="check" size={14} /><span>You rated {intern.name} on {day(ex.updated_at)}. You can still change it until the coordinator releases the grade.</span></div>
+      {encode && (
+        <div className="oa-done"><Icon name="file" size={14} /><span>Copy each rating from the signed paper appraisal {intern.name} uploaded.{" "}
+          {paper?.file_path && <a className="ix-link" href={fileHref(paper.file_path)} onClick={(e) => openFile(paper.file_path, e)} target="_blank" rel="noopener noreferrer">Open the signed appraisal</a>}</span></div>
+      )}
+      {!encode && !edit && ex && !locked && (
+        <div className="oa-done"><Icon name="check" size={14} /><span>{encoded
+          ? `The OJT coordinator encoded ${intern.name}'s signed paper appraisal on ${day(ex.updated_at)}. You can still change it until the grade is released.`
+          : `You rated ${intern.name} on ${day(ex.updated_at)}. You can still change it until the coordinator releases the grade.`}</span></div>
       )}
       {/* laid out like the paper form F-OSIP-PAR-004 rev.2: the header, then Part I (criteria × 1–5), total points */}
       <div className="pf-form">
@@ -279,19 +290,20 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
         ))}
       </div>
       {edit && !locked && (
-        <label className="gr-share"><input type="checkbox" checked={shareNotes} onChange={(e) => setShareNotes(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
+        <label className="gr-share"><input type="checkbox" checked={shareNotes} onChange={(e) => setShareNotes(e.target.checked)} /> Let the intern read {encode ? "the" : "my"} strengths and weaknesses after the grade is released</label>
       )}
       <div className="gr-bar">
         <div className="gr-total">
           <b>{total === null ? `${rated} of ${items} rated` : `${num(total)} / 100 points`}</b>
           <small>{total === null ? "Rate every item to see the total points." : `Total points × 60% = ${num(total * share(cfg))} of the final grade.`}</small>
         </div>
-        {ex && !edit && <button type="button" className="ix-b ghost" onClick={() => printForm(intern, cfg, ex.ratings || {}, { ...f, evaluator_name: ex.evaluator_name }, null, null)}><Icon name="print" size={14} /> Print form</button>}
+        {ex && !edit && !encode && <button type="button" className="ix-b ghost" onClick={() => printForm(intern, cfg, ex.ratings || {}, { ...f, evaluator_name: ex.evaluator_name }, null, null)}><Icon name="print" size={14} /> Print form</button>}
         {!locked && (edit ? (
           <>
-            {ex && <button type="button" className="ix-b ghost" onClick={() => { setR(ex.ratings || {}); setEdit(false); }}>Cancel</button>}
-            {!ex && <button type="button" className="ix-b ghost" disabled={!!busy || rated === 0} onClick={() => submit(true)}>{busy === "draft" ? "Saving..." : "Save draft"}</button>}
-            <button type="button" className="ix-b primary" disabled={total === null || !!busy} onClick={() => submit(false)}>{busy === "submit" ? "Saving..." : ex ? "Save changes" : "Submit appraisal"}</button>
+            {encode ? <button type="button" className="ix-b ghost" disabled={!!busy} onClick={onCancel}>Cancel</button>
+              : ex && <button type="button" className="ix-b ghost" onClick={() => { setR(ex.ratings || {}); setEdit(false); }}>Cancel</button>}
+            {!ex && !encode && <button type="button" className="ix-b ghost" disabled={!!busy || rated === 0} onClick={() => submit(true)}>{busy === "draft" ? "Saving..." : "Save draft"}</button>}
+            <button type="button" className="ix-b primary" disabled={total === null || !!busy} onClick={() => submit(false)}>{busy === "submit" ? "Saving..." : ex ? "Save changes" : encode ? "Save appraisal" : "Submit appraisal"}</button>
           </>
         ) : <button type="button" className="ix-b ghost" onClick={() => setEdit(true)}><Icon name="pencil" size={14} /> Change ratings</button>)}
       </div>
@@ -316,6 +328,11 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
   const hoursLeft = Math.max((Number(intern.required_hours) || 0) - (Number(intern.hours) || 0), 0);
   const hoursDone = hoursLeft <= 0.01;
   const narrOk = intern.narrative_ok !== false;   // the narrative report is uploaded (graded below, so it comes first)
+  // the supervisor used the paper form: the intern uploaded the signed copy, the coordinator encodes its ratings
+  const paper = intern.docs?.performance_appraisal;
+  const paperIn = !!paper?.file_path && paper.status !== "rejected";
+  const encoded = ap?.evaluator_role === "ojt_coordinator";
+  const [encode, setEncode] = useState(false);
 
   const save = async (finalize) => {
     setBusy(finalize ? "release" : "save");
@@ -343,14 +360,29 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
     printForm(intern, cfg, ap?.ratings || {}, ap || {}, { r, remarks }, final);
   };
 
+  if (encode) return (
+    <SupervisorPanel intern={intern} cfg={cfg} encode onError={onError} onCancel={() => setEncode(false)}
+      onDone={(t) => { setEncode(false); onDone(t); }} />
+  );
+
   return (
     <>
       {/* Part 1: the supervisor's appraisal */}
       <section className="gr-sec">
         <header><b>HTE supervisor appraisal</b><span className="gr-w">60%</span>
           <span className="gr-sc">{supScore === null ? "Waiting" : `${num(supScore)} / 100 points`}</span></header>
-        {!ap ? (
-          <p className="gr-hint warn"><Icon name="clock" size={13} /> {intern.supervisor_name ? `Waiting for ${intern.supervisor_name} to rate this intern in their account.` : "This intern has no HTE supervisor yet. Assign one in HTEs → Supervisors."}</p>
+        {!ap && paperIn ? (
+          <div className="gr-paper">
+            <p className="gr-hint"><Icon name="file" size={13} /> {intern.name} uploaded the signed paper appraisal{paper.status === "pending" ? " (waiting for your review in Submissions)" : ""}. Encode its ratings so it counts toward the grade.</p>
+            {!released && (
+              <div className="gr-paper-b">
+                <a className="ix-b ghost sm" href={fileHref(paper.file_path)} onClick={(e) => openFile(paper.file_path, e)} target="_blank" rel="noopener noreferrer"><Icon name="eye" size={14} /> Open the signed appraisal</a>
+                <button type="button" className="ix-b primary sm" onClick={() => setEncode(true)}><Icon name="pencil" size={14} /> Encode the ratings</button>
+              </div>
+            )}
+          </div>
+        ) : !ap ? (
+          <p className="gr-hint warn"><Icon name="clock" size={13} /> {intern.supervisor_name ? `Waiting for ${intern.supervisor_name} to rate this intern in their account, or for ${intern.name} to upload the signed paper appraisal.` : "This intern has no HTE supervisor yet. Assign one in HTEs → Supervisors."}</p>
         ) : (
           <>
             {(cfg.supervisor || []).map((cat) => {
@@ -363,7 +395,8 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
                 </div>
               );
             })}
-            <p className="gr-hint">Rated by {ap.evaluator_name} on {day(ap.updated_at)} · counts as <b>{num(supScore * share(cfg))}%</b> of the final grade.</p>
+            <p className="gr-hint">{encoded ? `Encoded from the signed paper appraisal by ${ap.evaluator_name}` : `Rated by ${ap.evaluator_name}`} on {day(ap.updated_at)} · counts as <b>{num(supScore * share(cfg))}%</b> of the final grade.
+              {encoded && !released && <> <button type="button" className="gr-linkbtn" onClick={() => setEncode(true)}>Edit the encoded ratings</button></>}</p>
             {(ap.strengths || ap.improvements) && (
               <p className="gr-note">{ap.strengths && <><b>Strengths:</b> {ap.strengths} </>}{ap.improvements && <><b>Weaknesses:</b> {ap.improvements}</>}</p>
             )}
@@ -658,6 +691,11 @@ function printForm(intern, cfg, ratings, notes, coord, final) {
 }
 
 const GR_CSS = `
+.gr-paper { display: flex; flex-direction: column; gap: 8px; }
+.gr-paper .gr-hint { margin: 0; }
+.gr-paper-b { display: flex; flex-wrap: wrap; gap: 8px; }
+.gr-paper-b a.ix-b { text-decoration: none; }
+.gr-linkbtn { border: 0; background: none; padding: 0; font: inherit; color: #c2410c; font-weight: 600; cursor: pointer; text-decoration: underline; }
 .gr-box { width: 100%; display: flex !important; flex-direction: column; justify-content: flex-start !important; align-items: stretch !important; gap: 0 !important; }
 .gr-box > * { flex: none !important; margin-top: 0 !important; margin-bottom: 0 !important; }
 .gr-box .gr-steps { margin: 4px 18px 18px !important; }
