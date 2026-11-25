@@ -4296,6 +4296,7 @@ export default function Shell({ navItems, user, children }) {
     return () => clearInterval(iv);
   }, []);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [notifFull, setNotifFull] = useState(null);   // the notification opened to its full message
   const notifRef = useRef(null);
   const [acctOpen, setAcctOpen] = useState(false);
   const acctRef = useRef(null);
@@ -4472,6 +4473,9 @@ export default function Shell({ navItems, user, children }) {
                         {items.map((n) => {
                           const to = notifTarget(n, user?.role);
                           const k = notifKind(n);
+                          // a long message shows 2 lines first; "Show more" opens the rest
+                          const long = String(n.message || "").length > 100;
+                          const full = notifFull === n.id;
                           return (
                             <div key={n.id} className={`nf2-row ${n.is_read ? "read" : "unread"}`}>
                               <button
@@ -4489,9 +4493,15 @@ export default function Shell({ navItems, user, children }) {
                                     <strong>{n.title}</strong>
                                     <small>{notifTime(n.created_at)}</small>
                                   </span>
-                                  {n.message && <span className="nf2-msg">{n.message}</span>}
+                                  {n.message && <span className={full ? "nf2-msg full" : "nf2-msg"}>{n.message}</span>}
                                 </span>
                               </button>
+                              {long && (
+                                <button type="button" className="nf2-more" aria-expanded={full}
+                                  onClick={() => { setNotifFull(full ? null : n.id); if (!n.is_read) markRead(n.id); }}>
+                                  {full ? "Show less" : "Show more"}
+                                </button>
+                              )}
                               {!n.is_read && <span className="nf2-dot" aria-label="Unread" />}
                               <button
                                 type="button"
@@ -6558,7 +6568,7 @@ const css = `
   .nf2-link.danger:hover { background: #fef2f2; color: #dc2626; }
   .nf2-list { max-height: min(440px, calc(100vh - 190px)); padding-bottom: 4px; }
   .nf2-label { position: sticky; top: 0; z-index: 1; background: var(--ix-surface, #fff); padding: 10px 16px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #94a3b8; }
-  .nf2-row { position: relative; display: flex; align-items: flex-start; margin: 1px 6px; border-radius: 10px; transition: background .15s; }
+  .nf2-row { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; margin: 1px 6px; border-radius: 10px; transition: background .15s; }
   .nf2-row:hover { background: #f8fafc; }
   .nf2-row.unread { background: #fff7f2; }
   .nf2-row.unread:hover { background: #fff1e8; }
@@ -6576,10 +6586,13 @@ const css = `
   .nf2-ic.t-slate { background: #f1f5f9; color: #475569; }
   .nf2-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .nf2-top { display: flex; align-items: baseline; gap: 8px; }
-  .nf2-top strong { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nf2-top strong { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 700; color: #1e293b; line-height: 1.35; overflow-wrap: anywhere; }
   .nf2-row.read .nf2-top strong { font-weight: 600; color: #334155; }
   .nf2-top small { flex: none; font-size: 10.5px; color: #94a3b8; }
-  .nf2-msg { font-size: 11.5px; line-height: 1.4; color: #64748b; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .nf2-msg { font-size: 11.5px; line-height: 1.4; color: #64748b; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .nf2-msg.full { display: block; -webkit-line-clamp: unset; overflow: visible; white-space: pre-line; }
+  .nf2-more { flex-basis: 100%; margin: -6px 0 0; padding: 0 0 8px 50px; border: 0; background: none; text-align: left; font: inherit; font-size: 11px; font-weight: 600; color: #e8582a; cursor: pointer; }
+  .nf2-more:hover { text-decoration: underline; }
   .nf2-dot { position: absolute; right: 12px; top: 33px; width: 7px; height: 7px; border-radius: 50%; background: #e8582a; pointer-events: none; }
   .nf2-x { position: absolute; right: 6px; top: 7px; width: 22px; height: 22px; min-width: 0; padding: 0 !important; border: 0; border-radius: 50%; background: transparent; color: #94a3b8; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
   .nf2-row:hover .nf2-x, .nf2-x:focus-visible { opacity: 1; }
