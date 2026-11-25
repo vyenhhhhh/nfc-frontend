@@ -531,7 +531,7 @@ export function MyGrade() {
             <table className="gr-tbl">
               <thead><tr><th>Category</th><th>Points</th><th>Counts as</th></tr></thead>
               <tbody>
-                <tr className="grp"><td>HTE supervisor appraisal <span className="gr-w">{supPct}%</span>{d.supervisor?.by && <small>Rated by {d.supervisor.by}</small>}</td><td>{num(d.supervisor?.score)} / 100</td><td>{num((d.supervisor?.score || 0) * (supPct / 100))}</td></tr>
+                <tr className="grp"><td>HTE supervisor appraisal <span className="gr-w">{supPct}%</span>{d.supervisor?.paper ? <small>From your HTE supervisor's signed paper appraisal</small> : d.supervisor?.by && <small>Rated by {d.supervisor.by}</small>}</td><td>{num(d.supervisor?.score)} / 100</td><td>{num((d.supervisor?.score || 0) * (supPct / 100))}</td></tr>
                 {(cfg?.supervisor || []).map((c) => (
                   <tr key={c.key} className="item"><td>{c.label}</td><td>{num(d.supervisor?.categories?.[c.key])} / {c.weight}</td><td /></tr>
                 ))}
