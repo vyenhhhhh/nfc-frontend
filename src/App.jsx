@@ -106,6 +106,7 @@ export default function App() {
 
   const [online, setOnline] = useState(true);
   const [queued, setQueued] = useState(() => loadQueue().length);
+  const [simUid, setSimUid] = useState(import.meta.env.VITE_TEST_UID || "1248158722");   // dev only: which card the test button taps
   const syncing = useRef(false);
 
   const buffer = useRef("");
@@ -272,10 +273,12 @@ export default function App() {
           res = await fetch(`${API}/tap`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
-            body: JSON.stringify({ uid: t.uid, offline_at: t.at }),
+            // the code read from the card while offline goes too: the server checks it now
+            body: JSON.stringify({ uid: t.uid, offline_at: t.at, card: t.card ?? null, writer: t.writer ?? null }),
           });
         } catch { setOnline(false); break; }            // still offline: try again later
-        if (res.status >= 500 || res.status === 429) { setOnline(res.status === 429); break; }
+        // server trouble, too many requests, or the kiosk key not accepted right now: keep the saved taps and try again later
+        if (res.status >= 500 || res.status === 429 || res.status === 401) { setOnline(res.status !== 500 && res.status < 500); break; }
         setOnline(true);
         const d = await res.json().catch(() => ({}));
         q = loadQueue().filter((x) => x.id !== t.id);     // sent (recorded, or refused with a reason): done
@@ -303,9 +306,11 @@ export default function App() {
   }, []);
 
   // the tap could not reach the server: keep it on this kiosk
-  const saveOffline = (uid) => {
+  const saveOffline = (uid, extra = {}) => {
     const at = new Date();
-    const t = { id: `${at.getTime()}-${Math.random().toString(36).slice(2, 7)}`, uid, at: at.toISOString() };
+    // keep what was read from the card (MT1 code) so the server can check it when the tap is sent
+    const t = { id: `${at.getTime()}-${Math.random().toString(36).slice(2, 7)}`, uid, at: at.toISOString(),
+      card: extra.card ?? null, writer: extra.writer ?? null };
     const q = [...loadQueue(), t];
     writeJson(QUEUE_STORE, q);
     setQueued(q.length);
@@ -338,6 +343,8 @@ export default function App() {
     };
     try {
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw new TypeError("offline");
+      // taps saved while offline go first, in order, so their card code is checked before this tap changes it
+      if (loadQueue().length) await syncRef.current();
       const res = await fetch(`${API}/tap`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json", "X-Kiosk-Key": KIOSK_KEY },
@@ -372,7 +379,7 @@ export default function App() {
     } catch (err) {
       signal(err instanceof TypeError);   // saved offline = ok, refused = error
       await hold();
-      if (err instanceof TypeError) setStatus(saveOffline(uid));   // offline: saved on the kiosk, sent later
+      if (err instanceof TypeError) setStatus(saveOffline(uid, extra));   // offline: saved on the kiosk, sent later
       else setError(err.message);
     } finally {
       setLoading(false);
@@ -558,9 +565,13 @@ export default function App() {
               CSU CCIS OJT
               {/* only while developing (npm run dev); it never appears in the built site */}
               {import.meta.env.DEV && (
-                <button type="button" className="kq-test" onClick={(e) => { e.currentTarget.blur(); handleTap(import.meta.env.VITE_TEST_UID || "1248158722"); }} disabled={loading}>
-                  Simulate tap (test)
-                </button>
+                <>
+                  <input className="kq-test kq-test-uid" value={simUid} aria-label="Card UID to simulate" placeholder="Card UID"
+                    onChange={(e) => setSimUid(e.target.value.toUpperCase().replace(/[^0-9A-F]/g, ""))} />
+                  <button type="button" className="kq-test" onClick={(e) => { e.currentTarget.blur(); if (simUid) handleTap(simUid); }} disabled={loading || !simUid}>
+                    Simulate tap (test)
+                  </button>
+                </>
               )}
             </span>
             <span>Tapping for someone else is not allowed</span>
@@ -592,7 +603,7 @@ export default function App() {
                 <Avatar name={e.name} photo={e.photo} />
                 <div className="kq-row-t">
                   <b>{e.name || "Card ····" + String(e.uid || "").slice(-4)}</b>
-                  <small>{e.action === "CHECK_IN" ? "Time in" : e.action === "CHECK_OUT" ? "Time out" : e.action === "OFFLINE" ? "Saved offline" : "Not recorded"}</small>
+                  <small title={e.reason || ""}>{e.action === "CHECK_IN" ? "Time in" : e.action === "CHECK_OUT" ? "Time out" : e.action === "OFFLINE" ? "Saved offline" : e.reason ? `Not recorded: ${e.reason}` : "Not recorded"}</small>
                 </div>
                 <time className={e.action === "CHECK_IN" ? "in" : e.action === "CHECK_OUT" ? "out" : e.action === "OFFLINE" ? "wait" : "bad"} title={e.reason || undefined}>
                   {String(e.time || "").replace(/(\d{1,2}:\d\d):\d\d/, "$1")}
@@ -912,6 +923,8 @@ html, body, #root { margin: 0; height: 100%; }
 .kq-av { width: 36px; height: 36px; font-size: 14px; }
 .kq-row-t b { font-size: 13.5px; font-weight: 600; }
 .kq-row-t small { display: block; font-size: 11.5px; color: rgba(255,255,255,.6); margin-top: 1px; }
+.kq-row-t small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kq-test-uid { width: 108px; cursor: text; text-transform: uppercase; margin-right: 6px; }
 .kq-row time { font-size: 13px; font-weight: 700; padding: 5px 10px; border-radius: 10px; font-variant-numeric: tabular-nums; }
 .kq-row time.in { background: rgba(34,197,94,.18); color: #bbf7d0; }
 .kq-row time.out { background: rgba(255,154,104,.18); color: #ffd5c0; }
@@ -1001,6 +1014,17 @@ html, body, #root { margin: 0; height: 100%; }
 
 /* tablets and phones: no wire (it would cross the taps panel below) */
 @media (max-width: 1100px) { .kq-cable { display: none; } }
+
+/* narrow windows (one column): the clock + reader + tap result keep their full height and the
+   "Today's taps" panel goes BELOW them (the page scrolls), so it never covers the reader or a result */
+@media (max-width: 1100px) {
+  .kq-wrap { grid-template-rows: max-content max-content !important; align-content: start; height: 100%; overflow-y: auto; }
+  .kq-left { min-height: max-content !important; height: auto !important; }
+  .kq-stage { flex: none !important; }
+  .kq-side { position: relative; z-index: 1; min-height: 0; height: auto; }
+  .kq-list { max-height: 320px; }
+  .kq-result { position: relative; z-index: 6; }
+}
 
 /* ═══ FIX: same layout in every state (idle ↔ reading ↔ ...) ═══
    The text slot has a fixed width and height, so the reader and the text never move when the text changes. */

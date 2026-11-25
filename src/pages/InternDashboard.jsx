@@ -134,12 +134,24 @@ export default function InternDashboard() {
 
   // the sidebar count on Submit MOV: what the intern has to act on — requirements returned by the coordinator
   // and reports the coordinator asked for that aren't sent yet (refreshes live, like the rest of the page)
+  // + requirement notices (approved / returned / reminders) not read yet: they are marked read when Submit MOV is opened
   const [movTodo, setMovTodo] = useState(0);
+  const movNotif = (n) => n && !n.is_read && (n.type === "mov_review" || n.type === "requirement_reminder"
+    || (!n.type && /requirement/i.test(n.title || "")));
+  const onMovs = path === "/intern/movs";
   useEffect(() => {
     const load = () => Promise.all([
       fetch(`${API}/intern/my-movs?user_id=${user.id}`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => []),
       fetch(`${API}/reports`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => []),
-    ]).then(([mv, rp]) => {
+      fetch(`${API}/notifications?user_id=${user.id}`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => []),
+    ]).then(async ([mv, rp, nt]) => {
+      let unread = (Array.isArray(nt) ? nt : []).filter(movNotif);
+      if (onMovs && unread.length) {
+        // the intern is on Submit MOV now: these notices are seen (the bell updates too)
+        await Promise.all(unread.map((n) => fetch(`${API}/notifications/${n.id}/read`, { method: "PATCH", headers: { Accept: "application/json" } }).catch(() => {})));
+        window.dispatchEvent(new Event("notifications-changed"));
+        unread = [];
+      }
       const list = Array.isArray(mv) ? [...mv].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))) : [];
       const latest = new Map();   // newest upload per requirement (or per report)
       list.forEach((m) => {
@@ -148,12 +160,14 @@ export default function InternDashboard() {
       });
       const returned = [...latest.values()].filter((m) => m.status === "rejected").length;
       const toSend = (Array.isArray(rp) ? rp : []).filter((r) => !latest.has(`r${r.id}`)).length;
-      setMovTodo(returned + toSend);
+      // a "returned" notice is already counted as a returned requirement, so only the other unread notices are added
+      const notices = unread.filter((n) => !/returned|rejected/i.test(n.title || "")).length;
+      setMovTodo(returned + toSend + notices);
     }).catch(() => {});
     load();
     return liveRefresh(load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [onMovs]);
   // the sidebar count on My Grade: shown when the coordinator released the grade, gone once the intern opens My Grade
   const [gradeNew, setGradeNew] = useState(false);
   useEffect(() => {
@@ -260,16 +274,6 @@ function MyRequests({ user, records }) {
   const [online, setOnline] = useState([]);
   const [fixes, setFixes] = useState([]);
   const [events, setEvents] = useState([]);
-  const [evOpen, setEvOpen] = useState(false);
-  const [evForm, setEvForm] = useState({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" });
-  const [evProof, setEvProof] = useState(null);
-  const [evBusy, setEvBusy] = useState(false);
-  const [evMsg, setEvMsg] = useState(null);
-  // missed a whole day (no tap at all)
-  const [dayOpen, setDayOpen] = useState(false);
-  const [dayForm, setDayForm] = useState({ date: "", time_in: "08:00", time_out: "17:00", reason: "" });
-  const [dayBusy, setDayBusy] = useState(false);
-  const [dayMsg, setDayMsg] = useState(null);
   const [hasSup, setHasSup] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
@@ -295,49 +299,6 @@ function MyRequests({ user, records }) {
   };
   useEffect(() => { load(); return liveRefresh(load); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const openEvent = () => { setEvProof(null); setEvForm({ date: "", event_name: "", reason: "", mandatory: false, portion: "whole" }); setEvMsg(null); setEvOpen(true); };
-  const sendEvent = async (e) => {
-    e.preventDefault();
-    if (!evProof) { setEvMsg({ type: "error", text: "Attach a proof first (a medical certificate, event invitation or similar)." }); return; }
-    setEvBusy(true); setEvMsg(null);
-    try {
-      const fd = new FormData();
-      fd.append("user_id", user.id);
-      fd.append("date", evForm.date);
-      fd.append("event_name", evForm.event_name.trim());
-      fd.append("reason", evForm.reason.trim());
-      fd.append("mandatory", evForm.mandatory ? "1" : "0");
-      fd.append("portion", evForm.portion);
-      if (evProof) fd.append("proof", evProof);
-      const res = await fetch(`${API}/intern/school-events`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
-      setEvOpen(false);
-      load();
-    } catch (err) {
-      setEvMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
-    } finally { setEvBusy(false); }
-  };
-  const openDay = () => { setDayForm({ date: "", time_in: "08:00", time_out: "17:00", reason: "" }); setDayMsg(null); setDayOpen(true); };
-  const sendDay = async (e) => {
-    e.preventDefault();
-    if (records.some((r) => r.date === dayForm.date)) { setDayMsg({ type: "error", text: 'That day already has attendance. Use "Request fix" on that day in My Attendance instead.' }); return; }
-    setDayBusy(true); setDayMsg(null);
-    try {
-      const res = await fetch(`${API}/intern/time-corrections`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ user_id: user.id, kind: "day", ...dayForm, reason: dayForm.reason.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
-      setDayOpen(false);
-      load();
-    } catch (err) {
-      setDayMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
-    } finally { setDayBusy(false); }
-  };
-  const dayWaiting = fixes.filter((f) => f.kind === "day" && (f.status === "pending" || f.status === "endorsed"));
   // take back a request the supervisor has not checked yet (excused day, time correction, online attendance)
   const REMOVE_URL = { event: "intern/school-events", correction: "intern/time-corrections", online: "intern/submit-online" };
   const [rmMsg, setRmMsg] = useState("");
@@ -375,12 +336,12 @@ function MyRequests({ user, records }) {
       remarks: r.ot_remarks,
     })),
     ...fixes.map((c) => ({
-      key: `c${c.id}`, rid: c.id, kind: "correction", date: c.date, status: c.status, viaSupervisor: true, supervisorOnly: true,
+      key: `c${c.id}`, rid: c.id, kind: "correction", date: c.date, proof_path: c.proof_path, proof_name: c.proof_name, status: c.status, viaSupervisor: true, supervisorOnly: true,
       endorsed: !!c.endorsed_at || c.status === "endorsed",
       details: `${c.kind === "day" ? `Missed the whole day · in ${time12(c.requested_in)}, out` : c.kind === "in" ? `Forgot to time in · in ${time12(c.requested_in)}, out` : "Forgot to time out ·"} ${time12(c.requested_out || c.time_out)} — ${c.reason || ""}`, remarks: c.remarks || c.endorse_remarks,
     })),
     ...events.map((v) => ({
-      key: `e${v.id}`, rid: v.id, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
+      key: `e${v.id}`, rid: v.id, proof_path: v.proof_path, proof_name: v.proof_name, kind: "event", date: v.date, status: v.status, viaSupervisor: hasSup, evId: v.id,
       endorsed: !!v.endorsed_at || v.status === "endorsed",
       details: `${v.event_name}${v.mandatory ? " (mandatory)" : ""} · excused ${PORTION_LBL[v.portion] || "whole day"}, no hours counted for it${v.reason ? " — " + v.reason : ""}`,
       remarks: v.remarks || v.endorse_remarks,
@@ -475,9 +436,9 @@ function MyRequests({ user, records }) {
             <b>File a request</b>
             <div className="rq-new">
               <button type="button" title="Opens My Attendance: use “Request fix” on that day" onClick={() => go("/intern/records")}><Icon name="pencil" size={15} /><span>Forgot to time in / out</span></button>
-              <button type="button" onClick={openDay}><Icon name="calendar" size={15} /><span>Missed a whole day</span></button>
+              <button type="button" title="Opens My Attendance" onClick={() => go("/intern/records", { state: { missedDay: Date.now() } })}><Icon name="calendar" size={15} /><span>Missed a whole day</span></button>
               <button type="button" onClick={() => go("/intern/online")}><Icon name="upload" size={15} /><span>Online attendance</span></button>
-              <button type="button" title="Sick, a school event or another valid reason: the excused time is not counted as absent" onClick={openEvent}><Icon name="calendar" size={15} /><span>Excused (sick, school event)</span></button>
+              <button type="button" title="Opens Submit Online, Excused absence tab" onClick={() => go("/intern/online", { state: { kind: "event" } })}><Icon name="calendar" size={15} /><span>Excused (sick, school event)</span></button>
             </div>
           </div>
           <div className="ix-card rq-box rq-how-box">
@@ -503,6 +464,7 @@ function MyRequests({ user, records }) {
               <div className="rq-dst"><Badge label={st.label} type={st.type} /></div>
               <div className="ibx-sec"><span>Where it is now</span><Steps r={open} big /></div>
               {open.details && <div className="ibx-sec"><span>Details</span><p>{open.details}</p></div>}
+              {open.proof_path && <div className="ibx-sec"><span>Proof</span><p><a className="ix-link" href={fileHref(open.proof_path)} onClick={(e) => openFile(open.proof_path, e)} target="_blank" rel="noopener noreferrer">{open.proof_name || "View file"}</a></p></div>}
               {open.remarks && <div className="ibx-sec"><span>Remarks</span><p>“{open.remarks}”</p></div>}
               {/* only while still waiting for the supervisor: once checked, it can't be taken back */}
               {REMOVE_URL[open.kind] && open.status === "pending" && (
@@ -514,88 +476,7 @@ function MyRequests({ user, records }) {
         );
       })()}
 
-      {dayOpen && (
-        <Drawer title="Missed a whole day?" kicker="Attendance request" icon="calendar"
-          sub="No tap at all on a workday. Your HTE supervisor approves or rejects it." onClose={() => setDayOpen(false)}
-          footer={(close) => (<>
-            <button type="button" className="ix-b ghost" onClick={close} disabled={dayBusy}>Cancel</button>
-            <button type="submit" form="rq-day-form" className="ix-b primary" disabled={dayBusy}>{dayBusy ? "Sending..." : "Send request"}</button>
-          </>)}>
-          <form id="rq-day-form" onSubmit={sendDay} className="ix-form">
-            <Msg msg={dayMsg} />
-            <div className="ix-field">
-              <label htmlFor="rq-day-date">Which day?</label>
-              <input id="rq-day-date" type="date" required max={addDays(manilaToday(), -1)} min={addDays(manilaToday(), -30)} value={dayForm.date}
-                onChange={(e) => setDayForm((f) => ({ ...f, date: e.target.value }))} />
-              <small className="fx-hint">A workday in the last 30 days that has no attendance (a weekday, or a weekend day your HTE marked open).</small>
-            </div>
-            <div className="fx-two">
-              <div className="ix-field">
-                <label htmlFor="rq-day-in">Time in</label>
-                <input id="rq-day-in" type="time" required min="06:00" value={dayForm.time_in} onChange={(e) => setDayForm((f) => ({ ...f, time_in: e.target.value }))} />
-              </div>
-              <div className="ix-field">
-                <label htmlFor="rq-day-out">Time out</label>
-                <input id="rq-day-out" type="time" required max="17:00" value={dayForm.time_out} onChange={(e) => setDayForm((f) => ({ ...f, time_out: e.target.value }))} />
-              </div>
-            </div>
-            <div className="ix-field">
-              <label htmlFor="rq-day-reason">Reason</label>
-              <textarea id="rq-day-reason" rows={3} required maxLength={500} value={dayForm.reason}
-                placeholder="e.g. I left my card at home and the guard let me in. My supervisor saw me that day."
-                onChange={(e) => setDayForm((f) => ({ ...f, reason: e.target.value }))} />
-            </div>
-            {dayWaiting.length > 0 && (
-              <small className="fx-hint">Already waiting: {dayWaiting.map((f) => new Date(f.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")}</small>
-            )}
-          </form>
-        </Drawer>
-      )}
 
-      {evOpen && (
-        <Drawer title="Excused absence" kicker="Excused" icon="calendar"
-          sub="Sick or attending a school event? The excused part of the day is not counted as absent and gives no OJT hours. Hours you work outside the event count as normal."
-          onClose={() => setEvOpen(false)}
-          footer={(close) => (<>
-            <button type="button" className="ix-b ghost" onClick={close} disabled={evBusy}>Cancel</button>
-            <button type="submit" form="ev-form" className="ix-b primary" disabled={evBusy}>{evBusy ? "Sending..." : "Send request"}</button>
-          </>)}>
-          <form id="ev-form" onSubmit={sendEvent} className="ix-form">
-            <Msg msg={evMsg} />
-            <div className="ix-field">
-              <label htmlFor="ev-date">Which day?</label>
-              <input id="ev-date" type="date" required min={addDays(manilaToday(), -30)} value={evForm.date}
-                onChange={(e) => setEvForm((f) => ({ ...f, date: e.target.value }))} />
-              <small className="fx-hint">A workday (a weekday, or a weekend day your HTE marked open). File it before the event if you can.</small>
-            </div>
-            <PortionPick value={evForm.portion} onChange={(v) => setEvForm((f) => ({ ...f, portion: v }))} />
-            <div className="ix-field">
-              <label htmlFor="ev-name">Reason</label>
-              <input id="ev-name" type="text" required maxLength={160} value={evForm.event_name} placeholder="e.g. Sick (fever), or University Foundation Day"
-                onChange={(e) => setEvForm((f) => ({ ...f, event_name: e.target.value }))} />
-            </div>
-            <label className="ix-check">
-              <input type="checkbox" checked={evForm.mandatory} onChange={(e) => setEvForm((f) => ({ ...f, mandatory: e.target.checked }))} />
-              <span>Mandatory school event</span>
-            </label>
-            <div className="ix-field so-proof">
-              <label htmlFor="ev-proof">Proof (photo or PDF, required)</label>
-              <label className={`so-file${evProof ? " has" : ""}`} htmlFor="ev-proof">
-                <Icon name="upload" size={15} /><span>{evProof ? evProof.name : "Tap to attach: medical certificate, invitation..."}</span>
-                {evProof && <button type="button" onClick={(e) => { e.preventDefault(); setEvProof(null); }} aria-label="Remove file">✕</button>}
-              </label>
-              <input id="ev-proof" type="file" accept="image/*,.pdf" hidden onChange={(e) => setEvProof(e.target.files?.[0] || null)} />
-              <style>{PROOF_CSS}</style>
-            </div>
-            <div className="ix-field">
-              <label htmlFor="ev-reason">Note (optional)</label>
-              <textarea id="ev-reason" rows={3} maxLength={500} value={evForm.reason} placeholder="e.g. Morning program, I will report to the office after lunch."
-                onChange={(e) => setEvForm((f) => ({ ...f, reason: e.target.value }))} />
-              <small className="fx-hint">If you still tap in that day, those hours count as normal. Only the event time is not counted.</small>
-            </div>
-          </form>
-        </Drawer>
-      )}
     </>
   );
 }
@@ -1025,6 +906,86 @@ export function missingTaps(records, fixes, today) {
 }
 
 /* ───────────────────────── My Attendance (records + total hours) ───────────────────────── */
+// proof for a time correction or a missed day (same look as the excused-absence proof)
+function ProofField({ id, file, onFile, hint = true }) {
+  return (
+    <div className="ix-field so-proof">
+      <label htmlFor={id}>Proof (photo or PDF, required)</label>
+      <label className={`so-file${file ? " has" : ""}`} htmlFor={id}>
+        <Icon name="upload" size={15} /><span>{file ? file.name : hint ? "Tap to attach: office logbook, message from your supervisor..." : "Attach a photo or PDF"}</span>
+        {file && <button type="button" onClick={(e) => { e.preventDefault(); onFile(null); }} aria-label="Remove file">✕</button>}
+      </label>
+      <input id={id} type="file" accept="image/*,.pdf" hidden onChange={(e) => onFile(e.target.files?.[0] || null)} />
+      {hint && <small className="fx-hint">Anything that shows you were at work at that time, like a photo of the office logbook or a message from your supervisor.</small>}
+      <style>{PROOF_CSS}</style>
+    </div>
+  );
+}
+
+// "Missed a whole day?": no tap at all on a workday. Lives on My Attendance (My Request links here).
+function MissedDayDrawer({ user, records, fixes, onClose, onSent }) {
+  const [dayForm, setDayForm] = useState({ date: "", time_in: "08:00", time_out: "17:00", reason: "" });
+  const [dayBusy, setDayBusy] = useState(false);
+  const [dayMsg, setDayMsg] = useState(null);
+  const [dayProof, setDayProof] = useState(null);
+  const dayWaiting = fixes.filter((f) => f.kind === "day" && (f.status === "pending" || f.status === "endorsed"));
+  const sendDay = async (e) => {
+    e.preventDefault();
+    if (records.some((r) => r.date === dayForm.date)) { setDayMsg({ type: "error", text: 'That day already has attendance. Use "Request fix" on that day instead.' }); return; }
+    if (!dayProof) { setDayMsg({ type: "error", text: "Attach a proof first (a photo or PDF)." }); return; }
+    setDayBusy(true); setDayMsg(null);
+    try {
+      const fd = new FormData();
+      Object.entries({ user_id: user.id, kind: "day", ...dayForm, reason: dayForm.reason.trim() }).forEach(([k, v]) => fd.append(k, v));
+      fd.append("proof", dayProof);
+      const res = await fetch(`${API}/intern/time-corrections`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
+      onSent();
+    } catch (err) {
+      setDayMsg({ type: "error", text: err instanceof TypeError ? "Couldn't reach the server." : err.message });
+    } finally { setDayBusy(false); }
+  };
+  return (
+    <Drawer title="Missed a whole day?" kicker="Attendance request" icon="calendar"
+          sub="No tap at all on a workday. Your HTE supervisor approves or rejects it." onClose={onClose}
+          footer={(close) => (<>
+            <button type="button" className="ix-b ghost" onClick={close} disabled={dayBusy}>Cancel</button>
+            <button type="submit" form="rq-day-form" className="ix-b primary" disabled={dayBusy}>{dayBusy ? "Sending..." : "Send request"}</button>
+          </>)}>
+          <form id="rq-day-form" onSubmit={sendDay} className="ix-form">
+            <Msg msg={dayMsg} />
+            <div className="ix-field">
+              <label htmlFor="rq-day-date">Which day?</label>
+              <input id="rq-day-date" type="date" required max={addDays(manilaToday(), -1)} min={addDays(manilaToday(), -30)} value={dayForm.date}
+                onChange={(e) => setDayForm((f) => ({ ...f, date: e.target.value }))} />
+              <small className="fx-hint">A workday in the last 30 days that has no attendance (a weekday, or a weekend day your HTE marked open).</small>
+            </div>
+            <div className="fx-two">
+              <div className="ix-field">
+                <label htmlFor="rq-day-in">Time in</label>
+                <input id="rq-day-in" type="time" required min="06:00" value={dayForm.time_in} onChange={(e) => setDayForm((f) => ({ ...f, time_in: e.target.value }))} />
+              </div>
+              <div className="ix-field">
+                <label htmlFor="rq-day-out">Time out</label>
+                <input id="rq-day-out" type="time" required max="17:00" value={dayForm.time_out} onChange={(e) => setDayForm((f) => ({ ...f, time_out: e.target.value }))} />
+              </div>
+            </div>
+            <div className="ix-field">
+              <label htmlFor="rq-day-reason">Reason</label>
+              <textarea id="rq-day-reason" rows={3} required maxLength={500} value={dayForm.reason}
+                placeholder="e.g. I left my card at home and the guard let me in. My supervisor saw me that day."
+                onChange={(e) => setDayForm((f) => ({ ...f, reason: e.target.value }))} />
+            </div>
+            <ProofField id="rq-day-proof" file={dayProof} onFile={setDayProof} />
+            {dayWaiting.length > 0 && (
+              <small className="fx-hint">Already waiting: {dayWaiting.map((f) => new Date(f.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")}</small>
+            )}
+          </form>
+        </Drawer>
+  );
+}
+
 function Attendance({ user, records, loading, required, program, onRefresh }) {
   // forgot to time out → request a time correction (the HTE supervisor approves or rejects it)
   const [fixes, setFixes] = useState([]);
@@ -1033,9 +994,11 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
   const [fixTime, setFixTime] = useState("17:00");
   const [fixIn, setFixIn] = useState("08:00");
   const [fixReason, setFixReason] = useState("");
+  const [fixProof, setFixProof] = useState(null);
   const [fixBusy, setFixBusy] = useState(false);
   const [fixMsg, setFixMsg] = useState(null);
   const [pageMsg, setPageMsg] = useState(null);
+  const [dayOpen, setDayOpen] = useState(false);   // "Missed a whole day?"
   const excusedDays = useExcused();
 
   const loadFixes = async () => {
@@ -1053,7 +1016,7 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
     const canOut = !rec.checked_out_at && rec.date < manilaToday();
     setFixFor({ id: rec.id, date: rec.date, tap: rec.checked_in_at, out: rec.checked_out_at || null, canOut: canOut && only !== "in" });
     setFixKind(canOut && only !== "in" ? "out" : "in");
-    setFixTime("17:00"); setFixIn("08:00"); setFixReason(""); setFixMsg(null);
+    setFixTime("17:00"); setFixIn("08:00"); setFixReason(""); setFixProof(null); setFixMsg(null);
   };
   // from the Home reminder: open the request for that record right away
   const { state: navState } = useLocation();
@@ -1065,18 +1028,26 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
     if (rec) { openFix(rec); setAutoOpened(id); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navState, records]);
+  // from My Request → "Missed a whole day": open that form right away
+  const navAtt = useNavigate();
+  useEffect(() => {
+    if (!navState?.missedDay) return;
+    setDayOpen(true);
+    navAtt("/intern/records", { replace: true, state: null });   // a reload doesn't open it again
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navState]);
   const sendFix = async (e) => {
     e.preventDefault();
+    if (!fixProof) { setFixMsg({ type: "error", text: "Attach a proof first (a photo or PDF)." }); return; }
     setFixBusy(true); setFixMsg(null);
     try {
-      const res = await fetch(`${API}/intern/time-corrections`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          user_id: user.id, attendance_id: fixFor.id, kind: fixKind, reason: fixReason.trim(),
-          ...(fixKind === "in" ? { time_in: fixIn } : { time_out: fixTime }),
-        }),
-      });
+      const fd = new FormData();
+      Object.entries({
+        user_id: user.id, attendance_id: fixFor.id, kind: fixKind, reason: fixReason.trim(),
+        ...(fixKind === "in" ? { time_in: fixIn } : { time_out: fixTime }),
+      }).forEach(([k, v]) => fd.append(k, v));
+      fd.append("proof", fixProof);
+      const res = await fetch(`${API}/intern/time-corrections`, { method: "POST", headers: { Accept: "application/json" }, body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data.errors && Object.values(data.errors)[0]?.[0]) || data.message || "Couldn't send the request.");
       setFixFor(null);
@@ -1204,8 +1175,8 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
       )}
 
       {fixFor && (
-        <Modal title="Request a time correction" sub={`${new Date(fixFor.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · your HTE supervisor approves or rejects it.`} onClose={() => setFixFor(null)}>
-          <form onSubmit={sendFix} className="ix-form">
+        <Modal wide title="Request a time correction" sub={`${new Date(fixFor.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · your HTE supervisor decides.`} onClose={() => setFixFor(null)}>
+          <form onSubmit={sendFix} className="ix-form fx-compact">
             <Msg msg={fixMsg} />
             <div className="fx-kinds" role="radiogroup" aria-label="What happened?">
               {fixFor.canOut && (
@@ -1223,6 +1194,7 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
                   : `My tap at ${hm(fixFor.tap)} was when I left.`}</small>
               </label>
             </div>
+            <div className="fx-two">
             {fixKind === "out" ? (
               <div className="ix-field">
                 <label htmlFor="fix-time">What time did you leave?</label>
@@ -1237,12 +1209,15 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
                   : `Your tap at ${hm(fixFor.tap)} becomes your time out.`}</small>
               </div>
             )}
+            <ProofField id="fix-proof" file={fixProof} onFile={setFixProof} hint={false} />
+            </div>
             <div className="ix-field">
               <label htmlFor="fix-reason">Reason</label>
-              <textarea id="fix-reason" rows={3} required maxLength={500} value={fixReason}
+              <textarea id="fix-reason" rows={2} required maxLength={500} value={fixReason}
                 placeholder={fixKind === "in" ? "e.g. I forgot to tap my card when I arrived." : "e.g. I forgot to tap my card before going home."}
                 onChange={(e) => setFixReason(e.target.value)} />
             </div>
+            <small className="fx-hint">Proof: anything that shows you were at work at that time, like a photo of the office logbook or a message from your supervisor.</small>
             <div className="ix-form-actions">
               <button type="button" className="ix-b ghost" onClick={() => setFixFor(null)} disabled={fixBusy}>Cancel</button>
               <button type="submit" className="ix-b primary" disabled={fixBusy}>{fixBusy ? "Sending..." : "Send request"}</button>
@@ -1293,7 +1268,15 @@ function Attendance({ user, records, loading, required, program, onRefresh }) {
           <option value="all">All months</option>
           {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
         </select>
+        <span className="at-day-box">
+          <button type="button" className="ix-b ghost at-day-btn" title="No tap at all on a workday" onClick={() => setDayOpen(true)}>
+            <Icon name="calendar" size={14} /> Missed a whole day?</button>
+        </span>
       </div>
+      {dayOpen && (
+        <MissedDayDrawer user={user} records={records} fixes={fixes} onClose={() => setDayOpen(false)}
+          onSent={() => { setDayOpen(false); loadFixes(); setPageMsg({ type: "success", text: "Request sent. Your HTE supervisor will check it. Follow it in My Request." }); }} />
+      )}
 
       {/* the log: one compact row per day, grouped by month */}
       <div className="at-log2">
@@ -1389,7 +1372,15 @@ function SubmitOnline({ user }) {
   const [loadingSubs, setLoadingSubs] = useState(true);
   const [tab, setTab] = useState("all");
   const [openId, setOpenId] = useState(null);
-  const [kind, setKind] = useState("online");
+  const { state: soState } = useLocation();
+  const [kind, setKind] = useState(soState?.kind === "event" ? "event" : "online");   // My Request → "Excused" opens the Excused tab
+  const navSo = useNavigate();
+  useEffect(() => {
+    if (soState?.kind !== "event") return;
+    setKind("event");
+    navSo("/intern/online", { replace: true, state: null });   // a reload shows the normal tab
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soState]);
   // on-site interns normally tap at the kiosk: a remote day is the exception, so it is an "Off-site day" with a reason
   const offsite = modalityOf(user) === "onsite";
   const [why, setWhy] = useState("");
@@ -2352,7 +2343,7 @@ export const CS48_CSS = `
 .cs48 .cs-sup { text-align: center; font-weight: 700; font-size: 11px; margin-top: 4px; }
 .cs48 .cs-ver.has { margin-bottom: 0; }
 .cs48 .cs-vby { position: relative; height: 34px; display: flex; align-items: flex-end; justify-content: center; font-weight: 700; font-size: 10.5px; padding-bottom: 1px; }
-.cs48 .cs-vby img { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); max-height: 38px; max-width: 130px; object-fit: contain; }
+.cs48 .cs-vby img { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); max-height: 38px; max-width: 130px; object-fit: contain; mix-blend-mode: multiply; }
 .cs48 .cs-vby span { position: relative; }
 .cs48 .cs-vnote { text-align: center; font-size: 8.5px; font-style: italic; color: #444; margin-top: 2px; }
 .cs48 .cs-supcap { text-align: center; font-style: italic; font-size: 10px; }
@@ -2827,8 +2818,14 @@ export function buildDtr({ records, month, from, to, mode, holidays = {}, portio
     const part = portions[iso];   // "am" / "pm": that half was an excused school event
     if (mode === "two") {
       const last = [...s].reverse().find((x) => x.out);
-      late = part === "am" ? 0 : mins(manilaHour(s[0].in) - S.amIn);
-      if (last && part !== "pm") early = mins(S.pmOut - manilaHour(last.out));
+      // the lunch hour (amOut–pmIn, 12–1) is never work time, so it is never undertime or tardiness either
+      const lunch = (from, to) => Math.max(0, Math.min(to, S.pmIn) - Math.max(from, S.amOut));
+      const arr = Math.min(manilaHour(s[0].in), S.pmOut);
+      late = part === "am" ? 0 : mins(Math.max(0, arr - S.amIn) - lunch(S.amIn, arr));
+      if (last && part !== "pm") {
+        const dep = Math.max(manilaHour(last.out), S.amIn);   // leaving before 8:00 counts from 8:00
+        early = mins(Math.max(0, S.pmOut - dep) - lunch(dep, S.pmOut));
+      }
       row = { d, amIn: t12(s[0].in), pmOut: last ? t12(last.out) : "" };
     } else {
       const am = s.find((x) => manilaHour(x.in) < 12);
@@ -4212,6 +4209,13 @@ export const internCss = `
 @media (hover: hover) { .at-rows li .at-fix-in { opacity: 0; transition: opacity .15s; }
   .at-rows li:hover .at-fix-in, .at-rows li:focus-within .at-fix-in { opacity: 1; } }
 .fx-kinds { display: grid; gap: 8px; }
+/* Request a time correction: everything fits on one screen (the two choices side by side, time + proof on one row) */
+.ix-modal.wide:has(.fx-compact) { max-width: 640px; }
+.fx-compact .fx-kinds { grid-template-columns: 1fr 1fr; }
+.fx-compact .fx-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.fx-compact .fx-two input[type="time"] { width: 100%; box-sizing: border-box; }
+.fx-compact > .fx-hint { line-height: 1.45; margin-top: -4px; }
+.fx-compact .fx-two .ix-field input[type="time"], .fx-compact .so-file { height: 44px; min-height: 44px; }
 .fx-kind { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: center; padding: 10px 12px;
   border: 1px solid #ece4df; border-radius: 12px; cursor: pointer; background: var(--ix-surface, #fff); }
 .fx-kind input { grid-row: span 2; accent-color: #e8582a; margin: 0; }

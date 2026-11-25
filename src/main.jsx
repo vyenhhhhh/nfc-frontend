@@ -1,7 +1,7 @@
 //main.jsx
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import NFCTerminal             from "./App.jsx";
 import Login                   from "./pages/login.jsx";
 import InternDashboard         from "./pages/InternDashboard.jsx";
@@ -175,9 +175,23 @@ const supervisorRoutes = [
   "/supervisor/profile",
 ];
 
+/* the browser tab name tells the pages apart: "Kiosk · CSU CCIS OJT", "Log in · …", "Coordinator · …" */
+const TAB_NAMES = [["/intern", "Intern"], ["/coordinator", "Coordinator"], ["/admin", "Admin"], ["/supervisor", "Supervisor"]];
+function TabTitle() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const name = pathname === "/" ? "Kiosk"
+      : pathname.startsWith("/login") ? "Log in"
+      : (TAB_NAMES.find(([p]) => pathname.startsWith(p)) || [])[1];
+    document.title = name ? `${name} · CSU CCIS OJT` : "CSU CCIS OJT";
+  }, [pathname]);
+  return null;
+}
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <BrowserRouter>
+      <TabTitle />
       <Routes>
         <Route path="/"      element={<NFCTerminal />} />
         <Route path="/login" element={<Login />} />

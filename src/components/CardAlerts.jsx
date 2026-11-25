@@ -66,8 +66,9 @@ export default function CardAlerts() {
                 <small className="ca-sub">{when(f.created_at)} · {f.kiosk || "kiosk not named"} · card UID {f.uid}</small></span>,
               f.resolved_at ? <Badge label={f.resolution === "reset" ? "Card reset" : f.resolution === "replaced" ? "Card replaced" : "Dismissed"} type="approved" /> : (
                 <span className="ca-acts">
-                  <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => resolve(f, "dismiss")}>Dismiss</button>
+                  {/* Dismiss is always the last button, so it lines up in every row */}
                   {f.nfc_card_id && <button type="button" className="ix-b primary sm" disabled={!!busy} onClick={() => resolve(f, "reset")}>Reset card</button>}
+                  <button type="button" className="ix-b ghost sm" disabled={!!busy} onClick={() => resolve(f, "dismiss")}>Dismiss</button>
                 </span>
               ),
             ])}
@@ -103,5 +104,14 @@ const CA_CSS = `
   .ca-hint { display: block; margin: 0 0 16px; padding-bottom: 16px; border-bottom: 1px solid #eef0f3; font-size: 12px; line-height: 1.55; color: #8b919b; }
   .ca-sub { display: block; font-size: 11px; color: #94a3b8; }
   .ca-lock { display: block; margin-top: 6px; }
-  .ca-acts { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .ca-acts { display: inline-flex; gap: 8px; flex-wrap: nowrap; justify-content: flex-end; align-items: center; }
+  /* the buttons column: as narrow as its buttons, on one line, right-aligned in every row */
+  .ca-card .ix-table td:last-child { width: 1%; white-space: nowrap; text-align: right; }
+  .ca-card .ix-table td { vertical-align: middle; }
+  .ca-card .ix-table { width: 100%; table-layout: auto; }
+  .ca-card .ix-table td:not(:last-child), .ca-card .ix-table td:not(:last-child) * { white-space: normal !important; overflow-wrap: anywhere; }
+  .ca-card .ix-table-wrap { overflow-x: visible; }
+  .ca-card .ix-table td:first-child { min-width: 150px; }
+  .ca-card .ix-table td:first-child b { white-space: nowrap !important; }
+  .ca-card .ca-sub { line-height: 1.5; margin-top: 2px; }
 `;

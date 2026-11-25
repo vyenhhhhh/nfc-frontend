@@ -2229,6 +2229,49 @@ export function UserDetails({ u, interns = [] }) {
   );
 }
 
+/* A photo of a signature on paper -> a PNG with a see-through background, cropped to the ink.
+   The paper (white or grey) becomes transparent and the ink is kept, so the signature sits cleanly
+   on the DTR and reports. Works in the browser, before the file is uploaded. */
+export async function cleanSignature(file) {
+  const img = await new Promise((res, rej) => {
+    const url = URL.createObjectURL(file); const im = new Image();
+    im.onload = () => { URL.revokeObjectURL(url); res(im); };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error("bad image")); };
+    im.src = url;
+  });
+  const scale = Math.min(1, 900 / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true }); ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h); const px = data.data;
+  // brightness of each pixel; the paper is the bright majority, the ink the darkest few
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) lum[i] = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+  const sorted = Array.from(lum).sort((a, b) => a - b);
+  const paper = sorted[Math.floor(sorted.length * 0.6)];   // typical paper brightness
+  const ink = sorted[Math.floor(sorted.length * 0.01)];    // typical ink brightness
+  const hi = paper - Math.max(12, (paper - ink) * 0.18);   // lighter than this = paper (see-through)
+  const lo = ink + (hi - ink) * 0.35;                      // darker than this = full ink
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x; const L = lum[i];
+    let a = L >= hi ? 0 : L <= lo ? 1 : (hi - L) / (hi - lo);
+    a = Math.pow(a, 0.8);
+    px[i * 4 + 3] = Math.round(a * 255);
+    if (a > 0.3) {   // ink: make it a clean dark tone, keeping a little of its colour (blue / black pen)
+      for (let k = 0; k < 3; k++) px[i * 4 + k] = Math.round(px[i * 4 + k] * 0.6);
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  ctx.putImageData(data, 0, 0);
+  if (x1 < 0) return file;   // nothing found: keep the original
+  const pad = 8; x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(w - 1, x1 + pad); y1 = Math.min(h - 1, y1 + pad);
+  const out = document.createElement("canvas"); out.width = x1 - x0 + 1; out.height = y1 - y0 + 1;
+  out.getContext("2d").drawImage(c, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+  const blob = await new Promise((res) => out.toBlob(res, "image/png"));
+  return blob ? new File([blob], "signature.png", { type: "image/png" }) : file;
+}
+
 /* Signature upload (staff): picks an image, shows a preview, or the saved one */
 function SigPicker({ file, onChange, current }) {
   const [preview, setPreview] = useState(null);
@@ -2245,12 +2288,15 @@ function SigPicker({ file, onChange, current }) {
     <div className="sig-pick">
       <div className="sig-box">{shown ? <img src={shown} alt="Signature" /> : <span>No signature yet</span>}</div>
       <label className="ix-b ghost sm">
-        <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+        <input type="file" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
           const f = e.target.files?.[0]; e.target.value = "";
           if (!f) return;
           if (!f.type.startsWith("image/")) { setErr("Please choose an image file."); return; }
-          if (f.size > 2 * 1024 * 1024) { setErr("Signature must be under 2 MB."); return; }
-          setErr(null); onChange(f);
+          if (f.size > 10 * 1024 * 1024) { setErr("Please choose an image under 10 MB."); return; }
+          let clean = f;
+          try { clean = await cleanSignature(f); } catch { /* keep the original */ }
+          if (clean.size > 2 * 1024 * 1024) { setErr("Signature must be under 2 MB."); return; }
+          setErr(null); onChange(clean);
         }} />
         {shown ? "Change signature" : "Upload signature"}
       </label>
@@ -3735,7 +3781,7 @@ const NOTIF_PAGES = {
     online_review: "/intern/requests", overtime_review: "/intern/requests",
     time_correction_review: "/intern/requests", work_mode_review: "/intern/requests",
     nfc_review: "/intern/nfc", dtr_certified: "/intern/dtr",
-    supervisor_assigned: "/intern/profile", announcement: "/intern", grade_released: "/intern/profile", evaluation: "/intern/profile",
+    supervisor_assigned: "/intern/profile", announcement: "/intern", grade_released: "/intern/grade", evaluation: "/intern/grade",
   },
   ojt_coordinator: {
     mov_submission: "/coordinator/requirements?tab=movs", online_submission: "/coordinator/approvals?tab=online",
@@ -3849,7 +3895,10 @@ function useNotifications(userId) {
 
   useEffect(() => {
     load();
-    return liveRefresh(load);
+    // a page that marks notices read itself (Submit MOV) asks the bell to reload
+    window.addEventListener("notifications-changed", load);
+    const stop = liveRefresh(load);
+    return () => { window.removeEventListener("notifications-changed", load); stop && stop(); };
   }, [load]);
 
   const markRead = async (id) => {
@@ -3887,7 +3936,8 @@ export function navWithTabs(nav, groups = {}, extra = {}, badges = {}) {
   return nav.map((it) => {
     const tabs = extra[it.path] || groups[it.path]?.tabs;
     const b = badges[it.path] || {};
-    if (!tabs) return typeof b === "number" ? { ...it, badge: b } : it;
+    // a page with one tab (the supervisor's Generate DTR) is a plain link, not a menu with one item
+    if (!tabs || tabs.length < 2) return typeof b === "number" ? { ...it, badge: b } : it;
     const children = tabs.map((t) => ({ label: t.label, path: `${it.path}?tab=${t.key}`, key: t.key, badge: Number(b[t.key]) || 0 }));
     return { ...it, badge: children.reduce((n, c) => n + c.badge, 0), children };
   });
@@ -4384,7 +4434,10 @@ export default function Shell({ navItems, user, children }) {
               aria-haspopup="menu"
               aria-expanded={acctOpen}
             >
-              <span className="ix-acct-name">{user?.name || "User"}</span>
+              <span className="ix-acct-txt">
+                <span className="ix-acct-name">{user?.name || "User"}</span>
+                <small className="ix-acct-role">{ROLE_LABEL[user?.role] || "User"}</small>
+              </span>
               <Avatar name={user?.name} photo={user?.photo} status="on" size={36} />
             </button>
 
@@ -5659,7 +5712,7 @@ export const uiUnify = `
   }
   @media (max-width: 600px) {
     .ix-page.lay2 .ix-top-tabs { display: none; }
-    .ix-page.lay2 .ix-acct-name { display: none; }
+    .ix-page.lay2 .ix-acct-txt { display: none; }
   }
 `;
 
@@ -5723,8 +5776,11 @@ const css = `
   .ix-acct-btn { height: 46px; padding: 0 6px 0 14px; border: none; border-radius: 8px; background: none; color: #1f2937; display: flex; align-items: center; gap: 12px; cursor: pointer; font-family: inherit; transition: background .15s, color .15s; }
   .ix-acct-btn:hover, .ix-acct-btn.open { background: #fde3cf; color: #c2410c; }
   .ix-acct-name { font-size: 14.5px; font-weight: 500; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .ix-acct-txt { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; min-width: 0; text-align: right; }
+  .ix-acct-role { font-size: 11.5px; font-weight: 600; color: #94a3b8; letter-spacing: .02em; white-space: nowrap; }
+  .ix-acct-btn:hover .ix-acct-role, .ix-acct-btn.open .ix-acct-role { color: #c2410c; }
   .ix-acct-btn .ix-av { flex-shrink: 0; }
-  @media (max-width: 600px) { .ix-acct-name { display: none; } .ix-acct-btn { padding: 0 4px; } }
+  @media (max-width: 600px) { .ix-acct-txt { display: none; } .ix-acct-btn { padding: 0 4px; } }
   .ix-acct-btn:focus-visible, .ix-notification-btn:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
   .ix-acct-menu { position: absolute; top: calc(100% + 8px); right: 0; width: 200px; padding: 6px 0; background: var(--ix-surface, #fff); border-radius: 6px; box-shadow: 0 10px 30px rgba(15,23,42,0.16); overflow: hidden; z-index: 100; animation: ix-pop .18s ease-out; }
   .ix-acct-who { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #e5e7eb; }

@@ -602,16 +602,16 @@ function CardFan({ u, settings }) {
    • marks the cards as printed (the intern and the coordinator are notified),
    • can preview a card in the CSU design.
    requests = /supervisor/nfc-requests rows; interns = admin user rows (for student ID, course, birthday...). */
-// To print → (printed) To link → (UID saved, can be done in advance) Ready to claim → (intern picks it up) Released
+// To print → (printed) To link → (UID saved, can be done in advance) To claim → (intern picks it up) Released
 const STEP_SUB = { toprint: "Download and print", tolink: "Tap the new card", toclaim: "Intern picks it up", released: "Card is active" };
 const STAGES = [
   { key: "toprint",  label: "To print" },
   { key: "tolink",   label: "To link" },
-  { key: "toclaim",  label: "Ready to claim" },
+  { key: "toclaim",  label: "To claim" },
   { key: "released", label: "Released" },
 ];
 const STAGE_BADGE = {
-  toprint: ["To print", "pending"], tolink: ["Printed", "onsite"], toclaim: ["Ready to claim", "onsite"], released: ["Released", "approved"],
+  toprint: ["To print", "pending"], tolink: ["Printed", "onsite"], toclaim: ["To claim", "onsite"], released: ["Released", "approved"],
 };
 
 const csvCell = (v) => `"${String(v === "—" ? "" : v ?? "").replace(/"/g, '""')}"`;   // blanks stay blank in the sheet
@@ -623,7 +623,8 @@ const saveBlob = (blob, name) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 };
 
-export function CardRequests({ requests, interns, onChanged }) {
+// tab / onTab: the open step follows the address (/admin/cards?tab=tolink), so the sidebar can open it
+export function CardRequests({ requests, interns, onChanged, tab, onTab }) {
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
   const [uids, setUids] = useState({});                 // request id -> typed / scanned UID
@@ -790,7 +791,7 @@ export function CardRequests({ requests, interns, onChanged }) {
   ];
 
   // To print: the list and the photos for the printer's app · To link: nothing to download ·
-  // Ready to claim / Released: the list, as a record. Nothing ticked = every row of the tab.
+  // To claim / Released: the list, as a record. Nothing ticked = every row of the tab.
   const toolbar = (st, { list, picked }) => {
     const items = picked.length ? picked : list;
     const what = picked.length ? `${picked.length} selected` : `all ${list.length}`;
@@ -810,15 +811,13 @@ export function CardRequests({ requests, interns, onChanged }) {
     );
   };
 
+  // only To print can be done for many cards at once. Linking is one card at a time (each card is tapped
+  // on the reader), so To link has no tick boxes; "Back to To print" is in each card's panel.
   const bulk = (st) => (st === "toprint"
     ? (picked, clear) => (
       <button type="button" className="ix-b primary sm" onClick={() => mark(true, picked, clear)} disabled={!!busy}>
         <Icon name="check" size={14} /> {busy === "mark" ? "Saving..." : "Mark as printed"}</button>)
-    : st === "tolink"
-      ? (picked, clear) => (
-        <button type="button" className="ix-b ghost sm" onClick={() => mark(false, picked, clear)} disabled={!!busy}>
-          {busy === "undo" ? "Saving..." : "Back to To print"}</button>)
-      : null);
+    : null);
 
   const drawer = (x) => {
     const { u, r, stage: st } = x;
@@ -889,7 +888,8 @@ export function CardRequests({ requests, interns, onChanged }) {
       <Msg msg={msg} />
       <ReviewQueue tabs={tabs} columns={columns} rowKey={(x) => x.u.id}
         searchText={(x) => `${x.u.name} ${x.u.email} ${x.u.student_id || ""} ${x.u.program || ""} ${x.u.placement || ""}`}
-        toolbar={toolbar} bulk={bulk} drawer={drawer} openLabel={() => "View"} />
+        toolbar={toolbar} bulk={bulk} drawer={drawer} openLabel={() => "View"}
+        initialTab={tab || undefined} onTab={onTab} />
 
     </div>
   );

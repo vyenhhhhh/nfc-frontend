@@ -98,7 +98,7 @@ export function GroupPage({ group, tab, onPick, counts = {}, children }) {
   return (
     <>
       <style>{grpCss}</style>
-      <PageHeader title={group.title} heading={tab.label} sub={tab.sub} live={group.live} tabs={(
+      <PageHeader title={group.title} heading={tab.label} sub={tab.sub} live={group.live} tabs={group.tabs.length < 2 ? null : (
       <div className="grp-tabs" role="tablist" aria-label={group.title}>
         {group.tabs.map((t) => (
           <button

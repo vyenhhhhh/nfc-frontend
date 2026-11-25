@@ -964,10 +964,11 @@ function ReportForm({ user, supervisors = [], interns: allInterns = [], year, qu
       )}
       <div className="qr-row">
         {idx > 0 ? <button type="button" className="ix-b ghost" onClick={() => go(idx - 1)}>‹ {SECTIONS[idx - 1].label}</button> : <span />}
-        {idx < SECTIONS.length - 1
-          ? <button type="button" className="ix-b primary" onClick={() => go(idx + 1)}>Next: {SECTIONS[idx + 1].label} ›</button>
-          : <span className="qr-end"><button type="button" className="ix-b ghost" onClick={word}><Icon name="download" size={14} /> Download Word</button>
-            <button type="button" className="ix-b primary" onClick={print}><Icon name="print" size={14} /> Print / PDF</button></span>}
+        {/* Save is here on every part; Word and Print / PDF stay at the top only (no second copy here) */}
+        <span className="qr-end">
+          <button type="button" className={idx < SECTIONS.length - 1 ? "ix-b ghost" : "ix-b primary"} disabled={!!busy || (!dirty && !!srv.updated_at)} onClick={save}>{busy === "save" ? "Saving..." : dirty || !srv.updated_at ? "Save" : "Saved"}</button>
+          {idx < SECTIONS.length - 1 && <button type="button" className="ix-b primary" onClick={() => go(idx + 1)}>Next: {SECTIONS[idx + 1].label} ›</button>}
+        </span>
       </div>
       </div>
       </div>

@@ -69,14 +69,20 @@ export default function Evaluations({ user }) {
   const [hte, setHte] = useState("all");
   const [msg, setMsg] = useState(null);
 
+  // a failed request shows its error (not "No interns are assigned to you yet")
+  const getJson = (url, opt) => fetch(url, opt).then(async (r) => {
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d?.message || `The server answered ${r.status}.`);
+    return d;
+  });
   const load = () => Promise.all([
-    fetch(`${API}/grades/criteria`, { headers: J }).then((r) => r.json()),
-    fetch(`${API}/grades`, { headers: J, cache: "no-store" }).then((r) => r.json()),
+    getJson(`${API}/grades/criteria`, { headers: J }),
+    getJson(`${API}/grades`, { headers: J, cache: "no-store" }),
   ]).then(([c, g]) => {
     setCfg(c || {});
     setRows(Array.isArray(g?.interns) ? g.interns : []);
     setReady(g?.ready !== false);
-  }).catch(() => { setCfg({}); setRows([]); });
+  }).catch((e) => { setCfg((v) => v || {}); setRows((v) => v || []); setMsg({ type: "error", text: `Could not load the interns: ${e.message || "check the connection"} Refresh the page to try again.` }); });
   useEffect(() => { load(); }, []);
 
   if (!cfg || !rows) return <Spinner />;
@@ -112,6 +118,7 @@ export default function Evaluations({ user }) {
       if (!finished(i)) return <Badge label="Appraisal not finished" type="pending" />;
       // the grade can be released only once the required hours are complete
       if ((Number(i.hours) || 0) + 0.01 < (Number(i.required_hours) || 0)) return <Badge label="Hours not complete" type="pending" />;
+      if (i.narrative_ok === false) return <Badge label="No narrative report" type="pending" />;
       return <Badge label="Ready to grade" type="online" />;
     }
     return finished(i) ? <Badge label={`${fmt(i.appraisal.score)} / 100`} type="approved" />
@@ -193,7 +200,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
   const [r, setR] = useState(() => src?.ratings || {});
   const [f, setF] = useState({ strengths: src?.strengths || "", improvements: src?.improvements || "", comments: src?.comments || "" });
   const [edit, setEdit] = useState(!ex);
-  const [share, setShare] = useState(src ? src.share_comments !== false : true);
+  const [shareNotes, setShareNotes] = useState(src ? src.share_comments !== false : true);
   const [busy, setBusy] = useState("");
   const total = supTotal(cfg, r);
   const rated = (cfg.supervisor || []).reduce((s, c) => s + c.items.filter((it) => r[it.key] >= 1).length, 0);
@@ -205,7 +212,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
     try {
       const res = await fetch(`${API}/evaluations`, {
         method: "POST", headers: { ...J, "Content-Type": "application/json" },
-        body: JSON.stringify({ intern_id: intern.id, mode: "system", ratings: r, share_comments: share, draft, ...f }),
+        body: JSON.stringify({ intern_id: intern.id, mode: "system", ratings: r, share_comments: shareNotes, draft, ...f }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((d.errors && Object.values(d.errors)[0]?.[0]) || d.message || "Couldn't save the appraisal.");
@@ -251,8 +258,8 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
                         <td key={n} className="c">
                           {edit && !locked
                             ? <button type="button" className={r[it.key] === n ? "pf-ck on" : "pf-ck"} aria-label={`${it.label}: ${n}`} aria-pressed={r[it.key] === n}
-                                onClick={() => setR((x) => ({ ...x, [it.key]: n }))}>{r[it.key] === n ? "✔" : ""}</button>
-                            : <span className="pf-mark">{r[it.key] === n ? "✔" : ""}</span>}
+                                onClick={() => setR((x) => ({ ...x, [it.key]: n }))}>{n}</button>
+                            : <span className={r[it.key] === n ? "pf-mark on" : "pf-mark"}>{r[it.key] === n ? n : ""}</span>}
                         </td>
                       ))}
                     </tr>
@@ -272,7 +279,7 @@ function SupervisorPanel({ intern, cfg, onDone, onError }) {
         ))}
       </div>
       {edit && !locked && (
-        <label className="gr-share"><input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
+        <label className="gr-share"><input type="checkbox" checked={shareNotes} onChange={(e) => setShareNotes(e.target.checked)} /> Let the intern read my strengths and weaknesses after the grade is released</label>
       )}
       <div className="gr-bar">
         <div className="gr-total">
@@ -308,6 +315,7 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
   // the grade is released only after the intern has completed the required hours (the server checks it too)
   const hoursLeft = Math.max((Number(intern.required_hours) || 0) - (Number(intern.hours) || 0), 0);
   const hoursDone = hoursLeft <= 0.01;
+  const narrOk = intern.narrative_ok !== false;   // the narrative report is uploaded (graded below, so it comes first)
 
   const save = async (finalize) => {
     setBusy(finalize ? "release" : "save");
@@ -380,14 +388,14 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
         return (
           <section key={cat.key} className="gr-sec">
             <header><b>{cat.label}</b><span className="gr-w">{cat.weight}%</span>
-              {one && (released ? <b className="gr-val gr-inline">{r[cat.items[0].key] || "—"} <small>{cfg.scale?.[r[cat.items[0].key]] || ""}</small></b>
+              {one && (released ? <b className="gr-val gr-inline">{r[cat.items[0].key] ? <i className="gr-pill">{r[cat.items[0].key]}</i> : "—"} <small>{cfg.scale?.[r[cat.items[0].key]] || ""}</small></b>
                 : <Rate value={r[cat.items[0].key]} scale={cfg.scale} label={cat.label} onChange={(n) => setR((x) => ({ ...x, [cat.items[0].key]: n }))} />)}
               <span className={one ? "gr-sc gr-sc-one" : "gr-sc"}>{sc === null ? "—" : num(sc)} / {cat.weight}</span></header>
             {!one && cat.items.map((it) => (
               <div key={it.key} className="gr-row">
                 <span>{it.label} <em className="gr-sub">{it.weight}%</em>
                   {it.levels && r[it.key] && <small>{it.levels[r[it.key]]}</small>}</span>
-                {released ? <b className="gr-val">{r[it.key] || "—"} <small>{cfg.scale?.[r[it.key]] || ""}</small></b>
+                {released ? <b className="gr-val">{r[it.key] ? <i className="gr-pill">{r[it.key]}</i> : "—"} <small>{cfg.scale?.[r[it.key]] || ""}</small></b>
                   : <Rate value={r[it.key]} scale={it.levels || cfg.scale} label={it.label} onChange={(n) => setR((x) => ({ ...x, [it.key]: n }))} />}
               </div>
             ))}
@@ -404,7 +412,8 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
           <small>{final === null
             ? (supScore === null ? "Final grade appears when the supervisor's appraisal is in." : "Rate every item to see the final grade.")
             : `${num(supScore * share(cfg))} from the supervisor + ${num(cTotal)} from ${viewOnly ? "the coordinator" : "you"}`}{isReleased ? ` · released ${day(g.finalized_at)}` : viewOnly ? " · not released yet" : ""}
-            {!released && !hoursDone && <> · <span style={{ color: "#c2410c", fontWeight: 600 }}>release after the hours are complete ({num(hoursLeft, 1)}h left)</span></>}</small>
+            {!released && !hoursDone && <> · <span style={{ color: "#c2410c", fontWeight: 600 }}>release after the hours are complete ({num(hoursLeft, 1)}h left)</span></>}
+            {!released && !narrOk && <> · <span style={{ color: "#c2410c", fontWeight: 600 }}>release after the intern uploads the narrative report</span></>}</small>
         </div>
         <button type="button" className="ix-b ghost" onClick={print}><Icon name="print" size={14} /> Print</button>
         {viewOnly ? null : released ? (
@@ -412,8 +421,9 @@ function CoordPanel({ intern, cfg, onDone, onError, viewOnly = false }) {
         ) : (
           <>
             <button type="button" className="ix-b ghost" disabled={!!busy} onClick={() => save(false)}>{busy === "save" ? "Saving..." : "Save draft"}</button>
-            <button type="button" className="ix-b primary" disabled={!!busy || final === null || !hoursDone} onClick={() => save(true)}
-              title={hoursDone ? "" : `${intern.name} still has ${num(hoursLeft, 1)}h left of ${num(intern.required_hours, 0)}h. You can save a draft now and release the grade once the hours are complete.`}>
+            <button type="button" className="ix-b primary" disabled={!!busy || final === null || !hoursDone || !narrOk} onClick={() => save(true)}
+              title={!hoursDone ? `${intern.name} still has ${num(hoursLeft, 1)}h left of ${num(intern.required_hours, 0)}h. You can save a draft now and release the grade once the hours are complete.`
+                : !narrOk ? `${intern.name} hasn't uploaded the narrative report yet. You can save a draft now and release the grade once it is uploaded.` : ""}>
               {busy === "release" ? "Releasing..." : "Release grade"}</button>
           </>
         )}
@@ -685,6 +695,8 @@ const GR_CSS = `
 .gr-rate button:hover:not(:disabled) { border-color: #e8582a; color: #c2410c; }
 .gr-rate button.on { background: #e8582a; border-color: #e8582a; color: #fff; }
 .gr-val { font-size: 14px; color: #c2410c; white-space: nowrap; } .gr-val small { font-size: 11px; color: #64748b; font-weight: 500; }
+/* a given rating (read only): the same orange square as a picked 1-5 button */
+.gr-pill { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9px; background: #e8582a; color: #fff; font-style: normal; font-size: 13px; font-weight: 700; vertical-align: middle; margin-right: 4px; }
 .gr-hint { margin: 2px 0; font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.4; }
 .gr-hint.warn { color: #b45309; }
 .gr-note { margin: 0; font-size: 12.5px; color: #334155; line-height: 1.5; }
@@ -717,9 +729,13 @@ const GR_CSS = `
 .pf-tb tr.hint td { font-size: 11.5px; color: #6b7280; height: 24px; }
 .pf-tb td.it { padding-left: 18px; }
 .pf-tb tr.todo td.it { color: #b45309; }
-.pf-ck { width: 100%; height: 30px; border: 0; background: transparent; cursor: pointer; font: inherit; font-size: 14px; font-weight: 800; color: #15803d; padding: 0 !important; }
-.pf-ck:hover { background: #fff4ee; } .pf-ck.on { background: #e9f8ef; }
-.pf-mark { font-size: 14px; font-weight: 800; color: #15803d; }
+/* the 1-5 buttons: the same look as the coordinator's rating buttons (.gr-rate) */
+.pf-tb tr:not(.cat):not(.hint):not(.tot) td { height: 40px; }
+.pf-ck { display: block; margin: 0 auto; width: 32px; height: 32px; border-radius: 9px; border: 1px solid #e5e7eb; background: #fff; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; color: #374151; padding: 0 !important; }
+.pf-ck:hover { border-color: #e8582a; color: #c2410c; }
+.pf-ck.on { background: #e8582a; border-color: #e8582a; color: #fff; }
+.pf-mark { display: none; }
+.pf-mark.on { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9px; background: #e8582a; color: #fff; font-size: 13px; font-weight: 700; }
 .pf-tb tr.tot td { background: #f8f9fb; font-weight: 800; text-align: right; height: 32px; border-bottom: 0; } .pf-tb tr.tot td.c { text-align: center; }
 /* grading inside the drawer (Interns → Grades) */
 .gr-drawer { display: flex; flex-direction: column; gap: 12px; min-height: 100%; }

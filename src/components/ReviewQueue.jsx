@@ -17,9 +17,11 @@ import { Drawer, Icon } from "./DashKit.jsx";
  * bulk:        (tabKey) => null | ((picked, clear) => node)   actions for the ticked rows
  * drawer:      (item, { close }) => { title, kicker, icon, actions, body, footer }
  * openLabel:   (tabKey) => text of the row button ("Review" / "View")
+ * onTab:       (tabKey) => void, called when a tab is picked (a page can keep the tab in its address);
+ *              with onTab, a new initialTab (e.g. a sidebar link) switches the tab
  */
 export default function ReviewQueue({ tabs, columns, rowKey, searchText, toolbar = null, initialTab, initialQuery = "", initialOpen = null,
-  bulk = () => null, drawer, openLabel }) {
+  bulk = () => null, drawer, openLabel, onTab }) {
   // the tab that needs action (marked hot) opens first and gets "Review"; otherwise the first tab
   const actKey = (tabs.find((t) => t.hot) || tabs[0])?.key;
   openLabel = openLabel || ((t) => (t === actKey ? "Review" : "View"));
@@ -67,7 +69,12 @@ export default function ReviewQueue({ tabs, columns, rowKey, searchText, toolbar
     else if (nums[nums.length - 1] !== "…") nums.push("…");
   }
 
-  const go = (k) => { setTab(k); setOpenId(null); setPage(0); clear(); };
+  const go = (k) => { setTab(k); setOpenId(null); setPage(0); clear(); if (onTab && k !== tab) onTab(k); };
+  // the page asks for another tab (a sidebar sub-item was clicked): switch to it
+  useEffect(() => {
+    if (onTab && initialTab && initialTab !== tab && tabs.some((t) => t.key === initialTab)) { setTab(initialTab); setOpenId(null); setPage(0); setPicked(new Set()); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
   const openAt = (i) => { const x = list[i]; if (x) { setOpenId(rowKey(x)); setLastIdx(i); } };
   const view = open ? drawer(open, { close: () => setOpenId(null) }) : null;
 

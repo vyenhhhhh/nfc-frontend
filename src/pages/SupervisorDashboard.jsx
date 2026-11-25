@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shell, {
   navWithTabs,
-  Spinner, Badge, Table, Section, Avatar, Icon, PageHeader, Msg, Inbox,
+  Spinner, Badge, Table, Section, Avatar, Icon, PageHeader, Msg, Inbox, confirmBox,
   InternMonitor, AnnouncementBoard, OnlineReview, OvertimeBoard, OaHistory, OA_CSS, todayManila, fmtTime, greeting, liveRefresh, fmtMinutes, calcHours, requiredHoursFor,
 } from "../components/DashKit.jsx";
 import {
@@ -22,12 +22,13 @@ import { DashLayout, Panel, DashRow, DashEmpty, TodayPeople } from "../component
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API } from "../config.js";
+import { fileHref, openFile } from "../files.js";
 
 const NAV = [
   { path: "/supervisor",           label: "Dashboard",  icon: "dashboard" },
   { path: "/supervisor/approvals", label: "Approvals",  icon: "inbox" },
   { path: "/supervisor/interns",   label: "Interns",    icon: "users" },
-  { path: "/supervisor/reports",   label: "Reports",    icon: "chart" },
+  { path: "/supervisor/reports",   label: "Generate DTR", icon: "file" },   // the supervisor's only report
   { path: "/supervisor/calendar",  label: "HTE Calendar", icon: "calendar" },
   { path: "/supervisor/profile",   label: "My Profile", icon: "user" },
 ];
@@ -45,7 +46,7 @@ const GROUPS = {
     ],
   },
   "/supervisor/reports": {
-    title: "Reports",
+    title: "Generate DTR",
     tabs: [
       { key: "dtr",     label: "Generate DTR",        icon: "file",  sub: "View, print and certify your interns' Daily Time Records." },
     ],
@@ -444,6 +445,7 @@ function FixQueue({ waiting = [], reviewed = [], onReview }) {
         { label: "Asks for", render: (c) => { const p = pairs(c); return <span className="rq2-muted">{p.ask[0]} – {p.ask[1]}</span>; } },
         { label: "Status", render: badge },
       ]}
+      bulk={(t) => (t !== "mine" ? null : (picked, clear) => <FixBulk picked={picked} clear={clear} run={(c, status) => decide(c, status, "")} />)}
       drawer={(c) => {
         const p = pairs(c);
         return {
@@ -465,6 +467,10 @@ function FixQueue({ waiting = [], reviewed = [], onReview }) {
               </div>
               <div className="aq-facts-lite"><span><small>Time between</small> <b>{span(c)}</b></span><span><small>{mine(c) ? "Sent" : "Reviewed"}</small> <b>{fxWhen(mine(c) ? c.created_at : (c.reviewed_at || c.updated_at))}</b></span></div>
               <div className="oa-tasks"><span>Reason</span><p>{c.reason || "—"}</p></div>
+              {c.proof_path && (
+                <div className="oa-tasks"><span>Proof</span><p><a className="ix-link" href={fileHref(c.proof_path)} onClick={(e) => openFile(c.proof_path, e)} target="_blank" rel="noopener noreferrer">
+                  <Icon name="file" size={13} /> {c.proof_name || "View proof"}</a></p></div>
+              )}
               <p className="fx-final">Your decision is final: an approved correction is applied to the intern's attendance right away.</p>
             </>
           ),
@@ -480,6 +486,27 @@ function FixQueue({ waiting = [], reviewed = [], onReview }) {
         };
       }}
     />
+  );
+}
+
+// ticked time corrections: approve or reject them all at once (one after another; stops at the first one that fails)
+function FixBulk({ picked, clear, run }) {
+  const [busy, setBusy] = useState(null);
+  const go = async (status) => {
+    const n = picked.length, what = `${n} time correction${n === 1 ? "" : "s"}`;
+    const ok = await confirmBox(status === "approved"
+      ? { title: `Approve ${what}?`, message: "Each approved correction is applied to the intern's attendance right away.", ok: "Approve" }
+      : { title: `Reject ${what}?`, message: "The interns are told their requests were rejected. To give a reason, reject them one by one instead.", ok: "Reject", danger: true });
+    if (!ok) return;
+    setBusy(status);
+    for (const c of picked) { if ((await run(c, status)) === false) break; }
+    setBusy(null); clear();
+  };
+  return (
+    <>
+      <button type="button" className="ix-b danger sm" disabled={!!busy} onClick={() => go("rejected")}>{busy === "rejected" ? "Rejecting…" : "Reject selected"}</button>
+      <button type="button" className="ix-b ok sm" disabled={!!busy} onClick={() => go("approved")}>{busy === "approved" ? "Approving…" : "Approve selected"}</button>
+    </>
   );
 }
 
