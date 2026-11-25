@@ -14,6 +14,11 @@ const clean = (p) => String(p || "").replace(/^\/+/, "");
 
 export const isPrivateFile = (p) => PRIVATE.test(clean(p));
 
+// the "Student Trainee Performance Appraisal" requirement marked done by the HTE supervisor's online appraisal:
+// an approved MOV with no file (keep in step with AppraisalRequirement::ONLINE_NAME on the server)
+export const ONLINE_APPRAISAL = "Appraisal submitted online";
+export const isOnlineAppraisal = (m) => !!m && m.requirement === "performance_appraisal" && m.original_name === ONLINE_APPRAISAL;
+
 /** the link to open a file (asks the server for private files) */
 export async function fileLink(path) {
   if (!path) return null;

@@ -8,7 +8,7 @@ import { currentFit } from "../fit.js";
 import logo from "../assets/logo.png";
 
 import { API, STORAGE } from "../config.js";
-import { fileHref, openFile, useFileLink } from "../files.js";
+import { fileHref, openFile, useFileLink, isOnlineAppraisal } from "../files.js";
 export const REQUIRED_HOURS = 486; // fallback when an intern has no program set
 
 /* ── Required OJT hours per program (from the OJT coordinator) ── */
@@ -1250,7 +1250,7 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
         const when = (v) => (v ? new Date(v).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "");
         const sentOn = (m) => { const d = when(m.created_at || m.submitted_at || m.updated_at); return d ? `Submitted ${d}` : "Submitted"; };
         const SUB = {
-          approved: (m) => `${sentOn(m)} · approved by the coordinator`,
+          approved: (m) => isOnlineAppraisal(m) ? `${sentOn(m)} · submitted online by the HTE supervisor` : `${sentOn(m)} · approved by the coordinator`,
           pending: (m) => `${sentOn(m)} · waiting for the coordinator's review`,
           rejected: (m) => m.remarks ? `Returned: ${m.remarks}` : "Returned · the intern needs to upload a new copy",
           none: () => "The intern hasn't uploaded this yet",
@@ -1288,7 +1288,7 @@ function RequirementChecklist({ internId, intern = null, canViewFiles = false })
                         <Icon name="eye" size={13} /> View
                       </a>
                     )}
-                    {canViewFiles && st === "approved" && m?.id && (
+                    {canViewFiles && st === "approved" && m?.id && !isOnlineAppraisal(m) && (
                       undoAsk === m.id ? (
                         <span className="rc-undo-ask">
                           <button type="button" className="rc-undo yes" onClick={() => undo(m)} disabled={undoBusy}>{undoBusy ? "..." : "Yes, remove"}</button>

@@ -26,7 +26,7 @@ import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 
 import { API } from "../config.js";
-import { fileHref, openFile, useFileLinkState } from "../files.js";
+import { fileHref, openFile, useFileLinkState, isOnlineAppraisal } from "../files.js";
 const NAV = [
   { path: "/coordinator",               label: "Dashboard",     icon: "dashboard" },
   { path: "/coordinator/approvals",     label: "Approvals",     icon: "inbox" },
@@ -1018,7 +1018,8 @@ function MovReview({ movs, user, interns = [], onRefresh }) {
       setProcessing(null);
     }
   };
-  const undoCell = (m) => undoAsk === m.id ? (
+  // the appraisal requirement marked done by the supervisor's online appraisal follows the appraisal: nothing to undo here
+  const undoCell = (m) => isOnlineAppraisal(m) ? null : undoAsk === m.id ? (
     <span className="ix-actions" style={{ flexWrap: "nowrap" }}>
       <button type="button" className="ix-b danger sm" onClick={() => handleUndo(m)} disabled={!!processing}>
         {processing === m.id + "undo" ? "..." : "Yes, undo"}</button>
@@ -1080,6 +1081,20 @@ const mvBadge = (m) => <Badge label={MV_CHIP[m.status]?.[0] || m.status} type={m
 
 /* the file inside the drawer (its own component: the short-lived link is asked for each document) */
 function MovPreview({ doc }) {
+  // marked done by the HTE supervisor's online appraisal: no file, the ratings are on the Grades page
+  if (isOnlineAppraisal(doc)) return (
+    <div className="mvr-prev">
+      <div className="mvr-bar"><Icon name="check" size={15} /><span className="mvr-name">Appraisal submitted online</span></div>
+      <div className="mv2-doc mvr-doc">
+        <div className="mv2-nofile"><Icon name="check" size={26} /><b>Submitted online by the HTE supervisor</b>
+          <small>{doc.remarks || ""} No file is needed: the ratings are on the Grades page.</small></div>
+      </div>
+    </div>
+  );
+  return <MovPreviewFile doc={doc} />;
+}
+
+function MovPreviewFile({ doc }) {
   const { url, error, loading } = useFileLinkState(doc.file_path);
   const ext = mvExt(doc);
   // a slim bar above the file (name + open), so nothing covers the document

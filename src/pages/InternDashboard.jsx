@@ -15,7 +15,7 @@ import { DashLayout, Panel, DashRow, DashEmpty, TimeLine } from "../components/D
 import { formalLayout } from "../components/formalLayout.js";
 import { mdCss } from "../components/materialTheme.js";
 import { API } from "../config.js";
-import { fileHref, openFile, useFileLinkState } from "../files.js";
+import { fileHref, openFile, useFileLinkState, isOnlineAppraisal } from "../files.js";
 import RequirementForms from "./RequirementForms.jsx";   // blank forms to download and print
 import { MyGrade, gradeIsNew } from "../components/Evaluations.jsx";   // the internship grade, once the coordinator releases it
 import { Pager } from "../components/ReviewQueue.jsx";   // page numbers under a table
@@ -1797,6 +1797,20 @@ function WorkModeCard({ user, tab = "online" }) {
 /* ───────────────────────── Submit MOV ───────────────────────── */
 /* a look at the submitted file inside the drawer: PDF and images show right there; Word files can only be opened */
 function FilePreview({ x }) {
+  // marked done by the HTE supervisor's online appraisal: there is no file to show
+  if (isOnlineAppraisal(x)) return (
+    <div className="mv-prev">
+      <div className="mv-prev-h"><span>Appraisal</span></div>
+      <div className="mv-prev-box">
+        <div className="mv-prev-none"><Icon name="check" size={26} />
+          <span>Your HTE supervisor submitted your performance appraisal online, so you don't need to upload it.{x.remarks ? ` ${x.remarks}` : ""}</span></div>
+      </div>
+    </div>
+  );
+  return <FilePreviewFile x={x} />;
+}
+
+function FilePreviewFile({ x }) {
   // private: a short-lived link from the server. Nothing is shown in the frame until the link is here
   // (an empty frame would load this page inside itself)
   const { url, error, loading } = useFileLinkState(x.file_path);
@@ -1915,7 +1929,9 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
     if (await upload({ key: "others", title: otherTitle, file: otherFile })) { setOtherTitle(""); setOtherFile(null); }
   };
 
-  const fileLink = (m) => (
+  const fileLink = (m) => isOnlineAppraisal(m) ? (
+    <span className="mv-online"><Icon name="check" size={12} /> Submitted online by your HTE supervisor</span>
+  ) : (
     <a className="ix-link" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer">
       {m.original_name}
     </a>
@@ -2153,6 +2169,8 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
         .ix-page .mv-file { display: inline-flex; gap: 4px; align-items: baseline; max-width: 260px; min-width: 0; font-size: 12px; color: #c2410c; text-decoration: none; }
         .ix-page .mv-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
         .ix-page .mv-file em { font-style: normal; color: #9ca3af; white-space: nowrap; }
+        .ix-page .mv-online { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #15803d; }
+        .ix-page .mv-file.mv-online { color: #15803d; }
         .ix-page a.mv-file:hover span { text-decoration: underline; }
         .ix-page .mv-pill { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
         .ix-page .mv-pill.approved { background: #ecfdf3; color: #15803d; } .ix-page .mv-pill.pending { background: #fff7ed; color: #c2410c; }
@@ -2291,7 +2309,11 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                     {st === "rejected" && m.remarks && <em>“{m.remarks}”</em>}
                   </button>
                   <span className="mv-rt">
-                    {m && (
+                    {m && isOnlineAppraisal(m) ? (
+                      <span className="mv-file mv-online" title={m.remarks || "Submitted online by your HTE supervisor"}>
+                        <span>Submitted online by your HTE supervisor</span>
+                      </span>
+                    ) : m && (
                       <a className="mv-file" href={fileHref(m.file_path)} onClick={(e) => openFile(m.file_path, e)} target="_blank" rel="noopener noreferrer" title={m.original_name}>
                         <span>{m.original_name}</span>
                         {m.created_at && !isNaN(new Date(m.created_at)) && <em>· sent {new Date(m.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</em>}
