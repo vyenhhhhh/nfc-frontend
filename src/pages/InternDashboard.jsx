@@ -1335,7 +1335,7 @@ const statusType = (s) => (s === "approved" ? "approved" : s === "rejected" ? "r
 const ONLINE_DELETE_URL = (id, uid) => `${API}/intern/submit-online/${id}?user_id=${uid}`;
 const MOV_DELETE_URL = (id, uid) => `${API}/intern/submit-mov/${id}?user_id=${uid}`;
 
-// "Remove" with an inline "are you sure?" step (only shown for pending items)
+// "Remove" with an inline "are you sure?" step (pending items, and returned "other documents")
 function RemoveBtn({ onConfirm }) {
   const [ask, setAsk] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1991,7 +1991,7 @@ function SubmitMov({ user, unlocked, totalHours, required }) {
                           <li key={m.id}>
                             <span className="mv-hist-main"><b>{m.title}</b>{fileLink(m)}<small>{[m.created_at && !isNaN(new Date(m.created_at)) ? new Date(m.created_at).toLocaleDateString("en-PH") : "", m.remarks ? `“${m.remarks}”` : ""].filter(Boolean).join(" · ")}</small></span>
                             <Badge label={movLabel(m.status)} type={statusType(m.status)} />
-                            {m.status === "pending" && <RemoveBtn onConfirm={() => removeMov(m.id)} />}
+                            {(m.status === "pending" || m.status === "rejected") && <RemoveBtn onConfirm={() => removeMov(m.id)} />}
                           </li>
                         ))}</ul>
                       )}
