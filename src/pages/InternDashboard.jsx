@@ -4205,8 +4205,10 @@ export const internCss = `
 .ix-page .at-grp-h span { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #c2410c; }
 .ix-page .at-grp-h small { font-size: 11px; color: #a99d96; }
 .ix-page .at-rows { list-style: none; margin: 0; padding: 0; background: var(--ix-surface, #fff); border: 1px solid #eceef1; border-radius: 12px; overflow: hidden; }
-.ix-page .at-rows li { display: grid; grid-template-columns: 38px 66px 210px minmax(120px, 1fr) 150px; align-items: center; gap: 12px; padding: 6px 14px; border-bottom: 1px solid #f4f1ee; font-size: 12.5px; }
+.ix-page .at-rows li { display: grid; grid-template-columns: 38px 88px 200px minmax(120px, 1fr) 150px; align-items: center; gap: 12px; padding: 6px 14px; border-bottom: 1px solid #f4f1ee; font-size: 12.5px; }
 .ix-page .at-rows li:last-child { border-bottom: 0; }
+/* "Kiosk" / "Online log" tag: one line, sized to its text */
+.ix-page .at-rows li > .ix-badge, .ix-page .at-rows li > [class*="badge"] { justify-self: start; align-self: center; white-space: nowrap; }
 .ix-page .at-rows li:hover { background: #fffaf7; }
 .ix-page .at-dd { width: 34px; height: 34px; border-radius: 9px; background: #fff1ea; color: #c2410c; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
 .ix-page .at-dd b { font-size: 13px; } .ix-page .at-dd small { font-size: 9px; font-weight: 700; text-transform: uppercase; }
